@@ -29,24 +29,30 @@ export default function PlayPage() {
   const [error, setError] = useState<string | null>(null);
   const [dramaDetail, setDramaDetail] = useState<DramaDetail | null>(null);
   const [currentEpisode, setCurrentEpisode] = useState(0);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  const [showAllEpisodes, setShowAllEpisodes] = useState(false);
 
   // 多源相关状态
-  const [availableSources, setAvailableSources] = useState<AvailableSource[]>([]);
-  
+  const [availableSources, setAvailableSources] = useState<AvailableSource[]>(
+    []
+  );
+
   // 视频源数据（从 API 获取）
   const [vodSources, setVodSources] = useState<VodSource[]>([]);
-  const [selectedVodSource, setSelectedVodSource] = useState<VodSource | null>(null);
+  const [selectedVodSource, setSelectedVodSource] = useState<VodSource | null>(
+    null
+  );
 
   // 播放器配置和状态
   const [playerConfig, setPlayerConfig] = useState<PlayerConfig | null>(null);
-  const [playerMode, setPlayerMode] = useState<'iframe' | 'local'>('iframe');
+  const [playerMode, setPlayerMode] = useState<"iframe" | "local">("iframe");
   const [currentIframePlayerIndex, setCurrentIframePlayerIndex] = useState(0);
 
   // 从 API 获取视频源配置
   useEffect(() => {
     const fetchVodSources = async () => {
       try {
-        const response = await fetch('/api/vod-sources');
+        const response = await fetch("/api/vod-sources");
         if (response.ok) {
           const result = await response.json();
           if (result.code === 200 && result.data) {
@@ -55,8 +61,8 @@ export default function PlayPage() {
           }
         }
       } catch (error) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('[VOD Sources Fetch Failed]', error);
+        if (process.env.NODE_ENV === "development") {
+          console.error("[VOD Sources Fetch Failed]", error);
         }
       }
     };
@@ -67,20 +73,20 @@ export default function PlayPage() {
   useEffect(() => {
     const fetchPlayerConfig = async () => {
       try {
-        const response = await fetch('/api/player-config');
+        const response = await fetch("/api/player-config");
         const result = await response.json();
         if (result.code === 200 && result.data) {
           setPlayerConfig(result.data);
           // 根据配置决定初始模式
-          if (result.data.mode === 'auto') {
-            setPlayerMode(result.data.enableProxy ? 'local' : 'iframe');
+          if (result.data.mode === "auto") {
+            setPlayerMode(result.data.enableProxy ? "local" : "iframe");
           } else {
             setPlayerMode(result.data.mode);
           }
         }
       } catch (error) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('[Player Config Fetch Failed]', error);
+        if (process.env.NODE_ENV === "development") {
+          console.error("[Player Config Fetch Failed]", error);
         }
       }
     };
@@ -98,8 +104,8 @@ export default function PlayPage() {
         }
       }
     } catch (err) {
-      if (process.env.NODE_ENV === 'development') {
-        console.error('[Multi-source Data Load Failed]', err);
+      if (process.env.NODE_ENV === "development") {
+        console.error("[Multi-source Data Load Failed]", err);
       }
     }
   }, []);
@@ -115,17 +121,17 @@ export default function PlayPage() {
         if (!sourceKey && availableSources.length > 0) {
           sourceKey = availableSources[0].source_key;
         }
-        
+
         if (!sourceKey && selectedVodSource) {
           sourceKey = selectedVodSource.key;
         }
 
-        const source = sourceKey 
-          ? vodSources.find((s) => s.key === sourceKey) 
+        const source = sourceKey
+          ? vodSources.find((s) => s.key === sourceKey)
           : selectedVodSource;
 
         if (!source) {
-          setError('未配置视频源，请先在后台管理中配置视频源');
+          setError("未配置视频源，请先在后台管理中配置视频源");
           setLoading(false);
           return;
         }
@@ -155,8 +161,8 @@ export default function PlayPage() {
           setError("该影视暂无播放源");
         }
       } catch (err) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('[Drama Detail Fetch Failed]', err);
+        if (process.env.NODE_ENV === "development") {
+          console.error("[Drama Detail Fetch Failed]", err);
         }
         setError("获取影视详情失败，请稍后重试");
       } finally {
@@ -167,7 +173,13 @@ export default function PlayPage() {
     if (dramaId && vodSources.length > 0) {
       fetchDetail();
     }
-  }, [dramaId, currentSourceKey, availableSources, vodSources, selectedVodSource]);
+  }, [
+    dramaId,
+    currentSourceKey,
+    availableSources,
+    vodSources,
+    selectedVodSource,
+  ]);
 
   // 切换视频源
   const switchSource = useCallback(
@@ -310,15 +322,28 @@ export default function PlayPage() {
   }
 
   return (
-    <div className="min-h-screen bg-black">
-      {/* 顶部导航栏 */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/80 to-transparent backdrop-blur-sm">
-        <div className="max-w-[1800px] mx-auto px-4 py-3 flex items-center justify-between">
-          <Link href="/" className="text-white text-lg font-semibold flex items-center">
-            <ArrowLeft className="w-6 h-6 mr-2" />
-            
+    <div
+      className="h-screen"
+      style={{
+        backgroundAttachment: "fixed",
+        backgroundPosition: "center",
+        backgroundSize: "cover",
+        backgroundImage: "url(/movie-default-bg.jpg)",
+      }}
+    >
+      {/* 顶部导航栏 - Netflix风格 */}
+      <nav className="sticky top-0 z-50 bg-zinc-900/95 backdrop-blur-md border-b border-white/5">
+        <div className="max-w-[1920px] mx-auto px-4 md:px-6 h-[48px] md:h-[64px] flex items-center justify-between">
+          <Link
+            href="/"
+            className="text-white text-lg font-bold flex items-center gap-2 hover:text-red-500 transition-all duration-300 group"
+          >
+            <div className="p-2 rounded-lg bg-white/5 group-hover:bg-red-500/10 transition-all duration-300">
+              <ArrowLeft className="w-5 h-5" />
+            </div>
+            <span className="hidden sm:inline">返回首页</span>
           </Link>
-          <div className="flex items-center space-x-2 md:space-x-4">
+          <div className="flex items-center gap-3 md:gap-4">
             {/* 多源选择器 */}
             <SourceSelector
               sources={availableSources}
@@ -339,169 +364,310 @@ export default function PlayPage() {
         </div>
       </nav>
 
-      {/* 视频播放器区域 - 响应式高度 */}
-      <div className="relative aspect-video w-[90%]  md:max-w-[1800px] mx-auto max-h-screen mt-14 sm:mt-0">
-        {dramaDetail && dramaDetail.episodes.length > 0 && (
-          <UnifiedPlayer
-            videoUrl={dramaDetail.episodes[currentEpisode].url}
-            title={`${dramaDetail.name} - 第${currentEpisode + 1}集`}
-            mode={playerMode}
-            currentIframePlayerIndex={currentIframePlayerIndex}
-            onProgress={() => {
-              // 播放进度更新
-            }}
-            onEnded={() => {
-              if (currentEpisode < dramaDetail.episodes.length - 1) {
-                selectEpisode(currentEpisode + 1);
-              }
-            }}
-            onIframePlayerSwitch={(index) => {
-              setCurrentIframePlayerIndex(index);
-            }}
-          />
-        )}
-      </div>
+      {/* 主内容区域 - 左右分栏布局 */}
+      <div className="max-w-[1920px] mx-auto flex flex-col lg:flex-row gap-0 p-0">
+        {/* 左侧：视频播放器区域 */}
+        <div className="flex-1 lg:min-h-[calc(100vh-65px)]">
+          <div className="relative aspect-video w-full h-full bg-black overflow-hidden">
+            {dramaDetail && dramaDetail.episodes.length > 0 && (
+              <UnifiedPlayer
+                videoUrl={dramaDetail.episodes[currentEpisode].url}
+                title={`${dramaDetail.name} - 第${currentEpisode + 1}集`}
+                mode={playerMode}
+                currentIframePlayerIndex={currentIframePlayerIndex}
+                onProgress={() => {
+                  // 播放进度更新
+                }}
+                onEnded={() => {
+                  if (currentEpisode < dramaDetail.episodes.length - 1) {
+                    selectEpisode(currentEpisode + 1);
+                  }
+                }}
+                onIframePlayerSwitch={(index) => {
+                  setCurrentIframePlayerIndex(index);
+                }}
+              />
+            )}
+          </div>
 
-      {/* 详情内容区域 - Netflix深度优化 */}
-      <div className="px-4 md:px-8 py-8 space-y-8 animate-fade-in max-w-[1800px] mx-auto">
-        {/* 影视信息主区域 */}
-        <div className="w-full">
-          <div className="flex flex-col lg:flex-row lg:items-start lg:space-x-10">
-            {/* 左侧：主要信息 */}
-            <div className="flex-1 space-y-3 md:space-y-4 lg:space-y-6">
-              <div>
-                <h1 className="text-3xl sm:text-5xl font-bold text-white mb-3 leading-tight tracking-tight">
-                  {dramaDetail.name}
-                </h1>
-
-                <div className="flex flex-wrap items-center gap-2 md:gap-4 text-sm md:text-base">
-                  {dramaDetail.year && (
-                    <span className="px-3 py-1 bg-green-600/90 text-white font-bold rounded-md shadow-lg">
-                      {dramaDetail.year}
-                    </span>
-                  )}
-                  {dramaDetail.remarks && (
-                    <span className="px-3 py-1 border-2 border-gray-500 text-gray-200 rounded-md font-medium">
-                      {dramaDetail.remarks}
-                    </span>
-                  )}
-                  {dramaDetail.type && (
-                    <span className="text-gray-400">{dramaDetail.type}</span>
-                  )}
-                  {dramaDetail.area && (
-                    <>
-                      <span className="text-gray-600">•</span>
-                      <span className="text-gray-400">{dramaDetail.area}</span>
-                    </>
-                  )}
-                  {dramaDetail.episodes && dramaDetail.episodes.length > 0 && (
-                    <>
-                      <span className="text-gray-600">•</span>
-                      <span className="text-gray-400">
-                        {dramaDetail.episodes.length} 集
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* 简介 */}
-              {dramaDetail.blurb && (
-                <div className="bg-gradient-to-r from-gray-900/100 to-transparent p-4 rounded-lg">
-                  <p
-                    className="text-base md:text-lg text-gray-200 leading-relaxed line-clamp-3"
-                    dangerouslySetInnerHTML={{
-                      __html: dramaDetail.blurb
-                        .replace(/<[^>]*>/g, "")
-                        .replace(/&nbsp;/g, " "),
-                    }}
-                  />
-                </div>
+          {/* 视频下方信息 - 仅在移动端显示 */}
+          <div className="lg:hidden p-4 bg-linear-to-b from-gray-900/90 to-gray-950/90 backdrop-blur-sm">
+            <h1 className="text-sm font-bold text-white mb-2 tracking-tight">
+              {dramaDetail.name}
+            </h1>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {dramaDetail.year && (
+                <span className="px-2 py-1 bg-linear-to-r from-red-600 to-red-500 text-white font-semibold rounded-md shadow-lg shadow-red-500/30">
+                  {dramaDetail.year}
+                </span>
               )}
-            </div>
-
-            {/* 右侧：演职人员信息 */}
-            <div className="lg:w-96 space-y-5 text-sm md:text-base mt-6 lg:mt-0 bg-gray-900/10 p-6 rounded-xl backdrop-blur-sm">
-              {dramaDetail.actor && (
-                <div>
-                  <span className="text-gray-400 font-semibold">主演</span>
-                  <p className="text-gray-200 mt-2 leading-relaxed">
-                    {dramaDetail.actor.split(",").slice(0, 4).join("、")}
-                  </p>
-                </div>
+              {dramaDetail.type && (
+                <span className="text-gray-300 font-medium">
+                  {dramaDetail.type}
+                </span>
               )}
-              {dramaDetail.director && (
-                <div>
-                  <span className="text-gray-400 font-semibold">导演</span>
-                  <p className="text-gray-200 mt-2">{dramaDetail.director}</p>
-                </div>
+              {dramaDetail.area && (
+                <>
+                  <span className="text-gray-600">•</span>
+                  <span className="text-gray-300 font-medium">
+                    {dramaDetail.area}
+                  </span>
+                </>
               )}
             </div>
           </div>
         </div>
 
-        {/* 剧集列表 - 增强版 */}
-        <div className="bg-gradient-to-b from-gray-900 to-transparent p-6 md:p-8 rounded-2xl">
-          <div className="flex items-center justify-between mb-6 md:mb-8">
-            <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold text-white tracking-tight">
-              剧集
-            </h2>
-            <div className="text-sm md:text-base text-gray-400">
-              <span className="text-red-500 font-bold text-lg">
-                第 {currentEpisode + 1} 集
-              </span>
-              <span className="text-gray-500 mx-2">/</span>
-              <span>共 {dramaDetail.episodes.length} 集</span>
-            </div>
-          </div>
-
-          <div className="relative group">
-            {/* 左侧渐变指示器 */}
-            <div className="absolute left-0 top-0 bottom-0 w-16 md:w-24 bg-gradient-to-r from-gray-900/90 via-gray-900/50 to-transparent z-10 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />
-
-            {/* 右侧渐变指示器 */}
-            <div className="absolute right-0 top-0 bottom-0 w-16 md:w-24 bg-gradient-to-l from-gray-900/90 via-gray-900/50 to-transparent z-10 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />
-
-            <div className="flex overflow-x-auto space-x-2 md:space-x-5 p-2 md:p-8 scrollbar-hide scroll-smooth">
-              {dramaDetail.episodes.map((episode, index) => (
-                <button
-                  key={index}
-                  onClick={() => selectEpisode(index)}
-                  className={`flex-shrink-0 w-14 sm:w-24 md:w-28 rounded-xl overflow-hidden transition-all transform hover:scale-110 hover:shadow-2xl ${
-                    currentEpisode === index
-                      ? "ring-4 ring-red-500 shadow-2xl shadow-red-500/50"
-                      : "hover:ring-2 hover:ring-gray-400"
-                  }`}
-                >
-                  {/* 缩略图区域 */}
-                  <div
-                    className={`aspect-video flex items-center justify-center text-3xl md:text-4xl font-black ${
-                      currentEpisode === index
-                        ? "bg-gradient-to-br from-red-600 to-red-700 text-white"
-                        : "bg-gradient-to-br from-gray-800 to-gray-900 text-gray-400 hover:text-gray-200"
-                    }`}
+        {/* 右侧：剧集信息和选择器 - Netflix风格 */}
+        <div className="w-full lg:w-[380px] xl:w-[420px] bg-zinc-900 overflow-y-auto lg:max-h-[calc(100vh-66px)] relative">
+          <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
+            {/* 查看全部集数模式 */}
+            {showAllEpisodes ? (
+              <div className="space-y-4 lg:space-y-6">
+                {/* 返回按钮和标题 */}
+                <div className="flex items-center justify-between sticky top-0 bg-zinc-900 pb-4 border-b border-white/10 z-10">
+                  <button
+                    onClick={() => setShowAllEpisodes(false)}
+                    className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors group"
                   >
-                    {index + 1}
-                  </div>
+                    <svg
+                      className="w-5 h-5 group-hover:-translate-x-1 transition-transform"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 19l-7-7 7-7"
+                      />
+                    </svg>
+                    <span className="text-xs lg:text-sm font-semibold">
+                      返回
+                    </span>
+                  </button>
+                </div>
 
-                  {/* 信息区域 */}
-                  <div
-                    className={`p-3 md:p-4 ${
-                      currentEpisode === index
-                        ? "bg-gradient-to-br from-gray-800 to-gray-900"
-                        : "bg-gray-900/80"
-                    }`}
-                  >
-                    <div className="text-sm md:text-base font-bold text-white truncate mb-1">
-                      第 {index + 1} 集
-                    </div>
-                    <div className="text-xs text-gray-400 truncate leading-tight">
+                {/* 剧集标题 */}
+                <div>
+                  <h1 className="text-sm lg:text-2xl font-bold text-white mb-2 line-clamp-2 tracking-tight leading-tight">
+                    {dramaDetail.name}
+                  </h1>
+                  <p className="text-xs lg:text-sm text-gray-400">选择集数</p>
+                </div>
+
+                {/* 所有集数网格 */}
+                <div className="grid grid-cols-4 gap-2.5 pb-6">
+                  {dramaDetail.episodes.map((episode, index) => (
+                    <button
+                      key={index}
+                      onClick={() => {
+                        selectEpisode(index);
+                        setShowAllEpisodes(false);
+                      }}
+                      className={`aspect-video rounded-lg text-xs lg:text-sm flex flex-col items-center justify-center p-2 transition-all duration-300 group relative overflow-hidden ${
+                        currentEpisode === index
+                          ? "bg-linear-to-br from-red-600 to-red-500 text-white shadow-lg shadow-red-500/40 ring-2 ring-red-400 scale-105"
+                          : "bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white hover:scale-105 backdrop-blur-sm"
+                      }`}
+                    >
                       {episode.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* 剧集标题和信息 - 仅在桌面端显示 */}
+                <div className="hidden lg:block animate-fade-in">
+                  <h1 className="text-2xl font-bold text-white mb-4 line-clamp-2 tracking-tight leading-tight">
+                    {dramaDetail.name}
+                  </h1>
+                  <div className="flex flex-wrap items-center gap-2 text-sm mb-4">
+                    {dramaDetail.year && (
+                      <span className="px-3 py-1.5 bg-linear-to-r from-red-600 to-red-500 text-white font-semibold rounded-md shadow-lg shadow-red-500/30">
+                        {dramaDetail.year}
+                      </span>
+                    )}
+                    {dramaDetail.remarks && (
+                      <span className="px-3 py-1.5 border border-white/20 text-gray-200 rounded-md font-medium backdrop-blur-sm bg-white/5">
+                        {dramaDetail.remarks}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300 font-medium">
+                    {dramaDetail.type && <span>{dramaDetail.type}</span>}
+                    {dramaDetail.area && (
+                      <>
+                        <span className="text-gray-600">•</span>
+                        <span>{dramaDetail.area}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* 演职人员 */}
+                {(dramaDetail.actor || dramaDetail.director) && (
+                  <div className="space-y-3 text-xs lg:text-sm lg:border-t lg:border-white/10 lg:pt-6">
+                    {dramaDetail.actor && (
+                      <div className="group">
+                        <span className="text-gray-400 font-semibold">
+                          主演：
+                        </span>
+                        <span className="text-gray-200 group-hover:text-white transition-colors">
+                          {dramaDetail.actor}
+                        </span>
+                      </div>
+                    )}
+                    {dramaDetail.director && (
+                      <div className="group">
+                        <span className="text-gray-400 font-semibold">
+                          导演：
+                        </span>
+                        <span className="text-gray-200 group-hover:text-white transition-colors">
+                          {dramaDetail.director}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 简介 */}
+                {dramaDetail.blurb && (
+                  <div className="border-t border-white/10 pt-4 lg:pt-6">
+                    <h3 className="text-xs lg:text-sm font-semibold text-gray-400 mb-2">
+                      剧情简介
+                    </h3>
+                    <div className="relative">
+                      <p
+                        className={`text-xs lg:text-sm text-gray-300 leading-relaxed transition-all duration-300 ${
+                          isDescriptionExpanded ? "" : "line-clamp-4"
+                        }`}
+                        dangerouslySetInnerHTML={{
+                          __html: dramaDetail.blurb
+                            .replace(/<[^>]*>/g, "")
+                            .replace(/&nbsp;/g, " "),
+                        }}
+                      />
+                      {dramaDetail.blurb.length > 100 && (
+                        <button
+                          onClick={() =>
+                            setIsDescriptionExpanded(!isDescriptionExpanded)
+                          }
+                          className="mt-2 text-xs lg:text-sm text-red-500 hover:text-red-400 font-semibold transition-colors flex items-center gap-1 group"
+                        >
+                          {isDescriptionExpanded ? (
+                            <>
+                              <span>显示更少</span>
+                              <svg
+                                className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M5 15l7-7 7 7"
+                                />
+                              </svg>
+                            </>
+                          ) : (
+                            <>
+                              <span>显示更多</span>
+                              <svg
+                                className="w-4 h-4 group-hover:translate-y-0.5 transition-transform"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M19 9l-7 7-7-7"
+                                />
+                              </svg>
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
-                </button>
-              ))}
-            </div>
+                )}
+
+                {/* 选集区域 */}
+                <div className="border-t border-white/10 pt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xs lg:text-sm font-bold text-white tracking-tight">
+                      选集
+                    </h2>
+                  </div>
+
+                  {/* 上一集/下一集按钮 */}
+                  <div className="flex gap-3 mb-4">
+                    <button
+                      onClick={previousEpisode}
+                      disabled={currentEpisode === 0}
+                      className="flex-1 px-4 py-2.5 bg-white/10 hover:bg-white/20 disabled:bg-white/5 disabled:text-gray-600 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold backdrop-blur-sm shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100"
+                    >
+                      上一集
+                    </button>
+                    <button
+                      onClick={nextEpisode}
+                      disabled={
+                        currentEpisode === dramaDetail.episodes.length - 1
+                      }
+                      className="flex-1 px-4 py-2.5 bg-linear-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 disabled:from-gray-800 disabled:to-gray-800 disabled:text-gray-600 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold shadow-lg shadow-red-500/30 hover:shadow-red-500/50 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100 disabled:shadow-none"
+                    >
+                      下一集
+                    </button>
+                  </div>
+
+                  {/* 集数预览（显示前12集） */}
+                  <div className="grid grid-cols-4 gap-2.5 mb-4">
+                    {dramaDetail.episodes.slice(0, 12).map((episode, index) => (
+                      <button
+                        key={index}
+                        onClick={() => selectEpisode(index)}
+                        className={`rounded-lg flex flex-col text-xs lg:text-sm items-center justify-center p-2 transition-all duration-300 group relative overflow-hidden ${
+                          currentEpisode === index
+                            ? "bg-linear-to-br from-red-600 to-red-500 text-white shadow-lg shadow-red-500/40 ring-2 ring-red-400 scale-105"
+                            : "bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white hover:scale-105 backdrop-blur-sm"
+                        }`}
+                      >
+                        {episode.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* 查看全部按钮 */}
+                  {dramaDetail.episodes.length > 12 && (
+                    <button
+                      onClick={() => setShowAllEpisodes(true)}
+                      className="w-full px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold backdrop-blur-sm shadow-lg hover:shadow-xl flex items-center justify-center gap-2 group"
+                    >
+                      <span>查看全部</span>
+                      <svg
+                        className="w-4 h-4 group-hover:translate-x-1 transition-transform"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 5l7 7-7 7"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
