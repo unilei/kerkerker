@@ -2,11 +2,13 @@
 
 import { useState, useRef, useEffect } from 'react';
 import type { PlayerConfig } from '@/app/api/player-config/route';
+import type { VodSource } from '@/types/drama';
 
 interface PlayerSettingsPanelProps {
   playerConfig: PlayerConfig;
   currentMode: 'iframe' | 'local';
   currentIframePlayerIndex: number;
+  vodSource?: VodSource | null; // 当前视频源
   onModeChange: (mode: 'iframe' | 'local') => void;
   onIframePlayerChange: (index: number) => void;
 }
@@ -15,11 +17,21 @@ export function PlayerSettingsPanel({
   playerConfig,
   currentMode,
   currentIframePlayerIndex,
+  vodSource,
   onModeChange,
   onIframePlayerChange,
 }: PlayerSettingsPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // 切换到iframe模式时，自动选择视频源的专属播放器
+  const handleModeChange = (mode: 'iframe' | 'local') => {
+    if (mode === 'iframe' && vodSource?.playUrl) {
+      // 视频源专属播放器始终在第一位（索引0）
+      onIframePlayerChange(0);
+    }
+    onModeChange(mode);
+  };
 
   // 点击外部关闭面板
   useEffect(() => {
@@ -55,9 +67,27 @@ export function PlayerSettingsPanel({
     };
   }, [isOpen]);
 
-  const enabledIframePlayers = playerConfig.iframePlayers
-    .filter(p => p.enabled)
-    .sort((a, b) => a.priority - b.priority);
+  // 计算实际启用的播放器列表（与IframePlayer.tsx保持一致）
+  const enabledIframePlayers = (() => {
+    const backupPlayers = playerConfig.iframePlayers
+      .filter(p => p.enabled)
+      .sort((a, b) => a.priority - b.priority);
+    
+    // 如果视频源有专属播放器，添加到第一位（与IframePlayer逻辑一致）
+    if (vodSource?.playUrl) {
+      const vodSourcePlayer = {
+        id: `vod_source_${vodSource.key}`,
+        name: `${vodSource.name}播放器`,
+        url: vodSource.playUrl,
+        priority: 0,
+        timeout: 10000,
+        enabled: true,
+      };
+      return [vodSourcePlayer, ...backupPlayers];
+    }
+    
+    return backupPlayers;
+  })();
 
   return (
     <div className="relative" ref={panelRef}>
@@ -126,7 +156,7 @@ export function PlayerSettingsPanel({
               <div className="space-y-2">
                 {/* iframe 播放器 */}
                 <button
-                  onClick={() => onModeChange('iframe')}
+                  onClick={() => handleModeChange('iframe')}
                   className={`w-full text-left px-4 py-3 rounded-lg transition-all group ${
                     currentMode === 'iframe'
                       ? 'bg-red-600 text-white ring-2 ring-red-400 shadow-lg shadow-red-500/20'
@@ -153,7 +183,7 @@ export function PlayerSettingsPanel({
                 
                 {/* 本地播放器 */}
                 <button
-                  onClick={() => playerConfig.enableProxy && onModeChange('local')}
+                  onClick={() => playerConfig.enableProxy && handleModeChange('local')}
                   disabled={!playerConfig.enableProxy}
                   className={`w-full text-left px-4 py-3 rounded-lg transition-all group ${
                     currentMode === 'local'
@@ -195,12 +225,46 @@ export function PlayerSettingsPanel({
               </div>
             </div>
 
-            {/* iframe 播放器列表 */}
+            {/* 当前使用的播放器 */}
+            {currentMode === 'iframe' && enabledIframePlayers.length > 0 && (
+              <div className="p-4 border-b border-gray-800">
+                <h4 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                  当前播放器
+                </h4>
+                <div className="p-4 bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <div className="shrink-0 w-10 h-10 bg-blue-500/20 rounded-full flex items-center justify-center">
+                      <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-white font-medium truncate">
+                          {enabledIframePlayers[currentIframePlayerIndex]?.name || '未知播放器'}
+                        </p>
+                        {enabledIframePlayers[currentIframePlayerIndex]?.id.startsWith('vod_source_') && (
+                          <span className="shrink-0 text-xs px-2 py-0.5 bg-green-500/20 text-green-400 border border-green-500/30 rounded">
+                            源推荐
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        优先级 {enabledIframePlayers[currentIframePlayerIndex]?.priority} · 超时 {enabledIframePlayers[currentIframePlayerIndex]?.timeout}ms
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 切换播放器 */}
             {currentMode === 'iframe' && enabledIframePlayers.length > 0 && (
               <div className="p-4 border-b border-gray-800">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
-                    iframe 播放器
+                    切换播放器
                   </h4>
                   <span className="text-xs text-gray-500">
                     {enabledIframePlayers.length} 个可用
@@ -213,35 +277,47 @@ export function PlayerSettingsPanel({
                   <span>无法加载时将自动切换到下一个播放器</span>
                 </p>
                 <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {enabledIframePlayers.map((player, index) => (
-                    <button
-                      key={player.id}
-                      onClick={() => onIframePlayerChange(index)}
-                      className={`w-full text-left px-4 py-2.5 rounded-lg transition-all ${
-                        currentIframePlayerIndex === index
-                          ? 'bg-red-600 text-white font-medium shadow-md'
-                          : 'bg-gray-800/50 text-gray-300 hover:bg-gray-800'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${
-                            currentIframePlayerIndex === index
-                              ? 'bg-red-700 text-white'
-                              : 'bg-gray-700 text-gray-400'
-                          }`}>
-                            {player.priority}
-                          </span>
-                          <span className="truncate">{player.name}</span>
+                  {enabledIframePlayers.map((player, index) => {
+                    const isFromVodSource = player.id.startsWith('vod_source_');
+                    return (
+                      <button
+                        key={player.id}
+                        onClick={() => onIframePlayerChange(index)}
+                        className={`w-full text-left px-4 py-2.5 rounded-lg transition-all ${
+                          currentIframePlayerIndex === index
+                            ? 'bg-red-600 text-white font-medium shadow-md'
+                            : 'bg-gray-800/50 text-gray-300 hover:bg-gray-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${
+                              currentIframePlayerIndex === index
+                                ? 'bg-red-700 text-white'
+                                : 'bg-gray-700 text-gray-400'
+                            }`}>
+                              {player.priority}
+                            </span>
+                            <span className="truncate">{player.name}</span>
+                            {isFromVodSource && (
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                currentIframePlayerIndex === index
+                                  ? 'bg-yellow-500/20 text-yellow-200 border border-yellow-400/30'
+                                  : 'bg-green-500/20 text-green-400 border border-green-500/30'
+                              }`}>
+                                源推荐
+                              </span>
+                            )}
+                          </div>
+                          {currentIframePlayerIndex === index && (
+                            <svg className="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          )}
                         </div>
-                        {currentIframePlayerIndex === index && (
-                          <svg className="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

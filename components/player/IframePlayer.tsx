@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { IframePlayer as IframePlayerConfig } from '@/app/api/player-config/route';
+import type { VodSource } from '@/types/drama';
 
 interface IframePlayerProps {
   videoUrl: string;
   players: IframePlayerConfig[];
   currentPlayerIndex?: number;
+  vodSource?: VodSource | null;
   onProgress?: (time: number) => void;
   onEnded?: () => void;
   onPlayerSwitch?: (playerIndex: number) => void;
@@ -16,6 +18,7 @@ export function IframePlayer({
   videoUrl, 
   players,
   currentPlayerIndex: externalPlayerIndex,
+  vodSource,
   onProgress,
   onEnded,
   onPlayerSwitch 
@@ -32,13 +35,27 @@ export function IframePlayer({
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const healthCheckRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 过滤启用的播放器并按优先级排序
-  const enabledPlayers = useMemo(() => 
-    players
+  // 过滤启用的播放器并按优先级排序，如果视频源有专属播放器则添加到第一位
+  const enabledPlayers = useMemo(() => {
+    const backupPlayers = players
       .filter(p => p.enabled)
-      .sort((a, b) => a.priority - b.priority),
-    [players]
-  );
+      .sort((a, b) => a.priority - b.priority);
+    
+    // 如果视频源有专属播放器，添加到第一位
+    if (vodSource?.playUrl) {
+      const vodSourcePlayer: IframePlayerConfig = {
+        id: `vod_source_${vodSource.key}`,
+        name: `${vodSource.name}播放器`,
+        url: vodSource.playUrl,
+        priority: 0,
+        timeout: 10000,
+        enabled: true,
+      };
+      return [vodSourcePlayer, ...backupPlayers];
+    }
+    
+    return backupPlayers;
+  }, [players, vodSource]);
 
   const currentPlayer = enabledPlayers[currentPlayerIndex];
   const playerUrl = currentPlayer ? 
@@ -73,7 +90,9 @@ export function IframePlayer({
 
   // 切换到下一个播放器
   const tryNextPlayer = useCallback(() => {
-    if (loadAttempts >= enabledPlayers.length - 1) {
+    const maxAttempts = Math.min(enabledPlayers.length, 3); // 最多尝试3个播放器
+    
+    if (loadAttempts >= maxAttempts - 1) {
       setPlayerError(true);
       setIsLoading(false);
       return;
@@ -211,9 +230,11 @@ export function IframePlayer({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <h3 className="text-white text-xl font-bold mb-2">所有播放器均无法加载</h3>
+            <h3 className="text-white text-xl font-bold mb-2">播放器加载失败</h3>
             <p className="text-gray-400 text-sm mb-6">
-              已尝试 {enabledPlayers.length} 个播放器，建议稍后重试或更换视频源
+              已尝试 {Math.min(loadAttempts + 1, enabledPlayers.length)} / {enabledPlayers.length} 个播放器
+              {enabledPlayers.length > 3 && <span className="block mt-1 text-gray-500 text-xs">（为节省时间，最多尝试3个）</span>}
+              <span className="block mt-2">建议：尝试切换视频源或稍后重试</span>
             </p>
             <div className="space-y-3">
               <button

@@ -42,6 +42,9 @@ export default function PlayPage() {
   const [selectedVodSource, setSelectedVodSource] = useState<VodSource | null>(
     null
   );
+  const [currentVodSource, setCurrentVodSource] = useState<VodSource | null>(
+    null
+  );
 
   // 播放器配置和状态
   const [playerConfig, setPlayerConfig] = useState<PlayerConfig | null>(null);
@@ -135,6 +138,9 @@ export default function PlayPage() {
           setLoading(false);
           return;
         }
+
+        // 保存当前使用的视频源
+        setCurrentVodSource(source);
 
         // 获取详情
 
@@ -356,6 +362,7 @@ export default function PlayPage() {
                 playerConfig={playerConfig}
                 currentMode={playerMode}
                 currentIframePlayerIndex={currentIframePlayerIndex}
+                vodSource={currentVodSource}
                 onModeChange={setPlayerMode}
                 onIframePlayerChange={setCurrentIframePlayerIndex}
               />
@@ -375,6 +382,7 @@ export default function PlayPage() {
                 title={`${dramaDetail.name} - 第${currentEpisode + 1}集`}
                 mode={playerMode}
                 currentIframePlayerIndex={currentIframePlayerIndex}
+                vodSource={currentVodSource}
                 onProgress={() => {
                   // 播放进度更新
                 }}
@@ -419,7 +427,7 @@ export default function PlayPage() {
         </div>
 
         {/* 右侧：剧集信息和选择器 - Netflix风格 */}
-        <div className="w-full lg:w-[380px] xl:w-[420px] bg-zinc-900 overflow-y-auto lg:max-h-[calc(100vh-66px)] relative">
+        <div className="w-full lg:w-[380px] xl:w-[420px] bg-zinc-900 overflow-y-auto lg:max-h-[calc(100vh-65px)] relative">
           <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
             {/* 查看全部集数模式 */}
             {showAllEpisodes ? (
