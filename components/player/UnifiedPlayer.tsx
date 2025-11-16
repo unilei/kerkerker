@@ -121,20 +121,17 @@ export function UnifiedPlayer({
 
   // 监听外部mode变化，使用ref避免无限循环
   useEffect(() => {
-    // 清理之前的定时器
-    if (switchTimerRef.current) {
-      clearTimeout(switchTimerRef.current);
-      switchTimerRef.current = null;
+    // 如果 externalMode 为 undefined，不做处理（使用配置中的模式）
+    if (externalMode === undefined) {
+      return;
     }
     
     // 检查 externalMode 是否真正改变
     if (externalMode !== previousModeRef.current) {
-      // 更新ref
-      previousModeRef.current = externalMode;
-      
-      // 如果 externalMode 为 undefined，不做处理（使用配置中的模式）
-      if (externalMode === undefined) {
-        return;
+      // 清理之前的定时器
+      if (switchTimerRef.current) {
+        clearTimeout(switchTimerRef.current);
+        switchTimerRef.current = null;
       }
       
       // 如果currentMode已经有值且与新模式不同，先清空以卸载旧播放器
@@ -145,11 +142,15 @@ export function UnifiedPlayer({
         switchTimerRef.current = setTimeout(() => {
           if (!isMountedRef.current) return;
           setCurrentMode(externalMode);
+          // 在成功设置新模式后才更新 ref
+          previousModeRef.current = externalMode;
           switchTimerRef.current = null;
         }, 100);
       } else if (!currentMode) {
         // 首次加载，直接设置
         setCurrentMode(externalMode);
+        // 更新ref
+        previousModeRef.current = externalMode;
       }
     }
     
