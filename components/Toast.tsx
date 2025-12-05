@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 interface ToastProps {
   message: string;
@@ -51,7 +51,7 @@ export function Toast({ message, type = 'info', onClose, duration = 3000 }: Toas
 interface ConfirmDialogProps {
   title: string;
   message: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   onCancel: () => void;
   confirmText?: string;
   cancelText?: string;
@@ -67,6 +67,20 @@ export function ConfirmDialog({
   cancelText = '取消',
   danger = false
 }: ConfirmDialogProps) {
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleConfirm = async () => {
+    setIsLoading(true);
+    try {
+      await Promise.resolve(onConfirm());
+      // 操作成功后自动关闭弹框
+      onCancel();
+    } catch (error) {
+      console.error('操作失败:', error);
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
       <div className="bg-slate-800 rounded-xl shadow-2xl border border-slate-700 max-w-md w-full mx-4 animate-scale-in">
@@ -77,19 +91,21 @@ export function ConfirmDialog({
         <div className="flex gap-3 px-6 pb-6">
           <button
             onClick={onCancel}
-            className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition"
+            disabled={isLoading}
+            className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {cancelText}
           </button>
           <button
-            onClick={onConfirm}
-            className={`flex-1 px-4 py-2 text-white rounded-lg transition ${
+            onClick={handleConfirm}
+            disabled={isLoading}
+            className={`flex-1 px-4 py-2 text-white rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed ${
               danger
                 ? 'bg-red-600 hover:bg-red-700'
                 : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {confirmText}
+            {isLoading ? '处理中...' : confirmText}
           </button>
         </div>
       </div>

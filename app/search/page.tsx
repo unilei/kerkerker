@@ -1,9 +1,79 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense, useTransition, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Drama } from '@/types/drama';
 import { VodSource } from '@/types/drama';
+import DoubanCard from '@/components/DoubanCard';
+
+// 缓存键
+const SEARCH_CACHE_KEY = 'search_results_cache';
+
+// 缓存数据结构
+interface SearchCache {
+  keyword: string;
+  results: (Drama & { source: VodSource })[];
+  stats: { total: number; bySource: Record<string, number> };
+  sources: VodSource[];
+  timestamp: number;
+}
+
+// 安全存储缓存
+function saveSearchCache(data: SearchCache): void {
+  try {
+    const json = JSON.stringify(data);
+    // 超过 5MB 不缓存
+    if (json.length > 5 * 1024 * 1024) {
+      console.log('搜索结果超过 5MB，跳过缓存');
+      return;
+    }
+    sessionStorage.setItem(SEARCH_CACHE_KEY, json);
+    console.log(`💾 搜索结果已缓存: ${data.results.length} 条`);
+  } catch (e) {
+    // 存储失败，静默降级
+    console.warn('缓存存储失败:', e);
+  }
+}
+
+// 读取缓存
+function loadSearchCache(keyword: string): SearchCache | null {
+  try {
+    const cached = sessionStorage.getItem(SEARCH_CACHE_KEY);
+    if (!cached) return null;
+    
+    const data: SearchCache = JSON.parse(cached);
+    
+    // 检查关键词是否匹配
+    if (data.keyword !== keyword) return null;
+    
+    // 检查缓存是否过期（30分钟）
+    if (Date.now() - data.timestamp > 30 * 60 * 1000) {
+      sessionStorage.removeItem(SEARCH_CACHE_KEY);
+      return null;
+    }
+    
+    console.log(`📦 使用缓存的搜索结果: ${data.results.length} 条`);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function SearchSkeleton() {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-y-8 gap-x-4 animate-pulse">
+      {Array.from({ length: 12 }).map((_, i) => (
+        <div key={i} className="space-y-3">
+          <div className="aspect-2/3 bg-gray-800/50 rounded-lg w-full" />
+          <div className="space-y-2">
+            <div className="h-4 bg-gray-800/50 rounded w-3/4" />
+            <div className="h-3 bg-gray-800/50 rounded w-1/2" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function SearchContent() {
   const router = useRouter();
@@ -11,12 +81,134 @@ function SearchContent() {
   const queryKeyword = searchParams.get('q') || '';
   
   const [searchKeyword, setSearchKeyword] = useState(queryKeyword);
-  const [searchResults, setSearchResults] = useState<Drama[]>([]);
+  const [searchResults, setSearchResults] = useState<(Drama & { source: VodSource })[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [allSources, setAllSources] = useState<VodSource[]>([]);
   const [currentSource, setCurrentSource] = useState<VodSource | null>(null);
+  const [searchStats, setSearchStats] = useState<{ total: number; bySource: Record<string, number> }>({ total: 0, bySource: {} });
   
+  // 流式搜索进度
+  const [searchProgress, setSearchProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
+  
+  // 使用 useTransition 让渲染不阻塞用户交互
+  const [, startTransition] = useTransition();
+  
+  // 防止重复搜索
+  const searchingRef = useRef<string | null>(null);
+  
+  // 同步 URL 参数到本地搜索框状态
+  useEffect(() => {
+    setSearchKeyword(queryKeyword);
+  }, [queryKeyword]);
+  
+  // 执行流式搜索 - 每个源完成就立即显示结果
+  const performSearch = useCallback(async (keyword: string) => {
+    if (!keyword.trim()) return;
+    
+    setLoading(true);
+    setSearched(true);
+    setSearchResults([]);
+    setSearchStats({ total: 0, bySource: {} });
+    setSearchProgress({ completed: 0, total: 0 });
+    
+    try {
+      console.log(`🔍 开始流式搜索: ${keyword}`);
+      
+      // 使用流式搜索 API
+      const response = await fetch(`/api/drama/search-stream?q=${encodeURIComponent(keyword.trim())}`);
+      
+      if (!response.ok) {
+        throw new Error('搜索请求失败');
+      }
+      
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('无法读取响应流');
+      }
+      
+      const decoder = new TextDecoder();
+      let buffer = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        
+        // 解析 SSE 数据
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || ''; // 保留未完成的部分
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'init') {
+                // 初始化：设置总源数和源列表
+                console.log(`📡 开始搜索 ${data.totalSources} 个视频源`);
+                setSearchProgress({ completed: 0, total: data.totalSources });
+                setAllSources(data.sources.map((s: { key: string; name: string }) => ({ 
+                  key: s.key, 
+                  name: s.name,
+                  api: '' // API URL 不需要在前端
+                })));
+              } else if (data.type === 'result') {
+                // 收到单个源的结果 - 立即追加显示
+                console.log(`  ✅ ${data.sourceName} 找到 ${data.count} 个结果`);
+                
+                startTransition(() => {
+                  setSearchResults(prev => [...prev, ...data.results]);
+                  setSearchStats(prev => ({
+                    total: prev.total + data.count,
+                    bySource: {
+                      ...prev.bySource,
+                      [data.sourceKey]: data.count,
+                    },
+                  }));
+                });
+                
+                setSearchProgress(prev => ({ 
+                  ...prev, 
+                  completed: prev.completed + 1 
+                }));
+              } else if (data.type === 'done') {
+                console.log('📊 所有视频源搜索完成');
+                
+                // 搜索完成后缓存结果
+                setSearchResults(currentResults => {
+                  setSearchStats(currentStats => {
+                    setAllSources(currentSources => {
+                      saveSearchCache({
+                        keyword,
+                        results: currentResults,
+                        stats: currentStats,
+                        sources: currentSources,
+                        timestamp: Date.now(),
+                      });
+                      return currentSources;
+                    });
+                    return currentStats;
+                  });
+                  return currentResults;
+                });
+              }
+            } catch (e) {
+              console.error('解析 SSE 数据失败:', e);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('搜索失败:', error);
+      setSearchResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [startTransition]);
+
   // 从数据库加载视频源配置
   useEffect(() => {
     const loadSources = async () => {
@@ -36,69 +228,28 @@ function SearchContent() {
     loadSources();
   }, []);
 
-  // 执行搜索
-  const performSearch = useCallback(async (keyword: string, sourceKey?: string) => {
-    if (!keyword.trim()) return;
-    
-    // 检查是否有视频源
-    if (allSources.length === 0) {
-      setSearchResults([]);
-      setSearched(true);
-      return;
-    }
-    
-    setLoading(true);
-    setSearched(true);
-    
-    try {
-      const source = sourceKey 
-        ? allSources.find(s => s.key === sourceKey) 
-        : currentSource;
+  // 当搜索关键词变化时执行搜索
+  useEffect(() => {
+    if (queryKeyword && searchingRef.current !== queryKeyword) {
+      searchingRef.current = queryKeyword;
       
-      if (!source) {
-        setSearchResults([]);
+      // 先检查缓存
+      const cached = loadSearchCache(queryKeyword);
+      if (cached) {
+        // 使用缓存结果
+        setSearchResults(cached.results);
+        setSearchStats(cached.stats);
+        setAllSources(cached.sources);
+        setSearchProgress({ completed: cached.sources.length, total: cached.sources.length });
+        setSearched(true);
         setLoading(false);
         return;
       }
       
-      setCurrentSource(source);
-      
-      console.log(`🔍 使用 ${source.name} 搜索: ${keyword}`);
-      
-      const response = await fetch('/api/drama/list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source: source,
-          page: 1,
-          limit: 50,
-          keyword: keyword.trim(),
-        }),
-      });
-
-      const result = await response.json();
-      
-      if (result.code === 200 && result.data?.list) {
-        setSearchResults(result.data.list);
-        console.log(`✅ 找到 ${result.data.list.length} 个结果`);
-      } else {
-        setSearchResults([]);
-      }
-    } catch (error) {
-      console.error('搜索失败:', error);
-      setSearchResults([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentSource, allSources]);
-
-  // 初始搜索
-  useEffect(() => {
-    if (queryKeyword) {
+      // 无缓存，执行搜索
       performSearch(queryKeyword);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryKeyword]);
+  }, [queryKeyword, performSearch]);
 
   // 处理搜索提交
   const handleSearch = () => {
@@ -106,17 +257,9 @@ function SearchContent() {
     router.push(`/search?q=${encodeURIComponent(searchKeyword.trim())}`);
   };
 
-  // 切换播放源并重新搜索
-  const handleSourceChange = (sourceKey: string) => {
-    if (searchKeyword.trim()) {
-      performSearch(searchKeyword.trim(), sourceKey);
-    }
-  };
-
   // 点击影片 - 直接跳转播放页面
-  const handlePlayClick = (drama: Drama) => {
-    if (!currentSource) return;
-    router.push(`/play/${drama.id}?source=${currentSource.key}`);
+  const handlePlayClick = (drama: Drama & { source: VodSource }) => {
+    router.push(`/play/${drama.id}?source=${drama.source.key}`);
   };
 
   // 返回首页
@@ -125,183 +268,201 @@ function SearchContent() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-[#0a0a0a] text-white selection:bg-red-500/30">
       {/* 顶部导航栏 */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-black/95 backdrop-blur-md border-b border-gray-800/50">
-        <div className="px-4 md:px-12 py-3 md:py-4">
-          <div className="flex items-center justify-between mb-3 md:mb-4">
-            {/* 返回按钮 */}
-            <button
-              onClick={goBack}
-              className="flex items-center space-x-1 md:space-x-2 text-white hover:text-gray-300 transition-colors group"
-            >
-              <svg className="w-5 h-5 md:w-6 md:h-6 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              <span className="text-xs md:text-sm font-medium">返回</span>
-            </button>
+      <div className="sticky top-0 left-0 right-0 z-50 bg-[#0a0a0a]/95 backdrop-blur-xl border-b border-white/5 shadow-2xl shadow-black/50">
+        <div className="max-w-[2000px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center gap-4">
+            {/* 返回按钮和Logo */}
+            <div className="flex items-center gap-4 shrink-0">
+              <button
+                onClick={goBack}
+                className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors group"
+              >
+                <svg className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <h1 
+                className="text-xl font-bold tracking-tight cursor-pointer hidden sm:block"
+                onClick={goBack}
+              >
+                <span className="text-red-600">壳儿</span>
+                <span className="text-white ml-1">搜索</span>
+              </h1>
+            </div>
 
-            {/* Logo */}
-            <h1 className="text-red-600 text-xl md:text-2xl font-bold tracking-tight cursor-pointer hover:text-red-500 transition-colors" onClick={goBack}>
-              壳儿
-            </h1>
-          </div>
-
-          {/* 搜索框 */}
-          <div className="flex items-center space-x-2 md:space-x-3">
-            <div className="flex-1 max-w-4xl">
-              <div className="flex items-center bg-gray-900/80 border border-gray-700/50 rounded-lg overflow-hidden focus-within:border-red-600 focus-within:bg-gray-900 transition-all shadow-lg">
+            {/* 搜索框 */}
+            <div className="flex-1 max-w-2xl mx-auto">
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <svg className="w-5 h-5 text-gray-500 group-focus-within:text-red-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
                 <input
                   type="text"
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                   placeholder="搜索电影、电视剧、动漫..."
-                  className="flex-1 bg-transparent px-4 md:px-6 py-2.5 md:py-3 text-sm md:text-base outline-none placeholder-gray-500"
+                  className="w-full bg-white/5 border border-white/10 rounded-full py-2.5 pl-12 pr-12 text-sm md:text-base text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500/50 focus:bg-white/10 transition-all"
                   autoFocus
                 />
+                {searchKeyword && (
+                  <button 
+                    onClick={() => setSearchKeyword('')}
+                    className="absolute inset-y-0 right-14 pr-2 flex items-center"
+                  >
+                    <svg className="w-4 h-4 text-gray-500 hover:text-white transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
                 <button
                   onClick={handleSearch}
-                  disabled={loading}
-                  className="px-4 md:px-6 py-2.5 md:py-3 bg-red-600 hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="absolute inset-y-0 right-1.5 my-1.5 px-4 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-full transition-colors shadow-lg shadow-red-900/20"
                 >
-                  <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
+                  搜索
                 </button>
               </div>
             </div>
-
-            {/* 播放源选择器 */}
-            {allSources.length > 0 && currentSource ? (
-              <select
-                value={currentSource.key}
-                onChange={(e) => handleSourceChange(e.target.value)}
-                className="bg-gray-900/80 border border-gray-700/50 rounded-lg px-3 md:px-4 py-2.5 md:py-3 text-xs md:text-sm outline-none hover:border-gray-600 hover:bg-gray-900 transition-all cursor-pointer shadow-lg"
-              >
-                {allSources.map(source => (
-                  <option key={source.key} value={source.key}>{source.name}</option>
-                ))}
-              </select>
-            ) : (
-              <div className="bg-red-500/10 border border-red-500/50 rounded-lg px-4 py-2.5 text-xs md:text-sm text-red-400">
-                未配置视频源
-              </div>
-            )}
+            
+            <div className="w-10 sm:w-[88px] shrink-0" /> {/* Spacer for alignment */}
           </div>
+
+          {/* 视频源筛选器 - 只有在有结果或有源时显示 */}
+          {allSources.length > 0 && (
+            <div className="mt-4 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 overflow-x-auto scrollbar-hide">
+              <div className="flex items-center gap-2 min-w-max pb-1">
+                <button
+                  onClick={() => setCurrentSource(null)}
+                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
+                    currentSource === null
+                      ? 'bg-white text-black shadow-lg shadow-white/10'
+                      : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-transparent hover:border-white/10'
+                  }`}
+                >
+                  全部
+                  <span className="ml-1.5 opacity-60">{searchResults.length}</span>
+                </button>
+                {allSources.map(source => {
+                  const count = searchStats.bySource[source.key] || 0;
+                  if (count === 0 && searched && !loading) return null; // 搜索完成且无结果的源隐藏? 不，还是显示好，或者变灰
+                  
+                  return (
+                    <button
+                      key={source.key}
+                      onClick={() => setCurrentSource(source)}
+                      className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${
+                        currentSource?.key === source.key
+                          ? 'bg-red-600 text-white shadow-lg shadow-red-900/20'
+                          : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-transparent hover:border-white/10'
+                      }`}
+                    >
+                      {source.name}
+                      {count > 0 && (
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                          currentSource?.key === source.key ? 'bg-white/20 text-white' : 'bg-white/10 text-gray-500'
+                        }`}>
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
-      </nav>
+      </div>
 
       {/* 内容区域 */}
-      <div className="pt-32 md:pt-36 lg:pt-40 px-4 md:px-12 pb-12">
+      <div className="max-w-[2000px] mx-auto px-4 sm:px-6 lg:px-8 py-8 min-h-[60vh]">
+        {/* 状态反馈条 */}
+        {(loading || searched) && (
+          <div className="mb-8 flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2 text-gray-400">
+              {loading ? (
+                <>
+                  <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                  正在从 {searchProgress.total} 个源中搜索...
+                  <span className="ml-2 px-2 py-0.5 bg-white/5 rounded-md text-xs">
+                    已完成 {searchProgress.completed}/{searchProgress.total}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-white font-medium">{searchResults.length}</span> 个结果
+                  {queryKeyword && (
+                    <>
+                       · 关键词 <span className="text-white font-medium">&ldquo;{queryKeyword}&rdquo;</span>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 结果展示 */}
         {allSources.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-32">
-            <div className="text-center">
-              <div className="w-24 h-24 bg-red-500/10 rounded-full flex items-center justify-center mb-6 mx-auto">
-                <svg className="w-12 h-12 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-              </div>
-              <h3 className="text-xl md:text-2xl font-bold text-white mb-2">未配置视频源</h3>
-              <p className="text-gray-400 mb-6">请先在后台管理中配置视频源后再使用搜索功能</p>
-              <a
-                href="/admin/settings"
-                className="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-              >
-                前往配置
-              </a>
+          // 无视频源配置
+          <div className="flex flex-col items-center justify-center py-32 animate-fade-in">
+            <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6 border border-red-500/20">
+              <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
             </div>
+            <h3 className="text-xl font-bold text-white mb-2">未配置视频源</h3>
+            <p className="text-gray-400 mb-8 max-w-sm text-center">请先在后台管理中配置视频源后再使用搜索功能</p>
+            <a
+              href="/admin/settings"
+              className="px-8 py-3 bg-white text-black font-medium rounded-full hover:bg-gray-200 transition-colors"
+            >
+              前往配置
+            </a>
           </div>
-        ) : loading ? (
-          <div className="flex items-center justify-center py-24 md:py-32">
-            <div className="text-center animate-fade-in">
-              <div className="animate-spin rounded-full h-12 w-12 md:h-16 md:w-16 border-4 border-gray-700 border-t-red-600 mx-auto mb-4" />
-              <p className="text-gray-300 text-base md:text-lg font-medium">正在搜索...</p>
-              {currentSource && <p className="text-gray-500 text-xs md:text-sm mt-2">使用 {currentSource.name} 搜索中</p>}
-            </div>
-          </div>
-        ) : searched ? (
+        ) : (loading && searchResults.length === 0) ? (
+          // 初始加载中 (Skeleton)
+          <SearchSkeleton />
+        ) : searched || searchResults.length > 0 ? (
           searchResults.length > 0 ? (
             <div className="animate-fade-in">
-              <div className="mb-6 md:mb-8">
-                <h2 className="text-xl md:text-2xl lg:text-3xl font-bold text-white mb-2">
-                  搜索结果
-                </h2>
-                <p className="text-gray-400 text-xs md:text-sm">
-                  在 <span className="text-red-500 font-semibold">{currentSource?.name || '未知源'}</span> 中找到 <span className="text-white font-semibold">{searchResults.length}</span> 个结果
-                  {queryKeyword && <> · 关键词: <span className="text-white font-medium">&ldquo;{queryKeyword}&rdquo;</span></>}
-                </p>
-              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-y-8 gap-x-4">
+                {searchResults
+                  .filter(drama => !currentSource || drama.source.key === currentSource.key)
+                  .map((drama, index) => {
+                    const movieData = {
+                      id: String(drama.id),
+                      title: drama.name,
+                      cover: drama.pic,
+                      rate: drama.score || '',
+                      episode_info: drama.remarks || drama.note || '',
+                      is_new: false,
+                      playable: true,
+                      url: '', 
+                      cover_x: 0,
+                      cover_y: 0,
+                    };
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-3 md:gap-4 lg:gap-5">
-                {searchResults.map((drama) => (
-                  <div
-                    key={drama.id}
-                    onClick={() => handlePlayClick(drama)}
-                    className="group cursor-pointer transition-all duration-300 hover:scale-105 hover:z-10"
-                  >
-                    {/* 封面 */}
-                    <div className="relative aspect-[2/3] bg-gray-900 rounded-lg overflow-hidden mb-2 md:mb-3 shadow-lg group-hover:shadow-2xl transition-shadow">
-                      {drama.pic ? (
-                        <img
-                          src={drama.pic}
-                          alt={drama.name}
-                          className="w-full h-full object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-gray-600">
-                          <svg className="w-16 h-16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                        </div>
-                      )}
-                      
-                      {/* 悬停遮罩 */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center justify-center">
-                        <div className="text-center transform scale-75 group-hover:scale-100 transition-transform duration-300">
-                          <div className="w-12 h-12 md:w-14 md:h-14 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mb-2 mx-auto border-2 border-white/30">
-                            <svg className="w-6 h-6 md:w-7 md:h-7 text-white ml-1" fill="currentColor" viewBox="0 0 20 20">
-                              <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-                            </svg>
+                    return (
+                      <div
+                        key={`${drama.source.key}-${drama.id}-${index}`}
+                        className="relative group z-0 hover:z-50"
+                      >
+                        <div className="absolute top-2 left-2 z-40 flex gap-1 pointer-events-none">
+                          <div className="bg-black/60 backdrop-blur-md border border-white/10 text-white text-[10px] px-2 py-0.5 rounded-md shadow-xl">
+                            {drama.source.name}
                           </div>
-                          <p className="text-white text-xs md:text-sm font-bold drop-shadow-lg">立即播放</p>
                         </div>
+                        <DoubanCard
+                          movie={movieData}
+                          onSelect={() => handlePlayClick(drama)}
+                        />
                       </div>
-
-                      {/* 标签 */}
-                      {drama.remarks && (
-                        <div className="absolute top-2 right-2 bg-red-600 text-white text-xs px-2 py-1 rounded">
-                          {drama.remarks}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 信息 */}
-                    <div>
-                      <h3 className="text-white font-semibold text-xs md:text-sm mb-1 line-clamp-2 group-hover:text-red-400 transition-colors leading-tight">
-                        {drama.name}
-                      </h3>
-                      <div className="flex items-center space-x-1.5 md:space-x-2 text-[10px] md:text-xs text-gray-400">
-                        {drama.year && <span>{drama.year}</span>}
-                        {drama.area && (
-                          <>
-                            <span>•</span>
-                            <span>{drama.area}</span>
-                          </>
-                        )}
-                      </div>
-                      {drama.score && parseFloat(drama.score) > 0 && (
-                        <div className="flex items-center mt-1">
-                          <svg className="w-3 h-3 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                          </svg>
-                          <span className="text-yellow-500 text-xs ml-1 font-medium">{drama.score}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })}
               </div>
             </div>
           ) : (
@@ -313,8 +474,11 @@ function SearchContent() {
                 </svg>
               </div>
               <h3 className="text-xl font-bold text-white mb-2">未找到相关内容</h3>
-              <p className="text-gray-400 mb-6">
-                在 {currentSource?.name || '当前源'} 中搜索 &ldquo;{queryKeyword}&rdquo; 没有结果
+              <p className="text-gray-400 mb-2">
+                在所有 {allSources.length} 个视频源中搜索 &ldquo;{queryKeyword}&rdquo; 没有结果
+              </p>
+              <p className="text-gray-500 text-sm mb-6">
+                已搜索: {allSources.map(s => s.name).join('、')}
               </p>
               <div className="flex items-center space-x-4">
                 <button
@@ -330,24 +494,6 @@ function SearchContent() {
                   重新搜索
                 </button>
               </div>
-              
-              {/* 切换其他源提示 */}
-              {currentSource && allSources.length > 1 && (
-                <div className="mt-8 text-center">
-                  <p className="text-gray-500 text-sm mb-3">或尝试切换其他播放源：</p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {allSources.filter(s => s.key !== currentSource.key).slice(0, 5).map(source => (
-                    <button
-                      key={source.key}
-                      onClick={() => handleSourceChange(source.key)}
-                      className="px-4 py-2 bg-gray-900 hover:bg-gray-800 text-gray-300 hover:text-white text-sm rounded transition-colors"
-                    >
-                      {source.name}
-                    </button>
-                  ))}
-                </div>
-                </div>
-              )}
             </div>
           )
         ) : (
@@ -359,8 +505,11 @@ function SearchContent() {
               </svg>
             </div>
             <h3 className="text-xl font-bold text-white mb-2">搜索影视资源</h3>
-            <p className="text-gray-400">
-              输入关键词开始搜索{currentSource && <> · 当前使用 {currentSource.name}</>}
+            <p className="text-gray-400 mb-2">
+              输入关键词，将在 {allSources.length} 个视频源中搜索
+            </p>
+            <p className="text-gray-500 text-sm">
+              {allSources.map(s => s.name).join('、')}
             </p>
           </div>
         )}

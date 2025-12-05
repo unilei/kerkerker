@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Cloudflare Worker scripts (different runtime)
+    "docs/**",
   ]),
   {
     rules: {

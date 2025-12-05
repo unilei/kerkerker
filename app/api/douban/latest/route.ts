@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { createCache } from '@/lib/redis';
+import { doubanSearchSubjects, getProxyStatus } from '@/lib/douban-client';
 
 /**
  * 最新内容 API
@@ -18,7 +20,7 @@ interface LatestData {
   rate: string;
   url: string;
   cover: string;
-  [key: string]: unknown;
+  episode_info?: string;
 }
 
 interface CategoryData {
@@ -26,23 +28,24 @@ interface CategoryData {
   data: LatestData[];
 }
 
-// 内存缓存
-let cacheStore: { data: CategoryData[]; timestamp: number } | null = null;
-const CACHE_EXPIRATION = 30 * 60 * 1000; // 缓存30分钟（最新内容更新更频繁）
+// Redis 缓存配置
+const cache = createCache(1800); // 缓存30分钟（最新内容更新更频繁）
+const CACHE_KEY = 'douban:latest:all';
 
 export async function GET() {
   try {
-    // 检查缓存
-    if (cacheStore && Date.now() - cacheStore.timestamp < CACHE_EXPIRATION) {
+    // 检查 Redis 缓存
+    const cachedData = await cache.get<CategoryData[]>(CACHE_KEY);
+    if (cachedData) {
       return NextResponse.json({
         code: 200,
-        data: cacheStore.data,
-        source: 'cache',
-        cachedAt: new Date(cacheStore.timestamp).toISOString()
+        data: cachedData,
+        source: 'redis-cache'
       });
     }
 
-    console.log('🆕 开始获取最新内容数据...');
+    const proxyStatus = getProxyStatus();
+    console.log('🆕 开始获取最新内容数据...', proxyStatus.enabled ? `(代理: ${proxyStatus.count + " 个代理"})` : '');
 
     // 并行抓取最新内容数据
     const [
@@ -88,11 +91,8 @@ export async function GET() {
       }
     ];
 
-    // 更新缓存
-    cacheStore = {
-      data: resultData,
-      timestamp: Date.now()
-    };
+    // 更新 Redis 缓存
+    await cache.set(CACHE_KEY, resultData);
 
     console.log('✅ 最新内容数据获取成功');
 
@@ -123,29 +123,13 @@ export async function GET() {
  */
 async function fetchDoubanLatest(type: string, tag: string) {
   try {
-    const url = new URL('https://movie.douban.com/j/search_subjects');
-    url.searchParams.append('type', type);
-    url.searchParams.append('tag', tag);
-    url.searchParams.append('page_limit', '24');
-    url.searchParams.append('page_start', '0');
-    url.searchParams.append('sort', 'time'); // 按时间排序
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Referer': 'https://movie.douban.com/'
-      },
-      signal: AbortSignal.timeout(10000)
+    const data = await doubanSearchSubjects({
+      type,
+      tag,
+      page_limit: 24,
+      page_start: 0
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
     console.log(`✓ 抓取成功: ${tag} (${data.subjects?.length || 0}条)`);
-    
     return data;
   } catch (error) {
     console.error(`✗ 抓取失败: ${tag}`, error);
@@ -158,7 +142,7 @@ async function fetchDoubanLatest(type: string, tag: string) {
  * DELETE /api/douban/latest
  */
 export async function DELETE() {
-  cacheStore = null;
+  await cache.del(CACHE_KEY);
   
   return NextResponse.json({
     code: 200,

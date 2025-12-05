@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { doubanSearchSubjects, getProxyStatus } from '@/lib/douban-client';
 
 /**
  * 电影分类 API
@@ -17,7 +18,7 @@ interface MovieData {
   rate: string;
   url: string;
   cover: string;
-  [key: string]: unknown;
+  episode_info?: string;
 }
 
 interface CategoryData {
@@ -41,7 +42,8 @@ export async function GET() {
       });
     }
 
-    console.log('🎬 开始获取电影分类数据...');
+    const proxyStatus = getProxyStatus();
+    console.log('🎬 开始获取电影分类数据...', proxyStatus.enabled ? `(代理: ${proxyStatus.count + " 个代理"})` : '');
 
     // 并行抓取各类电影数据
     const [
@@ -116,8 +118,7 @@ export async function GET() {
     });
 
   } catch (error) {
-    console.error('❌ 电影分类数据获取失败:', error);
-    
+  
     return NextResponse.json(
       {
         code: 500,
@@ -134,28 +135,13 @@ export async function GET() {
  */
 async function fetchDoubanMovies(type: string, tag: string) {
   try {
-    const url = new URL('https://movie.douban.com/j/search_subjects');
-    url.searchParams.append('type', type);
-    url.searchParams.append('tag', tag);
-    url.searchParams.append('page_limit', '24');
-    url.searchParams.append('page_start', '0');
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Referer': 'https://movie.douban.com/'
-      },
-      signal: AbortSignal.timeout(10000)
+    const data = await doubanSearchSubjects({
+      type,
+      tag,
+      page_limit: 24,
+      page_start: 0
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
     console.log(`✓ 抓取成功: ${tag} (${data.subjects?.length || 0}条)`);
-    
     return data;
   } catch (error) {
     console.error(`✗ 抓取失败: ${tag}`, error);

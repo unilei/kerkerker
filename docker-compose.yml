@@ -1,0 +1,75 @@
+services:
+  # Next.js 应用（生产环境）
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kerkerker-app
+    ports:
+      - "3008:3000"
+    environment:
+      - NODE_ENV=production
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - MONGODB_URI=mongodb://mongodb:27017/kerkerker
+      - TMDB_API_KEY=${TMDB_API_KEY}
+      - TMDB_BASE_URL=${TMDB_BASE_URL}
+      - TMDB_IMAGE_BASE=${TMDB_IMAGE_BASE}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - kerkerker-network
+    restart: unless-stopped
+
+  # Redis 缓存服务
+  redis:
+    image: redis:7-alpine
+    container_name: kerkerker-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - kerkerker-network
+    restart: unless-stopped
+
+  # MongoDB 数据库服务
+  mongodb:
+    image: mongo:7
+    container_name: kerkerker-mongodb
+    ports:
+      - "27018:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=kerkerker
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kerkerker-network
+    restart: unless-stopped
+
+networks:
+  kerkerker-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local
+  mongodb-data:
+    driver: local
+  mongodb-config:
+    driver: local

@@ -22,7 +22,7 @@ export default function DoubanCard({ movie, onSelect }: DoubanCardProps) {
       className="group relative cursor-pointer transition-all duration-300 hover:scale-102 hover:z-10"
     >
       {/* 海报图片 */}
-      <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-gray-800">
+      <div className="relative aspect-2/3 overflow-hidden rounded-lg bg-gray-800">
         {!imageError ? (
           <img
             src={imageUrl}
@@ -62,7 +62,7 @@ export default function DoubanCard({ movie, onSelect }: DoubanCardProps) {
       </div>
 
       {/* 悬浮信息层 */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-lg flex flex-col justify-end p-4">
+      <div className="absolute inset-0 bg-linear-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-lg flex flex-col justify-end p-4">
         <h3 className="text-white font-bold text-base mb-2 line-clamp-2">
           {movie.title}
         </h3>

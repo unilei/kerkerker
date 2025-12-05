@@ -1,0 +1,28 @@
+# 开发环境 Dockerfile - 支持热重载
+
+FROM node:20-alpine
+
+# 安装必要工具
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+# 复制依赖文件
+COPY package.json package-lock.json* ./
+
+# 安装所有依赖（包括 devDependencies）
+RUN npm install && \
+    npm cache clean --force
+
+# 复制应用代码（会被 volume 覆盖）
+COPY . .
+
+# 设置环境变量
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# 暴露端口
+EXPOSE 3000
+
+# 启动开发服务器
+CMD ["npm", "run", "dev"]

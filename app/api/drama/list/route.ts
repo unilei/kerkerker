@@ -61,14 +61,41 @@ export async function POST(request: NextRequest) {
     });
 
     if (!response.ok) {
-      throw new Error('API请求失败');
+      throw new Error(`HTTP ${response.status}`);
     }
 
-    const data: DramaListResponse = await response.json();
+    // 读取响应文本
+    const responseText = await response.text();
+    
+    // 如果是XML或HTML响应，直接返回空结果
+    if (responseText.startsWith('<?xml') || responseText.startsWith('<!DOCTYPE') || responseText.startsWith('<html')) {
+      return NextResponse.json({
+        code: 200,
+        msg: 'success',
+        data: { list: [], page: 1, pagecount: 0, limit: 24, total: 0 },
+      });
+    }
+
+    // 解析JSON
+    let data: DramaListResponse;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      // JSON解析失败，静默返回空结果
+      return NextResponse.json({
+        code: 200,
+        msg: 'success',
+        data: { list: [], page: 1, pagecount: 0, limit: 24, total: 0 },
+      });
+    }
 
     // 检查API响应
     if (data.code !== 1) {
-      throw new Error(`API返回错误: ${data.msg || '未知错误'}`);
+      return NextResponse.json({
+        code: 200,
+        msg: 'success',
+        data: { list: [], page: 1, pagecount: 0, limit: 24, total: 0 },
+      });
     }
 
     // 格式化数据
@@ -106,7 +133,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error('Drama list API error:', error);
+    // 简短错误日志，避免输出冗长堆栈
+    const errMsg = error instanceof Error ? error.message : 'Unknown error';
+    console.warn(`[Drama API] 请求失败: ${errMsg}`);
 
     const errorResult: ApiResponse<DramaListData> = {
       code: 500,

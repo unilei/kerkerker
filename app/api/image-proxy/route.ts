@@ -70,7 +70,7 @@ async function fetchImageWithProxy(url: string): Promise<Response> {
         console.log(`✓ ${proxy.name} 成功`);
         return response;
       }
-    } catch (error) {
+    } catch {
       console.log(`✗ ${proxy.name} 失败`);
     }
     

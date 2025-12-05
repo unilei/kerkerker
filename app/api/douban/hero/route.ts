@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { createCache } from '@/lib/redis';
+import { doubanSearchSubjects, doubanSubjectAbstract, getProxyStatus } from '@/lib/douban-client';
 
 /**
  * Hero Banner API
@@ -32,44 +34,31 @@ interface HeroMovie {
   description?: string;
 }
 
-// 内存缓存
-let cacheStore: { data: HeroMovie[] | null; timestamp: number } | null = null;
-const CACHE_EXPIRATION = 60 * 60 * 1000; // 缓存1小时
+// Redis 缓存配置
+const cache = createCache(3600); // 缓存1小时
+const CACHE_KEY = 'douban:hero:movies';
 
 export async function GET() {
   try {
-    // 检查缓存
-    if (cacheStore && Date.now() - cacheStore.timestamp < CACHE_EXPIRATION && cacheStore.data) {
+    // 检查 Redis 缓存
+    const cachedData = await cache.get<HeroMovie[]>(CACHE_KEY);
+    if (cachedData) {
       return NextResponse.json({
         code: 200,
-        data: cacheStore.data,
-        source: 'cache'
+        data: cachedData,
+        source: 'redis-cache'
       });
     }
 
-    console.log('🎬 开始获取 Hero Banner 数据...');
+    const proxyStatus = getProxyStatus();
+    console.log('🎬 开始获取 Hero Banner 数据...', proxyStatus.enabled ? `(代理: ${proxyStatus.count + " 个代理"})` : '(无代理)');
 
-    // 获取豆瓣热映电影
-    const hotMoviesUrl = new URL('https://movie.douban.com/j/search_subjects');
-    hotMoviesUrl.searchParams.append('type', '');
-    hotMoviesUrl.searchParams.append('tag', '热门');
-    hotMoviesUrl.searchParams.append('page_limit', '20');
-    hotMoviesUrl.searchParams.append('page_start', '0');
-
-    const response = await fetch(hotMoviesUrl.toString(), {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Referer': 'https://movie.douban.com/'
-      },
-      signal: AbortSignal.timeout(10000)
+    // 获取豆瓣热映电影（使用统一客户端）
+    const data = await doubanSearchSubjects({
+      tag: '热门',
+      page_limit: 20,
+      page_start: 0
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
     
     if (!data.subjects || data.subjects.length === 0) {
       throw new Error('未获取到电影数据');
@@ -183,25 +172,15 @@ export async function GET() {
       let releaseYear = null;
       
       try {
-        const detailResponse = await fetch(`https://movie.douban.com/j/subject_abstract?subject_id=${movie.id}`, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-            'Referer': 'https://movie.douban.com/'
-          },
-          signal: AbortSignal.timeout(5000)
-        });
+        movieDetail = await doubanSubjectAbstract(movie.id);
+        // 从详情中提取年份
+        releaseYear = movieDetail?.subject?.release_year || null;
         
-        if (detailResponse.ok) {
-          movieDetail = await detailResponse.json();
-          // 从详情中提取年份
-          releaseYear = movieDetail?.subject?.release_year || null;
-          
-          // 如果没有 release_year，尝试从 title 中提取
-          if (!releaseYear && movieDetail?.subject?.title) {
-            const yearMatch = movieDetail.subject.title.match(/\((\d{4})\)/);
-            if (yearMatch) {
-              releaseYear = yearMatch[1];
-            }
+        // 如果没有 release_year，尝试从 title 中提取
+        if (!releaseYear && movieDetail?.subject?.title) {
+          const yearMatch = movieDetail.subject.title.match(/\((\d{4})\)/);
+          if (yearMatch) {
+            releaseYear = yearMatch[1];
           }
         }
       } catch {
@@ -219,29 +198,34 @@ export async function GET() {
       };
       
       // 从 TMDB 获取横向 backdrop，传递年份信息以提高匹配准确度
-      const tmdbBackdrop = await searchTMDB(movie.title, releaseYear);
+      const tmdbBackdrop = await searchTMDB(movie.title, releaseYear ?? undefined);
+      
+      // 如果 TMDB 未匹配成功，返回 null（后续会被过滤掉）
+      if (!tmdbBackdrop) {
+        return null;
+      }
       
       return {
         id: movie.id,
         title: movie.title,
         rate: movie.rate,
         cover: getHighQualityPoster(coverUrl),
-        poster_horizontal: tmdbBackdrop || getHighQualityPoster(coverUrl), // 使用 TMDB backdrop，失败则使用豆瓣高清图
+        poster_horizontal: tmdbBackdrop, // 使用 TMDB backdrop
         poster_vertical: getHighQualityPoster(coverUrl), // 使用豆瓣高清竖向海报
         url: movie.url,
         episode_info: movie.episode_info || '',
-        genres: movieDetail?.subject?.genres || [],
-        description: movieDetail?.subject?.intro || ''
+        genres: movieDetail?.subject?.types || [],
+        description: movieDetail?.subject?.short_comment?.content || ''
       };
     });
 
-    const heroDataList = await Promise.all(heroDataPromises);
+    const heroDataListRaw = await Promise.all(heroDataPromises);
+    
+    // 过滤掉 TMDB 未匹配的数据
+    const heroDataList = heroDataListRaw.filter((item): item is NonNullable<typeof item> => item !== null);
 
-    // 更新缓存
-    cacheStore = {
-      data: heroDataList,
-      timestamp: Date.now()
-    };
+    // 更新 Redis 缓存
+    await cache.set(CACHE_KEY, heroDataList);
 
     console.log('✅ Hero Banner 数据获取成功，共', heroDataList.length, '部电影');
 
@@ -270,7 +254,7 @@ export async function GET() {
  * DELETE /api/douban/hero
  */
 export async function DELETE() {
-  cacheStore = null;
+  await cache.del(CACHE_KEY);
   
   return NextResponse.json({
     code: 200,

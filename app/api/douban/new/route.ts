@@ -1,10 +1,6 @@
 import { NextResponse } from 'next/server';
-
-// 缓存数据接口
-interface CacheData {
-  data: CategoryData[];
-  timestamp: number;
-}
+import { createCache } from '@/lib/redis';
+import { doubanSearchSubjects, getProxyStatus } from '@/lib/douban-client';
 
 interface CategoryData {
   name: string;
@@ -17,9 +13,9 @@ interface CategoryData {
   }>;
 }
 
-// 内存缓存（简单实现，生产环境建议使用 Redis）
-let cacheStore: CacheData | null = null;
-const CACHE_EXPIRATION = 60 * 60 * 24 * 1000; // 缓存1天（毫秒）
+// Redis 缓存配置
+const cache = createCache(86400); // 缓存1天（秒）
+const CACHE_KEY = 'douban:new:all';
 
 /**
  * 豆瓣数据实时抓取 API
@@ -32,17 +28,18 @@ const CACHE_EXPIRATION = 60 * 60 * 24 * 1000; // 缓存1天（毫秒）
  */
 export async function GET() {
   try {
-    // 检查缓存
-    if (cacheStore && Date.now() - cacheStore.timestamp < CACHE_EXPIRATION) {
+    // 检查 Redis 缓存
+    const cachedData = await cache.get<CategoryData[]>(CACHE_KEY);
+    if (cachedData) {
       return NextResponse.json({
         code: 200,
-        data: cacheStore.data,
-        source: 'memory-cache',
-        cachedAt: new Date(cacheStore.timestamp).toISOString()
+        data: cachedData,
+        source: 'redis-cache'
       });
     }
 
-    console.log('🚀 开始抓取豆瓣数据...');
+    const proxyStatus = getProxyStatus();
+    console.log('🚀 开始抓取豆瓣数据...', proxyStatus.enabled ? `(代理: ${proxyStatus.count + " 个代理"})` : '');
 
     // 并行抓取所有分类数据
     const [
@@ -106,11 +103,8 @@ export async function GET() {
       }
     ];
 
-    // 更新缓存
-    cacheStore = {
-      data: resultData,
-      timestamp: Date.now()
-    };
+    // 更新 Redis 缓存
+    await cache.set(CACHE_KEY, resultData);
 
     console.log('✅ 豆瓣数据抓取成功');
 
@@ -123,8 +117,7 @@ export async function GET() {
     });
 
   } catch (error) {
-    console.error('❌ 豆瓣数据抓取失败:', error);
-    
+   
     return NextResponse.json(
       {
         code: 500,
@@ -141,30 +134,13 @@ export async function GET() {
  */
 async function fetchDoubanData(type: string, tag: string) {
   try {
-    const url = new URL('https://movie.douban.com/j/search_subjects');
-    url.searchParams.append('type', type);
-    url.searchParams.append('tag', tag);
-    url.searchParams.append('page_limit', '24');
-    url.searchParams.append('page_start', '0');
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Referer': 'https://movie.douban.com/'
-      },
-      // 添加超时控制
-      signal: AbortSignal.timeout(10000)
+    const data = await doubanSearchSubjects({
+      type,
+      tag,
+      page_limit: 24,
+      page_start: 0
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    
     console.log(`✓ 抓取成功: ${tag} (${data.subjects?.length || 0}条)`);
-    
     return data;
   } catch (error) {
     console.error(`✗ 抓取失败: ${tag}`, error);
@@ -177,10 +153,10 @@ async function fetchDoubanData(type: string, tag: string) {
  * DELETE /api/douban/new
  */
 export async function DELETE() {
-  cacheStore = null;
+  await cache.del(CACHE_KEY);
   
   return NextResponse.json({
     code: 200,
-    message: '缓存已清除'
+    message: '新上线缓存已清除'
   });
 }
