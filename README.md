@@ -1,231 +1,174 @@
-# 全部由AI开发
+# Kerkerker - 影视资源聚合平台
 
-# 壳儿 - 这就是个壳儿，其他什么都没有
+一个基于 Next.js 的影视资源聚合平台，支持从 Dailymotion 获取资源，并提供美观的播放界面和后台管理功能。
 
-<div align="center">
+## 📋 目录
 
-[![Next.js](https://img.shields.io/badge/Next.js-16.0-black?style=flat-square&logo=next.js)](https://nextjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+- [功能特性](#-功能特性)
+- [环境配置](#-环境配置)
+- [豆瓣 API 代理](#-豆瓣-api-代理)
+- [Docker 部署](#-docker-部署)
+  - [构建镜像](#1-构建镜像)
+  - [生产环境部署](#2-生产环境部署)
+- [本地开发](#-本地开发)
 
-基于 Next.js 16 开发的现代化影视聚合平台，集成豆瓣评分、多视频源切换、智能匹配播放等功能
+## ✨ 功能特性
 
-[在线演示](https://kerkerker.vercel.app/) · [问题反馈](https://github.com/unilei/kerkerker/issues) · [功能建议](https://github.com/unilei/kerkerker/issues)
+- 🎬 聚合 Dailymotion 视频资源
+- 📝 豆瓣电影信息自动匹配
+- 📱 响应式设计，完美支持移动端
+- 🎨 现代化 UI/UX，类似 TikTok 的短剧刷视频体验
+- 🔐 后台管理系统，支持源管理和配置
 
-</div>
+## 🔧 环境配置
 
-## ✨ 核心特性
+项目依赖以下环境变量，请在项目根目录创建 `.env` 文件（开发环境）或在部署时设置环境变量。
 
-### 🎬 影视功能
-- **豆瓣集成**: 实时获取豆瓣 Top250、热映榜单、最新电影等数据
-- **智能匹配**: 自动匹配豆瓣影片与视频源，支持多源切换
-- **分类筛选**: 按类型、地区、年份等条件筛选
-- **播放历史**: 自动记录观看进度
+### 核心配置
 
-### 🎯 技术亮点
-- **数据库持久化**: MongoDB 数据库存储配置，跨设备共享
-- **后台管理**: 可视化管理视频源配置
-- **多播放器**: 支持多个解析接口切换
-- **响应式设计**: 完美适配桌面端和移动端
-- **无限滚动**: 流畅的瀑布流加载体验
-- **深色模式**: 护眼的夜间主题
+| 变量名 | 说明 | 必填 | 默认值 | 示例 |
+|--------|------|------|--------|------|
+| `MONGODB_URI` | MongoDB 数据库连接字符串 | **是** | - | `mongodb://user:pass@localhost:27017/kerkerker` |
+| `MONGODB_DB_NAME` | 数据库名称 | 否 | `kerkerker` | `kerkerker_prod` |
+| `ADMIN_PASSWORD` | 后台管理密码 | 否 | `admin123` | `MySecurePass123!` |
+| `NODE_ENV` | 环境模式 | 否 | `development` | `production` |
 
-## 🚀 快速开始
+### 豆瓣 API 代理配置
 
-### 一键部署到 Vercel
+由于豆瓣 API 有严格的 IP 访问限制，建议配置 Cloudflare Workers 代理。
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/unilei/kerkerker)
-
-点击上方按钮，一键部署到 Vercel（推荐）
-
-### 本地开发
-
-```bash
-# 克隆项目
-git clone https://github.com/yourusername/kerkerker.git
-cd kerkerker
-
-# 安装依赖
-npm install
-
-# 启动开发服务器
-npm run dev
-```
-
-访问 [http://localhost:3000](http://localhost:3000) 查看应用
-
-## 📝 配置说明
-
-### 1. 配置视频源
-
-部署完成后，访问后台管理页面配置视频源：
-
-```
-http://your-domain.com/admin/settings
-```
-
-**方式一：导入预设配置**
-- 点击「导入预设配置」按钮
-- 系统自动导入 9 个预配置的视频源
-
-**方式二：手动添加**
-```typescript
-{
-  key: 'source_key',       // 唯一标识
-  name: '资源站名称',      // 显示名称
-  api: 'https://api.example.com/api.php/provide/vod',  // API地址
-  playUrl: 'https://player.example.com/?url=',         // 播放器地址
-  type: 'json'             // 数据格式: json 或 xml
-}
-```
-
-### 2. 数据库配置
-
-应用使用 MongoDB 数据库, .env配置 MONGODB_URI变量
-
-**数据库表结构**：
-- `vod_sources`: 视频源配置
-- `vod_source_selection`: 当前选中的视频源
-
-## 🛠️ 技术栈
-
-| 技术 | 说明 | 版本 |
-|------|------|------|
-| [Next.js](https://nextjs.org/) | React 框架 | 16.0 |
-| [TypeScript](https://www.typescriptlang.org/) | 类型安全 | 5.0 |
-| [Tailwind CSS](https://tailwindcss.com/) | CSS 框架 | 4.0 |
-| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | SQLite 数据库 | Latest |
-| [React Hooks](https://react.dev/reference/react) | 状态管理 | - |
-
-## 📦 部署指南
-
-### Vercel（推荐）
-
-1. Fork 本项目到你的 GitHub
-2. 在 [Vercel](https://vercel.com) 导入项目
-3. 配置环境变量，ADMIN_PASSWORD= MONGODB_URI=
-4. 部署完成后访问 `/admin/settings` 配置视频源
-
-### Docker Hub 部署（生产环境推荐）
-
-#### 推送镜像
-
-```bash
-# 设置 Docker Hub 用户名
-export DOCKER_USERNAME=your-dockerhub-username
-
-# 推送到 Docker Hub
-npm run docker:push
-
-# 或推送特定版本
-bash scripts/push.sh v1.0.0
-```
-
-#### 服务器部署
-
-```bash
-# 1. 下载部署文件
-wget https://raw.githubusercontent.com/YOUR_REPO/kerkerker/main/docker-compose.server.yml
-wget https://raw.githubusercontent.com/YOUR_REPO/kerkerker/main/scripts/deploy-server.sh
-chmod +x deploy-server.sh
-
-# 2. 配置环境变量
-nano .env
-
-# 3. 部署
-export DOCKER_USERNAME=your-dockerhub-username
-bash deploy-server.sh
-```
-
-📖 详细说明：[Docker Hub 部署指南](DOCKER_HUB_GUIDE.md) | [服务器快速部署](SERVER_DEPLOY.md)
-
-### Docker 本地部署
-
-```bash
-# 开发环境
-npm run docker:dev
-
-# 生产环境
-npm run docker:prod
-
-# 停止服务
-npm run docker:stop
-```
-
-📖 详细说明：[Docker 指南](DOCKER_GUIDE.md)
- 
-### 自托管
-
-```bash
-# 构建
-npm run build
-
-# 使用 PM2 运行
-pm2 start npm --name "kerkerker" -- start
-
-# 或使用 forever
-forever start -c "npm start" ./
-```
-
-## ⚙️ 环境变量
-
-创建 `.env` 文件：
-
-```bash
-ADMIN_PASSWORD=
-MONGODB_URI=
-
-``` 
-
-## 🤝 贡献指南
-
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 提交 Pull Request
-
-## 📄 开源协议
-
-本项目基于 [MIT](LICENSE) 协议开源
-
-## 💡 常见问题
-
-<details>
-<summary><b>Q: 切换浏览器后配置丢失？</b></summary>
-
-A: 配置已存储在服务端 SQLite 数据库中，所有浏览器共享同一配置。如果仍然丢失，请检查数据库文件是否被正确持久化。
-</details>
-
-<details>
-<summary><b>Q: 找不到播放源？</b></summary>
-
-A: 
-1. 确保在 `/admin/settings` 中配置了视频源
-2. 检查视频源 API 是否可访问
-3. 尝试切换到其他视频源
-</details>
-
-<details>
-<summary><b>Q: 豆瓣数据加载失败？</b></summary>
-
-A: 部分地区可能无法访问豆瓣 API，可以配置代理或使用备用数据源。
-</details>
-
-## 🙏 致谢
-
-- 豆瓣数据: [豆瓣电影](https://movie.douban.com/)
-- UI 组件: [Tailwind CSS](https://tailwindcss.com/)
-- 开发框架: [Next.js](https://nextjs.org/)
+| 变量名 | 说明 | 必填 | 默认值 | 示例 |
+|--------|------|------|--------|------|
+| `DOUBAN_API_PROXY` | 豆瓣代理地址，支持多个（逗号分隔） | 否 | - | `https://proxy1.workers.dev,https://proxy2.workers.dev` |
+| `DOUBAN_PROXY_ACCOUNTS` | 部署代理用的 Cloudflare 账号信息 | 否 | - | `name:acc_id:token,name2:acc_id:token` |
 
 ---
 
-<div align="center">
+## 🚀 豆瓣 API 代理
 
-如果这个项目对你有帮助，请给个 ⭐️ Star 支持一下！
+为了解决豆瓣 API 的访问限制，本项目提供了配套的 Cloudflare Workers 代理脚本。
 
-Made with ❤️ by [unilei](https://github.com/unilei)
+### 方式一：自动部署（推荐）
 
-</div>
+我们提供了自动化脚本，可以将代理部署到你的 Cloudflare 账号（支持多账号部署以实现负载均衡）。
+
+1. **获取 Cloudflare 信息**：
+   - 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
+   - 获取 **Account ID** (在 URL 或 Workers 页面右侧)
+   - 获取 **API Token** (My Profile -> API Tokens -> Create Token -> 选择 "Edit Cloudflare Workers" 模板)
+
+2. **配置环境变量**：
+   在 `.env` 文件中添加 `DOUBAN_PROXY_ACCOUNTS`，格式为 `账号名:Account_ID:API_Token`，多个账号用逗号分隔：
+
+   ```bash
+   DOUBAN_PROXY_ACCOUNTS="account1:ID1:TOKEN1,account2:ID2:TOKEN2"
+   ```
+
+3. **运行部署**：
+
+   ```bash
+   ./scripts/deploy-douban-proxy.sh
+   ```
+
+4. **配置环境变量**：
+   部署成功后，脚本会输出 Worker URL。将这些 URL 添加到 `.env` 文件的 `DOUBAN_API_PROXY` 中。
+
+### 方式二：手动部署
+
+1. 登录 Cloudflare Dashboard。
+2. 进入 **Workers & Pages** -> **Create Application** -> **Create Worker**。
+3. 复制 `docs/cloudflare-douban-proxy.js` 的内容到编辑器中。
+4. 保存并部署。
+5. 将生成的 Worker URL 配置到 `DOUBAN_API_PROXY`。
+
+---
+
+## 🐳 Docker 部署
+
+本项目支持 Docker 容器化部署，提供了构建脚本和编排文件。
+
+### 1. 构建镜像
+
+构建脚本会自动构建多架构镜像（amd64/arm64）并推送到 Docker Hub。
+
+**前提条件**：
+
+- 已安装 Docker 和 Docker Buildx
+- 已登录 Docker Hub (`docker login`)
+
+**操作步骤**：
+
+1. 运行构建脚本：
+
+   ```bash
+   ./scripts/deploy-server.sh
+   ```
+
+   该脚本会：
+   - 检查 Docker Hub 登录状态
+   - 创建多架构构建器
+   - 构建镜像并推送到 `kerkerker-app`
+   - 更新本地部署
+
+### 2. 生产环境部署
+
+如果你只需要在服务器上运行应用，可以直接使用 `docker-compose.server.yml`。
+
+1. **准备文件**：
+   将以下文件上传到服务器目录：
+   - `docker-compose.server.yml`
+   - `.env` (包含生产环境配置)
+
+2. **修改配置**：
+   确保 `.env` 文件中已设置 `MONGODB_URI` 和其他必要变量。
+
+3. **启动服务**：
+
+   ```bash
+   # 使用 server 配置启动
+   docker-compose -f docker-compose.server.yml up -d
+   ```
+
+4. **查看日志**：
+
+   ```bash
+   docker-compose -f docker-compose.server.yml logs -f
+   ```
+
+5. **更新服务**：
+   如果要更新镜像，可以运行：
+
+   ```bash
+   docker-compose -f docker-compose.server.yml pull
+   docker-compose -f docker-compose.server.yml up -d
+   ```
+
+---
+
+## 💻 本地开发
+
+1. **安装依赖**：
+
+   ```bash
+   npm install
+   ```
+
+2. **启动 MongoDB**：
+   可以使用 Docker 启动本地 MongoDB：
+
+   ```bash
+   docker-compose up -d mongo
+   ```
+
+3. **运行开发服务器**：
+
+   ```bash
+   npm run dev
+   ```
+
+4. **访问应用**：
+   打开浏览器访问 `http://localhost:3000`
+
+## 📜 License
+
+MIT

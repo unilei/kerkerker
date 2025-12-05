@@ -18,14 +18,26 @@ log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # ==================== 账号配置 ====================
-# 格式: "账号名:Account_ID:API_Token"
-# 请替换为你的实际账号信息
-accounts=(
-    "ahagwybwqs:9fae3be270dc475cb9477a044c0f7c62:74078e98dc64451a92abf68345f858a8:68668fd9a675b7ce1ba8cb2928c40668:yTANe9wTLHCZmQgfY3Rk2Ct-ewUqEtbo12t03qzE"
-    "hwyybsb:ce3f147128f742d38309d8f5abc6202c:ad7eaf6b97cb40e89f9a409a7bd48005:2070201ded0c4b0f1e7a3ff949b10c4f:T2-4R34bvZle7y8o1B41bTjq_k-v7sADXYz8iGLy"
-    "xuliulei666:cf2e371f5da446919237b4068a45bdc6:4d378e35f66d406cad58dee363300931:daf67596a471764edb3728d118176be8:FkOgtG-8U0Ao065f8ZV4RLLu2mdeCsATMPt53NjV"
-    "eduproduct:a00ba13ca5464cd099e3cd55af3afb12:f9ac8122b0224763a13cc8007c14c44d:ae53c985981c1149f7fc4e157a1dc24f:aibkMkUA1SQJk3x34o7xTWDyLTWH-L5sTGL88HJg"
-)
+# 默认配置为空
+accounts=()
+
+# 尝试从 .env 文件加载
+if [ -f .env ]; then
+    # 读取 DOUBAN_PROXY_ACCOUNTS 变量
+    # 注意：这里简单粗暴地 grep，如果 .env 格式复杂可能需要更严谨的解析
+    # 假设格式：DOUBAN_PROXY_ACCOUNTS="acc1,acc2,acc3"
+    env_accounts=$(grep "^DOUBAN_PROXY_ACCOUNTS=" .env | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    
+    if [ -n "$env_accounts" ]; then
+        # 将逗号分隔的字符串转换为数组
+        IFS=',' read -ra accounts <<< "$env_accounts"
+    fi
+fi
+
+# 如果环境变量中没有配置，可以在这里硬编码（不推荐）
+# accounts=(
+#     "name:account_id:api_token"
+# )
 
 # 获取账号配置
 # 格式: "账号名:kv_id:kv_preview_id:acc_id:acc_token"
@@ -42,81 +54,26 @@ get_account_field() {
 # Worker 名称
 WORKER_NAME="douban-proxy"
 
+# Worker 代码源文件路径
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+WORKER_SOURCE_FILE="$PROJECT_ROOT/docs/cloudflare-douban-proxy.js"
+
 # 创建临时目录
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
 # 生成 Worker 代码
 generate_worker_code() {
-    cat > "$TEMP_DIR/index.js" << 'EOF'
-export default {
-  async fetch(request) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    
-    // 允许的豆瓣API路径及其对应的域名
-    const routeMap = {
-      '/j/search_subjects': 'https://movie.douban.com',
-      '/j/subject_abstract': 'https://movie.douban.com',
-      '/j/subject_suggest': 'https://movie.douban.com',
-      '/j/new_search_subjects': 'https://movie.douban.com',
-      '/v2/movie/subject/': 'https://api.douban.com',
-      '/v2/movie/search': 'https://api.douban.com',
-      '/v2/movie/in_theaters': 'https://api.douban.com',
-    };
-    
-    // 查找匹配的路由
-    let targetDomain = null;
-    for (const [prefix, domain] of Object.entries(routeMap)) {
-      if (path.startsWith(prefix)) {
-        targetDomain = domain;
-        break;
-      }
-    }
-    
-    if (!targetDomain) {
-      return new Response(JSON.stringify({ error: 'Path not allowed' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-      });
-    }
-    
-    const doubanUrl = targetDomain + path + url.search;
-    
-    const userAgents = [
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-    ];
-    const ua = userAgents[Math.floor(Math.random() * userAgents.length)];
-    
-    try {
-      const resp = await fetch(doubanUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': ua,
-          'Referer': 'https://movie.douban.com/',
-          'Accept': 'application/json',
-        },
-      });
-      
-      const text = await resp.text();
-      
-      return new Response(text, {
-        status: resp.status,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-      });
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-      });
-    }
-  },
-};
-EOF
+    if [ -f "$WORKER_SOURCE_FILE" ]; then
+        # 从源文件读取（跳过顶部的 JSDoc 注释块，保留其余代码）
+        awk '/^\/\*\*/,/\*\// {next} /^[[:space:]]*$/ && !code {next} {code=1; print}' "$WORKER_SOURCE_FILE" > "$TEMP_DIR/index.js"
+        log_info "使用 Worker 代码: $WORKER_SOURCE_FILE"
+    else
+        log_error "Worker 源文件不存在: $WORKER_SOURCE_FILE"
+        log_info "请确保 docs/cloudflare-douban-proxy.js 文件存在"
+        exit 1
+    fi
 }
 
 # 生成 wrangler.toml
@@ -181,11 +138,8 @@ show_help() {
   --dry-run      模拟运行
 
 配置方法:
-  编辑脚本中的 accounts 数组，添加你的账号信息:
-  accounts=(
-      "account1:ACCOUNT_ID:API_TOKEN"
-      "account2:ACCOUNT_ID:API_TOKEN"
-  )
+  在 .env 文件中设置 DOUBAN_PROXY_ACCOUNTS 环境变量:
+  DOUBAN_PROXY_ACCOUNTS="account1:ID:TOKEN,account2:ID:TOKEN"
 
 获取账号信息:
   1. 登录 https://dash.cloudflare.com/
