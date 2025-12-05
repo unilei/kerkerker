@@ -56,7 +56,7 @@ export function CategoryRow({
       <div className="relative group">
         <div className="flex overflow-x-auto space-x-3 md:space-x-4 pb-4 scrollbar-hide scroll-smooth">
           {displayMovies.map((movie) => (
-            <div key={movie.id} className="flex-shrink-0 w-40 sm:w-48 md:w-56">
+            <div key={movie.id} className="shrink-0 w-40 sm:w-48 md:w-56">
               <DoubanCard movie={movie} onSelect={onMovieClick} />
             </div>
           ))}

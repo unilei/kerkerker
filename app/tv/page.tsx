@@ -111,7 +111,7 @@ export default function TvPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-black via-gray-950 to-black text-white">
+    <div className="min-h-screen bg-linear-to-b from-black via-gray-950 to-black text-white">
       {/* 顶部导航栏 */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-black/90 backdrop-blur-md border-b border-gray-800/50">
         <div className="px-4 md:px-12 py-5">
@@ -127,7 +127,7 @@ export default function TvPage() {
               </div>
               <span className="text-sm md:text-base font-medium">返回</span>
             </button>
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight bg-gradient-to-r from-red-600 to-red-500 bg-clip-text text-transparent">壳儿</h1>
+            <h1 className="text-2xl md:text-3xl font-bold tracking-tight bg-linear-to-r from-red-600 to-red-500 bg-clip-text text-transparent">壳儿</h1>
           </div>
         </div>
       </nav>
@@ -135,7 +135,7 @@ export default function TvPage() {
       {/* Hero 区域 */}
       <div className="relative pt-24 pb-12 px-4 md:px-12 overflow-hidden">
         {/* 装饰性背景 */}
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-transparent to-purple-500/5" />
+        <div className="absolute inset-0 bg-linear-to-r from-blue-500/5 via-transparent to-purple-500/5" />
         <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
         <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
         
@@ -197,7 +197,7 @@ export default function TvPage() {
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
                       <span className="text-3xl">{getCategoryIcon(category.name)}</span>
-                      <span className="bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+                      <span className="bg-linear-to-r from-white to-gray-400 bg-clip-text text-transparent">
                         {category.name}
                       </span>
                     </h2>

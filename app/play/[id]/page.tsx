@@ -220,9 +220,9 @@ export default function PlayPage() {
     }
   }, [dramaDetail, currentEpisode, selectEpisode]);
 
-  // 返回列表
+  // 返回上一页
   const goBack = useCallback(() => {
-    router.push("/");
+    router.back();
   }, [router]);
 
   // 键盘快捷键
@@ -328,28 +328,36 @@ export default function PlayPage() {
   }
 
   return (
-    <div
-      className="h-screen"
-      style={{
-        backgroundAttachment: "fixed",
-        backgroundPosition: "center",
-        backgroundSize: "cover",
-        backgroundImage: "url(/movie-default-bg.jpg)",
-      }}
-    >
-      {/* 顶部导航栏 - Netflix风格 */}
-      <nav className="sticky top-0 z-450 bg-zinc-900/95 backdrop-blur-md border-b border-white/5">
-        <div className="max-w-[1920px] mx-auto px-4 md:px-6 h-[48px] md:h-[64px] flex items-center justify-between">
-          <button
-            onClick={() => router.back()}
-            className="text-white text-lg font-bold flex items-center gap-2 hover:text-red-500 transition-all duration-300 group"
-          >
-            <div className="p-2 rounded-lg bg-white/5 group-hover:bg-red-500/10 transition-all duration-300">
-              <ArrowLeft className="w-5 h-5" />
-            </div>
-            <span className="hidden sm:inline">返回</span>
-          </button>
-          <div className="flex items-center gap-3 md:gap-4">
+    <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-red-500/30 flex flex-col">
+      {/* 顶部导航栏 */}
+      <nav className="sticky top-0 z-50 bg-[#0a0a0a]/95 backdrop-blur-xl border-b border-white/5 shadow-2xl shadow-black/50">
+        <div className="max-w-[2000px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={goBack}
+              className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors group"
+              title="返回"
+            >
+              <ArrowLeft className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
+            </button>
+            <h1
+              className="text-xl font-bold tracking-tight cursor-pointer hidden sm:block"
+              onClick={() => router.push("/")}
+            >
+              <span className="text-red-600">壳儿</span>
+              <span className="text-white ml-1">播放</span>
+            </h1>
+
+            {/* 剧集标题 - 移动端或空间不足时显示 */}
+            <div className="h-6 w-px bg-white/10 mx-2 hidden md:block" />
+            <span className="text-sm text-gray-400 hidden md:block max-w-xs truncate">
+              {dramaDetail.name}
+              <span className="mx-2 text-gray-600">/</span>
+              <span className="text-gray-300">第 {currentEpisode + 1} 集</span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
             {/* 多源选择器 */}
             <SourceSelector
               sources={availableSources}
@@ -371,10 +379,10 @@ export default function PlayPage() {
             {!isRightPanelOpen && (
               <button
                 onClick={() => setIsRightPanelOpen(true)}
-                className="p-2 rounded-lg bg-white/5 hover:bg-red-500/10 transition-all duration-300 group"
-                title="打开侧边栏"
+                className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-all"
+                title="打开剧集列表"
               >
-                <ChevronLeft className="w-5 h-5 text-white group-hover:text-red-500 transform rotate-180" />
+                <ChevronLeft className="w-5 h-5 transform rotate-180" />
               </button>
             )}
           </div>
@@ -382,284 +390,115 @@ export default function PlayPage() {
       </nav>
 
       {/* 主内容区域 - 左右分栏布局 */}
-      <div className="max-w-[1920px] mx-auto flex flex-col lg:flex-row gap-0 p-0 relative">
+      <div className="flex-1 max-w-[2000px] mx-auto w-full flex flex-col lg:flex-row overflow-hidden">
         {/* 左侧：视频播放器区域 */}
-        <div className={`flex-1 transition-all duration-300 ${isRightPanelOpen ? 'lg:min-h-[calc(100vh-65px)]' : 'lg:h-[calc(100vh-65px)]'}`}>
-          <div className={`relative w-full bg-black overflow-hidden ${isRightPanelOpen ? 'aspect-video h-full' : 'h-full'}`}>
-            {dramaDetail && dramaDetail.episodes.length > 0 && (
-              <UnifiedPlayer
-                videoUrl={dramaDetail.episodes[currentEpisode].url}
-                title={`${dramaDetail.name} - 第${currentEpisode + 1}集`}
-                mode={playerMode}
-                currentIframePlayerIndex={currentIframePlayerIndex}
-                vodSource={currentVodSource}
-                onProgress={() => {
-                  // 播放进度更新
-                }}
-                onEnded={() => {
-                  if (currentEpisode < dramaDetail.episodes.length - 1) {
-                    selectEpisode(currentEpisode + 1);
-                  }
-                }}
-                onIframePlayerSwitch={(index) => {
-                  setCurrentIframePlayerIndex(index);
-                }}
-              />
-            )}
+        <div
+          className={`flex-1 flex flex-col bg-black relative transition-all duration-300 ${
+            isRightPanelOpen ? "lg:mr-0" : ""
+          }`}
+        >
+          <div className="relative w-full h-0 pb-[56.25%] bg-black">
+            <div className="absolute inset-0">
+              {dramaDetail && dramaDetail.episodes.length > 0 && (
+                <UnifiedPlayer
+                  videoUrl={dramaDetail.episodes[currentEpisode].url}
+                  title={`${dramaDetail.name} - 第${currentEpisode + 1}集`}
+                  mode={playerMode}
+                  currentIframePlayerIndex={currentIframePlayerIndex}
+                  vodSource={currentVodSource}
+                  onProgress={() => {}}
+                  onEnded={() => {
+                    if (currentEpisode < dramaDetail.episodes.length - 1) {
+                      selectEpisode(currentEpisode + 1);
+                    }
+                  }}
+                  onIframePlayerSwitch={(index) => {
+                    setCurrentIframePlayerIndex(index);
+                  }}
+                />
+              )}
+            </div>
           </div>
 
-          {/* 视频下方信息 - 仅在移动端显示 */}
-          <div className="lg:hidden p-4 bg-linear-to-b from-gray-900/90 to-gray-950/90 backdrop-blur-sm">
-            <h1 className="text-sm font-bold text-white mb-2 tracking-tight">
+          {/* 视频下方信息 - 移动端/小屏显示 */}
+          <div className="lg:hidden p-4 bg-[#0a0a0a] border-b border-white/5">
+            <h1 className="text-lg font-bold text-white mb-2 line-clamp-1">
               {dramaDetail.name}
             </h1>
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              {dramaDetail.year && (
-                <span className="px-2 py-1 bg-linear-to-r from-red-600 to-red-500 text-white font-semibold rounded-md shadow-lg shadow-red-500/30">
-                  {dramaDetail.year}
-                </span>
-              )}
-              {dramaDetail.type && (
-                <span className="text-gray-300 font-medium">
-                  {dramaDetail.type}
-                </span>
-              )}
-              {dramaDetail.area && (
-                <>
-                  <span className="text-gray-600">•</span>
-                  <span className="text-gray-300 font-medium">
-                    {dramaDetail.area}
-                  </span>
-                </>
-              )}
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span className="text-red-500 font-medium">
+                第 {currentEpisode + 1} 集
+              </span>
+              <span>•</span>
+              <span>{dramaDetail.year}</span>
+              <span>•</span>
+              <span>{dramaDetail.type}</span>
             </div>
           </div>
         </div>
 
-        {/* 右侧：剧集信息和选择器 - Netflix风格 */}
-        {isRightPanelOpen ? (
-          <div className="w-full lg:w-[380px] xl:w-[420px] bg-zinc-900 overflow-y-auto lg:max-h-[calc(100vh-65px)] relative">
-            {/* 关闭按钮 */}
-            <button
-              onClick={() => setIsRightPanelOpen(false)}
-              className="absolute top-4 right-4 z-20 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all duration-300 group"
-              title="关闭侧边栏"
-            >
-              <X className="w-5 h-5 text-gray-300 group-hover:text-white" />
-            </button>
-            <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
-            {/* 查看全部集数模式 */}
-            {showAllEpisodes ? (
-              <div className="space-y-4 lg:space-y-6">
-                {/* 返回按钮和标题 */}
-                <div className="flex items-center justify-between sticky top-0 bg-zinc-900 pb-4 border-b border-white/10 z-10">
-                  <button
-                    onClick={() => setShowAllEpisodes(false)}
-                    className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors group"
-                  >
-                    <svg
-                      className="w-5 h-5 group-hover:-translate-x-1 transition-transform"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M15 19l-7-7 7-7"
-                      />
-                    </svg>
-                    <span className="text-xs lg:text-sm font-semibold">
-                      返回
-                    </span>
-                  </button>
-                </div>
+        {/* 右侧：剧集信息和选择器 */}
+        {isRightPanelOpen && (
+          <div className="w-full lg:w-[400px] bg-[#121212] border-l border-white/5 flex flex-col h-[50vh] lg:h-[calc(100vh-64px)] overflow-hidden transition-all duration-300 shadow-xl shadow-black/50 z-10">
+            {/* 侧边栏头部 */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#121212]">
+              <h2 className="text-base font-bold text-white">剧集列表</h2>
+              <button
+                onClick={() => setIsRightPanelOpen(false)}
+                className="p-1.5 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+                title="关闭侧边栏"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-                {/* 剧集标题 */}
-                <div>
-                  <h1 className="text-sm lg:text-2xl font-bold text-white mb-2 line-clamp-2 tracking-tight leading-tight">
-                    {dramaDetail.name}
-                  </h1>
-                  <p className="text-xs lg:text-sm text-gray-400">选择集数</p>
-                </div>
-
-                {/* 所有集数网格 */}
-                <div className="grid grid-cols-4 gap-2.5 pb-6">
-                  {dramaDetail.episodes.map((episode, index) => (
+            <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent p-6">
+              {/* 查看全部集数模式 */}
+              {showAllEpisodes ? (
+                <div className="space-y-4 lg:space-y-6">
+                  {/* 返回按钮和标题 */}
+                  <div className="flex items-center justify-between sticky top-0 bg-[#121212] pb-4 border-b border-white/10 z-10">
                     <button
-                      key={index}
-                      onClick={() => {
-                        selectEpisode(index);
-                        setShowAllEpisodes(false);
-                      }}
-                      className={`aspect-video rounded-lg text-xs lg:text-sm flex flex-col items-center justify-center p-2 transition-all duration-300 group relative overflow-hidden ${
-                        currentEpisode === index
-                          ? "bg-linear-to-br from-red-600 to-red-500 text-white shadow-lg shadow-red-500/40 ring-2 ring-red-400 scale-105"
-                          : "bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white hover:scale-105 backdrop-blur-sm"
-                      }`}
+                      onClick={() => setShowAllEpisodes(false)}
+                      className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors group"
                     >
-                      {episode.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <>
-                {/* 剧集标题和信息 - 仅在桌面端显示 */}
-                <div className="hidden lg:block animate-fade-in">
-                  <h1 className="text-2xl font-bold text-white mb-4 line-clamp-2 tracking-tight leading-tight">
-                    {dramaDetail.name}
-                  </h1>
-                  <div className="flex flex-wrap items-center gap-2 text-sm mb-4">
-                    {dramaDetail.year && (
-                      <span className="px-3 py-1.5 bg-linear-to-r from-red-600 to-red-500 text-white font-semibold rounded-md shadow-lg shadow-red-500/30">
-                        {dramaDetail.year}
+                      <svg
+                        className="w-5 h-5 group-hover:-translate-x-1 transition-transform"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 19l-7-7 7-7"
+                        />
+                      </svg>
+                      <span className="text-xs lg:text-sm font-semibold">
+                        返回
                       </span>
-                    )}
-                    {dramaDetail.remarks && (
-                      <span className="px-3 py-1.5 border border-white/20 text-gray-200 rounded-md font-medium backdrop-blur-sm bg-white/5">
-                        {dramaDetail.remarks}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300 font-medium">
-                    {dramaDetail.type && <span>{dramaDetail.type}</span>}
-                    {dramaDetail.area && (
-                      <>
-                        <span className="text-gray-600">•</span>
-                        <span>{dramaDetail.area}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* 演职人员 */}
-                {(dramaDetail.actor || dramaDetail.director) && (
-                  <div className="space-y-3 text-xs lg:text-sm lg:border-t lg:border-white/10 lg:pt-6">
-                    {dramaDetail.actor && (
-                      <div className="group">
-                        <span className="text-gray-400 font-semibold">
-                          主演：
-                        </span>
-                        <span className="text-gray-200 group-hover:text-white transition-colors">
-                          {dramaDetail.actor}
-                        </span>
-                      </div>
-                    )}
-                    {dramaDetail.director && (
-                      <div className="group">
-                        <span className="text-gray-400 font-semibold">
-                          导演：
-                        </span>
-                        <span className="text-gray-200 group-hover:text-white transition-colors">
-                          {dramaDetail.director}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* 简介 */}
-                {dramaDetail.blurb && (
-                  <div className="border-t border-white/10 pt-4 lg:pt-6">
-                    <h3 className="text-xs lg:text-sm font-semibold text-gray-400 mb-2">
-                      剧情简介
-                    </h3>
-                    <div className="relative">
-                      <p
-                        className={`text-xs lg:text-sm text-gray-300 leading-relaxed transition-all duration-300 ${
-                          isDescriptionExpanded ? "" : "line-clamp-4"
-                        }`}
-                        dangerouslySetInnerHTML={{
-                          __html: dramaDetail.blurb
-                            .replace(/<[^>]*>/g, "")
-                            .replace(/&nbsp;/g, " "),
-                        }}
-                      />
-                      {dramaDetail.blurb.length > 100 && (
-                        <button
-                          onClick={() =>
-                            setIsDescriptionExpanded(!isDescriptionExpanded)
-                          }
-                          className="mt-2 text-xs lg:text-sm text-red-500 hover:text-red-400 font-semibold transition-colors flex items-center gap-1 group"
-                        >
-                          {isDescriptionExpanded ? (
-                            <>
-                              <span>显示更少</span>
-                              <svg
-                                className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M5 15l7-7 7 7"
-                                />
-                              </svg>
-                            </>
-                          ) : (
-                            <>
-                              <span>显示更多</span>
-                              <svg
-                                className="w-4 h-4 group-hover:translate-y-0.5 transition-transform"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M19 9l-7 7-7-7"
-                                />
-                              </svg>
-                            </>
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* 选集区域 */}
-                <div className="border-t border-white/10 pt-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xs lg:text-sm font-bold text-white tracking-tight">
-                      选集
-                    </h2>
-                  </div>
-
-                  {/* 上一集/下一集按钮 */}
-                  <div className="flex gap-3 mb-4">
-                    <button
-                      onClick={previousEpisode}
-                      disabled={currentEpisode === 0}
-                      className="flex-1 px-4 py-2.5 bg-white/10 hover:bg-white/20 disabled:bg-white/5 disabled:text-gray-600 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold backdrop-blur-sm shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100"
-                    >
-                      上一集
-                    </button>
-                    <button
-                      onClick={nextEpisode}
-                      disabled={
-                        currentEpisode === dramaDetail.episodes.length - 1
-                      }
-                      className="flex-1 px-4 py-2.5 bg-linear-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 disabled:from-gray-800 disabled:to-gray-800 disabled:text-gray-600 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold shadow-lg shadow-red-500/30 hover:shadow-red-500/50 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100 disabled:shadow-none"
-                    >
-                      下一集
                     </button>
                   </div>
 
-                  {/* 集数预览（显示前12集） */}
-                  <div className="grid grid-cols-4 gap-2.5 mb-4">
-                    {dramaDetail.episodes.slice(0, 12).map((episode, index) => (
+                  {/* 剧集标题 */}
+                  <div>
+                    <h1 className="text-sm lg:text-2xl font-bold text-white mb-2 line-clamp-2 tracking-tight leading-tight">
+                      {dramaDetail.name}
+                    </h1>
+                    <p className="text-xs lg:text-sm text-gray-400">选择集数</p>
+                  </div>
+
+                  {/* 所有集数网格 */}
+                  <div className="grid grid-cols-4 gap-2.5 pb-6">
+                    {dramaDetail.episodes.map((episode, index) => (
                       <button
                         key={index}
-                        onClick={() => selectEpisode(index)}
-                        className={`rounded-lg flex flex-col text-xs lg:text-sm items-center justify-center p-2 transition-all duration-300 group relative overflow-hidden ${
+                        onClick={() => {
+                          selectEpisode(index);
+                          setShowAllEpisodes(false);
+                        }}
+                        className={`aspect-video rounded-lg text-xs lg:text-sm flex flex-col items-center justify-center p-2 transition-all duration-300 group relative overflow-hidden ${
                           currentEpisode === index
                             ? "bg-linear-to-br from-red-600 to-red-500 text-white shadow-lg shadow-red-500/40 ring-2 ring-red-400 scale-105"
                             : "bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white hover:scale-105 backdrop-blur-sm"
@@ -669,35 +508,203 @@ export default function PlayPage() {
                       </button>
                     ))}
                   </div>
-
-                  {/* 查看全部按钮 */}
-                  {dramaDetail.episodes.length > 12 && (
-                    <button
-                      onClick={() => setShowAllEpisodes(true)}
-                      className="w-full px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold backdrop-blur-sm shadow-lg hover:shadow-xl flex items-center justify-center gap-2 group"
-                    >
-                      <span>查看全部</span>
-                      <svg
-                        className="w-4 h-4 group-hover:translate-x-1 transition-transform"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 5l7 7-7 7"
-                        />
-                      </svg>
-                    </button>
-                  )}
                 </div>
-              </>
-            )}
+              ) : (
+                <>
+                  {/* 剧集标题和信息 - 仅在桌面端显示 */}
+                  <div className="hidden lg:block animate-fade-in pb-4">
+                    <h1 className="text-2xl font-bold text-white mb-4 line-clamp-2 tracking-tight leading-tight">
+                      {dramaDetail.name}
+                    </h1>
+                    <div className="flex flex-wrap items-center gap-2 text-sm mb-4">
+                      {dramaDetail.year && (
+                        <span className="px-3 py-1.5 bg-linear-to-r from-red-600 to-red-500 text-white font-semibold rounded-md shadow-lg shadow-red-500/30">
+                          {dramaDetail.year}
+                        </span>
+                      )}
+                      {dramaDetail.remarks && (
+                        <span className="px-3 py-1.5 border border-white/20 text-gray-200 rounded-md font-medium backdrop-blur-sm bg-white/5">
+                          {dramaDetail.remarks}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300 font-medium">
+                      {dramaDetail.type && <span>{dramaDetail.type}</span>}
+                      {dramaDetail.area && (
+                        <>
+                          <span className="text-gray-600">•</span>
+                          <span>{dramaDetail.area}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 演职人员 */}
+                  {(dramaDetail.actor || dramaDetail.director) && (
+                    <div className="space-y-3 text-xs lg:text-sm lg:border-t lg:border-white/10 lg:py-6">
+                      {dramaDetail.actor && (
+                        <div className="group">
+                          <span className="text-gray-400 font-semibold">
+                            主演：
+                          </span>
+                          <span className="text-gray-200 group-hover:text-white transition-colors">
+                            {dramaDetail.actor}
+                          </span>
+                        </div>
+                      )}
+                      {dramaDetail.director && (
+                        <div className="group">
+                          <span className="text-gray-400 font-semibold">
+                            导演：
+                          </span>
+                          <span className="text-gray-200 group-hover:text-white transition-colors">
+                            {dramaDetail.director}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 简介 */}
+                  {dramaDetail.blurb && (
+                    <div className="border-t border-white/10 pt-4 lg:py-6">
+                      <h3 className="text-xs lg:text-sm font-semibold text-gray-400 mb-2">
+                        剧情简介
+                      </h3>
+                      <div className="relative">
+                        <p
+                          className={`text-xs lg:text-sm text-gray-300 leading-relaxed transition-all duration-300 ${
+                            isDescriptionExpanded ? "" : "line-clamp-4"
+                          }`}
+                          dangerouslySetInnerHTML={{
+                            __html: dramaDetail.blurb
+                              .replace(/<[^>]*>/g, "")
+                              .replace(/&nbsp;/g, " "),
+                          }}
+                        />
+                        {dramaDetail.blurb.length > 100 && (
+                          <button
+                            onClick={() =>
+                              setIsDescriptionExpanded(!isDescriptionExpanded)
+                            }
+                            className="mt-2 text-xs lg:text-sm text-red-500 hover:text-red-400 font-semibold transition-colors flex items-center gap-1 group"
+                          >
+                            {isDescriptionExpanded ? (
+                              <>
+                                <span>显示更少</span>
+                                <svg
+                                  className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M5 15l7-7 7 7"
+                                  />
+                                </svg>
+                              </>
+                            ) : (
+                              <>
+                                <span>显示更多</span>
+                                <svg
+                                  className="w-4 h-4 group-hover:translate-y-0.5 transition-transform"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M19 9l-7 7-7-7"
+                                  />
+                                </svg>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 选集区域 */}
+                  <div className="border-t border-white/10 pt-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-xs lg:text-sm font-bold text-white tracking-tight">
+                        选集
+                      </h2>
+                    </div>
+
+                    {/* 上一集/下一集按钮 */}
+                    <div className="flex gap-3 mb-4">
+                      <button
+                        onClick={previousEpisode}
+                        disabled={currentEpisode === 0}
+                        className="flex-1 px-4 py-2.5 bg-white/10 hover:bg-white/20 disabled:bg-white/5 disabled:text-gray-600 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold backdrop-blur-sm shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100"
+                      >
+                        上一集
+                      </button>
+                      <button
+                        onClick={nextEpisode}
+                        disabled={
+                          currentEpisode === dramaDetail.episodes.length - 1
+                        }
+                        className="flex-1 px-4 py-2.5 bg-linear-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 disabled:from-gray-800 disabled:to-gray-800 disabled:text-gray-600 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold shadow-lg shadow-red-500/30 hover:shadow-red-500/50 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100 disabled:shadow-none"
+                      >
+                        下一集
+                      </button>
+                    </div>
+
+                    {/* 集数预览（显示前12集） */}
+                    <div className="grid grid-cols-4 gap-2.5 mb-4">
+                      {dramaDetail.episodes
+                        .slice(0, 12)
+                        .map((episode, index) => (
+                          <button
+                            key={index}
+                            onClick={() => selectEpisode(index)}
+                            className={`rounded-lg flex flex-col text-xs lg:text-sm items-center justify-center p-2 transition-all duration-300 group relative overflow-hidden ${
+                              currentEpisode === index
+                                ? "bg-linear-to-br from-red-600 to-red-500 text-white shadow-lg shadow-red-500/40 ring-2 ring-red-400 scale-105"
+                                : "bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white hover:scale-105 backdrop-blur-sm"
+                            }`}
+                          >
+                            {episode.name}
+                          </button>
+                        ))}
+                    </div>
+
+                    {/* 查看全部按钮 */}
+                    {dramaDetail.episodes.length > 12 && (
+                      <button
+                        onClick={() => setShowAllEpisodes(true)}
+                        className="w-full px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all duration-300 text-xs lg:text-sm font-semibold backdrop-blur-sm shadow-lg hover:shadow-xl flex items-center justify-center gap-2 group"
+                      >
+                        <span>查看全部</span>
+                        <svg
+                          className="w-4 h-4 group-hover:translate-x-1 transition-transform"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 5l7 7-7 7"
+                          />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-        </div>
-        ) : null}
+        )}
       </div>
     </div>
   );

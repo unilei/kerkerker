@@ -195,131 +195,150 @@ export default function MovieDetailPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black">
-      {/* 背景图 */}
-      <div className="fixed inset-0 z-0">
+    <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-red-500/30">
+      {/* 沉浸式背景 - 调整透明度以保持整体暗黑风格一致性 */}
+      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className="absolute inset-0 bg-[#0a0a0a] z-0" />
         <img
           src={getImageUrl(cover)}
           alt={title}
-          className="w-full h-full object-cover opacity-20 blur-2xl scale-110"
+          className="absolute inset-0 w-full h-full object-cover opacity-20 blur-3xl scale-110"
         />
-        <div className="absolute inset-0 bg-linear-to-t from-black via-black/80 to-black/60" />
+        <div className="absolute inset-0 bg-linear-to-t from-[#0a0a0a] via-[#0a0a0a]/80 to-transparent z-10" />
+        <div className="absolute inset-0 bg-linear-to-r from-[#0a0a0a] via-[#0a0a0a]/60 to-transparent z-10" />
       </div>
 
-      {/* 顶部导航 */}
-      <nav className="sticky top-0 z-50 bg-black/80 backdrop-blur-md border-b border-white/5">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center">
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-white hover:text-red-500 transition-colors group"
-          >
-            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-            <span>返回首页</span>
-          </Link>
+      {/* 导航栏 - 保持与其他页面一致的顶部栏风格 */}
+      <nav className="sticky top-0 left-0 right-0 z-50 bg-[#0a0a0a]/95 backdrop-blur-xl border-b border-white/5 shadow-2xl shadow-black/50">
+        <div className="max-w-[2000px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center gap-4">
+            <Link
+              href="/"
+              className="p-2 -ml-2 rounded-full hover:bg-white/10 transition-colors group"
+            >
+              <ArrowLeft className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
+            </Link>
+            <h1 
+              className="text-xl font-bold tracking-tight cursor-pointer hidden sm:block"
+              onClick={() => router.push('/')}
+            >
+              <span className="text-red-600">壳儿</span>
+              <span className="text-white ml-1">详情</span>
+            </h1>
+          </div>
         </div>
       </nav>
 
       {/* 主内容 */}
-      <main className="relative z-10 max-w-6xl mx-auto px-4 py-8">
-        <div className="flex flex-col md:flex-row gap-8">
-          {/* 海报 */}
-          <div className="shrink-0 w-full md:w-72 lg:w-80">
-            <div className="aspect-2/3 rounded-xl overflow-hidden shadow-2xl shadow-black/50">
+      <main className="relative z-20 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
+        <div className="flex flex-col lg:flex-row gap-12 items-start">
+          {/* 左侧海报 */}
+          <div className="w-full max-w-[300px] mx-auto lg:w-[360px] shrink-0 animate-fade-in">
+            <div className="aspect-2/3 rounded-2xl overflow-hidden shadow-2xl shadow-black/80 border border-white/10 relative group">
               <img
                 src={getImageUrl(cover)}
                 alt={title}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
               />
+              <div className="absolute inset-0 bg-linear-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
             </div>
           </div>
 
-          {/* 信息区域 */}
-          <div className="flex-1 space-y-6">
-            {/* 标题 */}
-            <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white leading-tight">
-              {title}
-            </h1>
-
-            {/* 元信息 */}
-            <div className="flex flex-wrap items-center gap-3">
-              {rate && (
-                <div className="flex items-center gap-1.5 text-yellow-400 bg-yellow-400/10 px-3 py-1.5 rounded-lg">
-                  <Star className="w-5 h-5 fill-current" />
-                  <span className="font-bold text-lg">{rate}</span>
-                </div>
-              )}
-              {episodeInfo && (
-                <span className="text-gray-300 bg-white/10 px-3 py-1.5 rounded-lg text-sm">
-                  {episodeInfo}
-                </span>
-              )}
+          {/* 右侧信息 & 播放源 */}
+          <div className="flex-1 w-full animate-fade-in delay-100">
+            {/* 标题和元数据 */}
+            <div className="mb-10">
+              <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight tracking-tight drop-shadow-xl">
+                {title}
+              </h1>
+              
+              <div className="flex flex-wrap items-center gap-3 text-sm md:text-base">
+                {rate && (
+                  <div className="flex items-center gap-1.5 bg-yellow-500/20 text-yellow-400 px-3 py-1.5 rounded-lg border border-yellow-500/20 backdrop-blur-sm shadow-sm">
+                    <Star className="w-4 h-4 fill-current" />
+                    <span className="font-bold">{rate}</span>
+                  </div>
+                )}
+                {episodeInfo && (
+                  <div className="px-3 py-1.5 bg-white/10 rounded-lg text-gray-200 backdrop-blur-sm border border-white/5">
+                    {episodeInfo}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 播放源区域 */}
-            <div className="pt-6 border-t border-white/10">
-              <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                播放源
-                {searchStatus === "searching" && totalSourceCount > 0 && (
-                  <span className="text-sm font-normal text-gray-400">
-                    ({searchedSourceCount}/{totalSourceCount})
-                  </span>
+            <div className="bg-[#121212]/40 backdrop-blur-2xl rounded-3xl border border-white/5 p-6 md:p-8 shadow-2xl shadow-black/20">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-white flex items-center gap-3">
+                  <span className="w-1 h-6 bg-red-600 rounded-full"/>
+                  播放源
+                  {searchStatus === "searching" && totalSourceCount > 0 && (
+                    <span className="text-sm font-normal text-gray-400 ml-2 flex items-center gap-2">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      正在搜索... {searchedSourceCount}/{totalSourceCount}
+                    </span>
+                  )}
+                </h2>
+                
+                {/* 统计信息 */}
+                {(availableSources.length > 0) && (
+                  <div className="text-sm text-gray-400 bg-black/20 px-3 py-1 rounded-full border border-white/5">
+                    已找到 <span className="text-white font-bold">{availableSources.length}</span> 个可用源
+                  </div>
                 )}
-              </h2>
+              </div>
 
-              {/* 搜索中但还没找到源 */}
+              {/* 搜索中且无结果 */}
               {searchStatus === "searching" && availableSources.length === 0 && (
-                <div className="flex items-center gap-3 text-gray-400 py-8">
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                  <span>正在搜索可用播放源... {searchedSourceCount > 0 && `(${searchedSourceCount}/${totalSourceCount})`}</span>
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-red-500" />
+                  <span>正在全网搜索资源...</span>
                 </div>
               )}
 
-              {/* 搜索成功或搜索中已找到源 */}
+              {/* 有结果 */}
               {(searchStatus === "success" || (searchStatus === "searching" && availableSources.length > 0)) && (
-                <div className="space-y-4">
-                  {/* 快速播放按钮 */}
+                <div className="space-y-8">
+                  {/* 快速播放 */}
                   <button
                     onClick={handleQuickPlay}
-                    className="w-full md:w-auto flex items-center justify-center gap-3 bg-red-600 hover:bg-red-500 text-white px-8 py-4 rounded-xl font-bold text-lg transition-all hover:scale-105 shadow-lg shadow-red-600/30"
+                    className="w-full md:w-auto flex items-center justify-center gap-3 bg-red-600 hover:bg-red-500 text-white px-10 py-4 rounded-2xl font-bold text-lg transition-all hover:scale-[1.02] active:scale-[0.98] shadow-xl shadow-red-900/20 group"
                   >
-                    <Play className="w-6 h-6 fill-current" />
-                    <span>立即播放</span>
+                    <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Play className="w-4 h-4 fill-red-600 text-red-600 ml-0.5" />
+                    </div>
+                    立即播放
                   </button>
 
-                  {/* 播放源列表 */}
-                  <div className="mt-6">
-                    <p className="text-sm text-gray-400 mb-3 flex items-center gap-2">
-                      {searchStatus === "searching" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>搜索中 {searchedSourceCount}/{totalSourceCount}，已找到 {availableSources.length} 个可用</span>
-                        </>
-                      ) : (
-                        <span>已搜索 {totalSourceCount || searchedSourceCount} 个源，找到 {availableSources.length} 个可用</span>
-                      )}
-                    </p>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {/* 列表 */}
+                  <div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
                       {availableSources.map((source, index) => (
                         <button
                           key={`${source.source_key}-${source.vod_id}`}
                           onClick={() => handlePlay(source)}
-                          className={`relative p-4 rounded-lg text-left transition-all hover:scale-105 ${
+                          className={`relative p-4 rounded-xl text-left transition-all duration-300 group border ${
                             index === 0
-                              ? "bg-red-600/20 border border-red-500/50 hover:bg-red-600/30"
-                              : "bg-white/5 border border-white/10 hover:bg-white/10"
+                              ? "bg-red-500/10 border-red-500/30 hover:bg-red-500/20 hover:border-red-500/50"
+                              : "bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10"
                           }`}
                         >
-                          <div className="font-medium text-white text-sm">
-                            {source.source_name}
+                          <div className="flex items-start justify-between mb-2">
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${
+                              index === 0 ? "bg-red-500/20 text-red-300" : "bg-white/10 text-gray-400 group-hover:text-white"
+                            }`}>
+                              {source.source_name}
+                            </span>
+                            {source.match_confidence === "high" && (
+                              <span className="flex items-center gap-1 text-[10px] text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded-full border border-green-500/20">
+                                精确
+                              </span>
+                            )}
                           </div>
-                          <div className="text-xs text-gray-400 mt-1 truncate">
+                          <div className="font-medium text-white text-sm line-clamp-1 group-hover:text-red-400 transition-colors">
                             {source.vod_name}
                           </div>
-                          {source.match_confidence === "high" && (
-                            <span className="absolute top-2 right-2 text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded">
-                              精确
-                            </span>
-                          )}
                         </button>
                       ))}
                     </div>
@@ -329,34 +348,40 @@ export default function MovieDetailPage() {
 
               {/* 未找到 */}
               {searchStatus === "not_found" && (
-                <div className="text-center py-8 space-y-4">
-                  <div className="w-16 h-16 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto">
-                    <AlertCircle className="w-8 h-8 text-yellow-500" />
+                <div className="flex flex-col items-center justify-center py-12 gap-4">
+                  <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center">
+                    <AlertCircle className="w-8 h-8 text-gray-500" />
                   </div>
-                  <p className="text-gray-400">{errorMessage}</p>
+                  <div className="text-center">
+                    <p className="text-white font-medium mb-1">未找到匹配资源</p>
+                    <p className="text-sm text-gray-500">{errorMessage}</p>
+                  </div>
                   <button
                     onClick={() => searchPlaySources(true)}
-                    className="inline-flex items-center gap-2 text-red-500 hover:text-red-400 transition-colors"
+                    className="mt-2 px-6 py-2 bg-white/5 hover:bg-white/10 rounded-full text-sm text-gray-300 hover:text-white transition-colors border border-white/5 flex items-center gap-2"
                   >
                     <RefreshCw className="w-4 h-4" />
-                    <span>重新搜索</span>
+                    重新搜索
                   </button>
                 </div>
               )}
 
-              {/* 搜索出错 */}
+              {/* 错误状态 */}
               {searchStatus === "error" && (
-                <div className="text-center py-8 space-y-4">
-                  <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto">
+                <div className="flex flex-col items-center justify-center py-12 gap-4">
+                  <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center">
                     <AlertCircle className="w-8 h-8 text-red-500" />
                   </div>
-                  <p className="text-gray-400">{errorMessage}</p>
+                  <div className="text-center">
+                    <p className="text-white font-medium mb-1">搜索出错</p>
+                    <p className="text-sm text-gray-500">{errorMessage}</p>
+                  </div>
                   <button
                     onClick={() => searchPlaySources(true)}
-                    className="inline-flex items-center gap-2 text-red-500 hover:text-red-400 transition-colors"
+                    className="mt-2 px-6 py-2 bg-red-600 hover:bg-red-500 rounded-full text-sm text-white transition-colors shadow-lg shadow-red-900/20 flex items-center gap-2"
                   >
                     <RefreshCw className="w-4 h-4" />
-                    <span>重试</span>
+                    重试
                   </button>
                 </div>
               )}

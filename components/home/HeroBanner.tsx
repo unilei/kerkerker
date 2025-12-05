@@ -48,7 +48,7 @@ export function HeroBanner({ heroMovies, heroDataList, onMovieClick }: HeroBanne
   return (
     <div className="relative w-full group">
       {/* 海报容器 - 使用固定宽高比 */}
-      <div className="relative w-full aspect-[3/4] md:aspect-[12/5] overflow-hidden">
+      <div className="relative w-full aspect-3/4 md:aspect-12/5 overflow-hidden">
         {/* 轮播图片 */}
         {heroMovies.map((movie, index) => {
           const heroData = heroDataList[index];
@@ -188,7 +188,7 @@ export function HeroBanner({ heroMovies, heroDataList, onMovieClick }: HeroBanne
 // Hero Banner 骨架屏组件
 function HeroBannerSkeleton() {
   return (
-    <div className="relative w-full aspect-[9/16] md:aspect-[16/9] overflow-hidden bg-linear-to-br from-gray-900 via-gray-800 to-black animate-pulse">
+    <div className="relative w-full aspect-9/16 md:aspect-video overflow-hidden bg-linear-to-br from-gray-900 via-gray-800 to-black animate-pulse">
       {/* 渐变遮罩 */}
       <div className="absolute inset-0 bg-linear-to-t md:bg-linear-to-r from-black/95 via-black/70 md:via-black/50 to-transparent" />
       <div className="absolute inset-0 bg-linear-to-t from-black/90 via-transparent to-transparent" />
