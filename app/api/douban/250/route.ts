@@ -102,7 +102,7 @@ async function fetchTop250Batch(start: number) {
   try {
     const data = await doubanSearchSubjects({
       type: 'movie',
-      tag: '豆瓣高分',
+      tag: '豆瓣TOP250',
       page_limit: 25,
       page_start: start
     });

@@ -39,13 +39,13 @@ export function getCategoryPath(name: string): string {
   const pathMap: Record<string, string> = {
     豆瓣热映: "in_theaters",
     热门电视: "hot_tv",
-    国产剧: "hot_tv",
-    综艺: "hot_tv",
+    国产剧: "chinese_tv",
+    综艺: "variety",
     美剧: "us_tv",
     日剧: "jp_tv",
     韩剧: "kr_tv",
     日本动画: "anime",
-    纪录片: "hot_tv",
+    纪录片: "documentary",
   };
   return pathMap[name] || "hot_movies";
 }

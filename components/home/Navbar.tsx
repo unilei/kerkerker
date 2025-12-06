@@ -28,9 +28,9 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
 
   const navItems = [
     { href: "/", label: "首页", icon: Home },
-    { href: "/movies", label: "电影", icon: Film },
-    { href: "/tv", label: "电视剧", icon: Tv },
-    { href: "/latest", label: "最新", icon: Clock },
+    { href: "/browse/movies", label: "电影", icon: Film },
+    { href: "/browse/tv", label: "电视剧", icon: Tv },
+    { href: "/browse/latest", label: "最新", icon: Clock },
     { href: "/dailymotion", label: "短剧Motion", icon: Video },
     { href: "https://github.com/unilei/kerkerker", label: "Github", icon: Github, external: true },
   ];

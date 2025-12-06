@@ -22,6 +22,11 @@ const CACHE_TTL = {
   '/j/subject_abstract': 3600,    // 影片详情缓存 1 小时
   '/j/subject_suggest': 300,      // 搜索建议缓存 5 分钟
   '/j/new_search_subjects': 300,  // 新片榜缓存 5 分钟
+  '/j/search_tags': 86400,        // 搜索标签缓存 24 小时
+  '/j/celebrity/': 3600,          // 影人信息缓存 1 小时
+  '/j/tv/subject/': 3600,         // 电视剧集信息缓存 1 小时
+  '/j/subject/': 1800,            // 短评/推荐/剧照缓存 30 分钟
+  '/j/chart/': 600,               // 榜单缓存 10 分钟
   '/v2/': 3600,                   // v2 API 缓存 1 小时
   'default': 60,                  // 默认缓存 1 分钟
 };
@@ -44,10 +49,17 @@ const USER_AGENTS = [
 
 // 允许的豆瓣 API 路径及其对应的域名
 const ROUTE_MAP = {
+  // Web API (movie.douban.com)
   '/j/search_subjects': 'https://movie.douban.com',
   '/j/subject_abstract': 'https://movie.douban.com',
   '/j/subject_suggest': 'https://movie.douban.com',
   '/j/new_search_subjects': 'https://movie.douban.com',
+  '/j/search_tags': 'https://movie.douban.com',
+  '/j/celebrity/': 'https://movie.douban.com',
+  '/j/tv/subject/': 'https://movie.douban.com',
+  '/j/subject/': 'https://movie.douban.com',
+  '/j/chart/': 'https://movie.douban.com',
+  // Frodo API (api.douban.com)
   '/v2/movie/subject/': 'https://api.douban.com',
   '/v2/movie/search': 'https://api.douban.com',
   '/v2/movie/in_theaters': 'https://api.douban.com',

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { createCache } from '@/lib/redis';
 import { doubanSearchSubjects, getProxyStatus } from '@/lib/douban-client';
 
 /**
@@ -26,19 +27,19 @@ interface CategoryData {
   data: MovieData[];
 }
 
-// 内存缓存
-let cacheStore: { data: CategoryData[]; timestamp: number } | null = null;
-const CACHE_EXPIRATION = 60 * 60 * 1000; // 缓存1小时
+// Redis 缓存配置
+const cache = createCache(3600); // 缓存1小时
+const CACHE_KEY = 'douban:movies:all';
 
 export async function GET() {
   try {
-    // 检查缓存
-    if (cacheStore && Date.now() - cacheStore.timestamp < CACHE_EXPIRATION) {
+    // 检查 Redis 缓存
+    const cachedData = await cache.get<CategoryData[]>(CACHE_KEY);
+    if (cachedData) {
       return NextResponse.json({
         code: 200,
-        data: cacheStore.data,
-        source: 'cache',
-        cachedAt: new Date(cacheStore.timestamp).toISOString()
+        data: cachedData,
+        source: 'redis-cache'
       });
     }
 
@@ -56,14 +57,14 @@ export async function GET() {
       romance,
       animation
     ] = await Promise.all([
-      fetchDoubanMovies('', '热门'),
-      fetchDoubanMovies('', '豆瓣高分'),
-      fetchDoubanMovies('', '动作'),
-      fetchDoubanMovies('', '喜剧'),
-      fetchDoubanMovies('', '科幻'),
-      fetchDoubanMovies('', '惊悚'),
-      fetchDoubanMovies('', '爱情'),
-      fetchDoubanMovies('', '动画')
+      fetchDoubanMovies('movie', '热门'),
+      fetchDoubanMovies('movie', '豆瓣高分'),
+      fetchDoubanMovies('movie', '动作'),
+      fetchDoubanMovies('movie', '喜剧'),
+      fetchDoubanMovies('movie', '科幻'),
+      fetchDoubanMovies('movie', '惊悚'),
+      fetchDoubanMovies('movie', '爱情'),
+      fetchDoubanMovies('movie', '动画')
     ]);
 
     const resultData: CategoryData[] = [
@@ -101,11 +102,8 @@ export async function GET() {
       }
     ];
 
-    // 更新缓存
-    cacheStore = {
-      data: resultData,
-      timestamp: Date.now()
-    };
+    // 更新 Redis 缓存
+    await cache.set(CACHE_KEY, resultData);
 
     console.log('✅ 电影分类数据获取成功');
 
@@ -118,7 +116,8 @@ export async function GET() {
     });
 
   } catch (error) {
-  
+    console.error('❌ 电影分类数据获取失败:', error);
+    
     return NextResponse.json(
       {
         code: 500,
@@ -154,7 +153,7 @@ async function fetchDoubanMovies(type: string, tag: string) {
  * DELETE /api/douban/movies
  */
 export async function DELETE() {
-  cacheStore = null;
+  await cache.del(CACHE_KEY);
   
   return NextResponse.json({
     code: 200,
