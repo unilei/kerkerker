@@ -10,7 +10,6 @@
 - [快速开始（开发者）](#-快速开始开发者)
 - [环境配置](#-环境配置)
 - [豆瓣 API 代理](#-豆瓣-api-代理)
-- [Docker 部署](#-docker-部署)
 - [本地开发](#-本地开发)
 - [项目结构](#-项目结构)
 
@@ -223,67 +222,6 @@ MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/kerkerker
 
 ---
 
-## 🐳 Docker 部署
-
-### 方式一：一键部署（推荐）
-
-参考上方 [一键部署](#-一键部署) 章节。
-
-### 方式二：手动部署
-
-#### 1. 构建并推送镜像（开发者）
-
-```bash
-# 构建多架构镜像并推送到 Docker Hub
-npm run server:deploy
-```
-
-该脚本会：
-
-- 检查 Docker Hub 登录状态
-- 创建多架构构建器（amd64/arm64）
-- 构建镜像并推送
-
-#### 2. 服务器部署
-
-**准备文件**：
-
-```text
-your-server/
-├── docker-compose.server.yml
-└── .env
-```
-
-**启动服务**：
-
-```bash
-# 拉取镜像并启动
-docker-compose -f docker-compose.server.yml up -d
-
-# 查看日志
-docker-compose -f docker-compose.server.yml logs -f
-
-# 停止服务
-docker-compose -f docker-compose.server.yml down
-```
-
-**更新服务**：
-
-```bash
-docker-compose -f docker-compose.server.yml pull
-docker-compose -f docker-compose.server.yml up -d
-```
-
-### 3. Docker Compose 文件说明
-
-| 文件 | 用途 |
-|------|------|
-| `docker-compose.yml` | 本地开发（包含完整服务栈） |
-| `docker-compose.dev.yml` | 开发环境（热重载） |
-| `docker-compose.server.yml` | 生产服务器部署 |
-
----
-
 ## 💻 本地开发
 
 ### 使用 Docker（推荐）
@@ -317,10 +255,8 @@ open http://localhost:3000
 |------|------|
 | `npm run dev` | 启动 Next.js 开发服务器 |
 | `npm run docker:dev` | Docker 开发环境（热重载 + 完整服务栈） |
-| `npm run docker:prod` | Docker 生产环境 |
-| `npm run docker:stop` | 停止 Docker 服务 |
-| `npm run server:deploy` | 构建并推送镜像到 Docker Hub |
-
+| `npm run docker:prod` | 构建并推送镜像到 Docker Hub |
+ 
 ## 📁 项目结构
 
 ```text
