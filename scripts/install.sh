@@ -64,6 +64,7 @@ print_error() {
 }
 
 # 读取用户输入（支持默认值和密码模式）
+# 注意：从 /dev/tty 读取，以支持 curl | bash 方式运行
 read_input() {
     local prompt="$1"
     local default="$2"
@@ -76,11 +77,11 @@ read_input() {
     
     if [ "$is_password" = "true" ]; then
         echo -n -e "${CYAN}?${NC} ${prompt}: " >&2
-        read -s value
+        read -s value < /dev/tty
         echo "" >&2
     else
         echo -n -e "${CYAN}?${NC} ${prompt}: " >&2
-        read value
+        read value < /dev/tty
     fi
     
     if [ -z "$value" ] && [ -n "$default" ]; then

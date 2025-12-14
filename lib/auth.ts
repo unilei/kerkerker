@@ -10,7 +10,7 @@ export async function createSession(): Promise<void> {
   // 设置session cookie，有效期7天
   cookieStore.set(SESSION_COOKIE_NAME, 'authenticated', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: false,
     sameSite: 'lax',
     maxAge: 60 * 60 * 24 * 7, // 7 days
     path: '/'

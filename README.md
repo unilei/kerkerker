@@ -45,7 +45,7 @@
 
 ### 播放页
 
-沉浸式播放体验，支持剧集选择和清晰度切换。
+沉浸式播放体验，支持剧集选择。
 
 ![播放页](screenshot/movie-playing.png)
 
@@ -55,10 +55,10 @@
 
 ```bash
 # 使用 curl
-curl -fsSL https://raw.githubusercontent.com/unilei/kerkerker/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/unilei/kerkerker/refs/heads/master/scripts/install.sh | bash
 
 # 或使用 wget
-wget -qO- https://raw.githubusercontent.com/unilei/kerkerker/main/scripts/install.sh | bash
+wget -qO- https://raw.githubusercontent.com/unilei/kerkerker/refs/heads/master/scripts/install.sh | bash
 ```
 
 ### 部署流程
