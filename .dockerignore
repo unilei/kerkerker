@@ -1,0 +1,53 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+.pnpm-debug.log
+
+# Next.js
+.next
+out
+*.tsbuildinfo
+
+# Testing
+coverage
+.nyc_output
+
+# Environment
+.env
+.env*.local
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+DOCKER_GUIDE.md
+DEPLOY_GUIDE.md
+FEATURES.md
+LICENSE
+
+# Scripts
+scripts/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Misc
+*.log
+.vercel

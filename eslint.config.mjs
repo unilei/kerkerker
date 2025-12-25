@@ -1,0 +1,26 @@
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+    // Cloudflare Worker scripts (different runtime)
+    "docs/**",
+  ]),
+  {
+    rules: {
+      // 禁用 img 标签警告，因为我们使用外部图片源和代理
+      '@next/next/no-img-element': 'off',
+    },
+  },
+]);
+
+export default eslintConfig;

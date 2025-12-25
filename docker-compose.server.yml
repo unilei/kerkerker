@@ -1,0 +1,49 @@
+# 服务器端 Docker Compose 配置
+# 用途：使用 Docker Hub 镜像部署，无需本地构建
+
+services:
+  # Next.js 应用（生产环境 - 使用远程镜像）
+  app:
+    image: ${DOCKER_USERNAME:-your-dockerhub-username}/kerkerker:${IMAGE_VERSION:-latest}
+    container_name: kerkerker-app
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - MONGODB_URI=mongodb://mongodb:27017/kerkerker
+      - NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - kerkerker-network
+    restart: unless-stopped
+
+  # MongoDB 数据库服务
+  mongodb:
+    image: mongo:7
+    container_name: kerkerker-mongodb
+    environment:
+      - MONGO_INITDB_DATABASE=kerkerker
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kerkerker-network
+    restart: unless-stopped
+
+networks:
+  kerkerker-network:
+    driver: bridge
+
+volumes:
+  mongodb-data:
+    driver: local
+  mongodb-config:
+    driver: local

@@ -1,0 +1,50 @@
+services:
+  # Next.js 应用（生产环境）
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kerkerker-app
+    ports:
+      - "3008:3000"
+    environment:
+      - NODE_ENV=production
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - MONGODB_URI=mongodb://mongodb:27017/kerkerker
+      - NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - kerkerker-network
+    restart: unless-stopped
+
+  # MongoDB 数据库服务
+  mongodb:
+    image: mongo:7
+    container_name: kerkerker-mongodb
+    ports:
+      - "27018:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=kerkerker
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kerkerker-network
+    restart: unless-stopped
+
+networks:
+  kerkerker-network:
+    driver: bridge
+
+volumes:
+  mongodb-data:
+    driver: local
+  mongodb-config:
+    driver: local

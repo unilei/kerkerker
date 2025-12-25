@@ -1,0 +1,8 @@
+# Vercel ignore file
+node_modules
+.git
+.next
+.env.local
+data/*.db
+data/*.db-shm
+data/*.db-wal
