@@ -620,35 +620,27 @@ export function LocalHlsPlayer({
     <div className="relative w-full h-full bg-black">
       <div ref={containerRef} className="w-full h-full" />
 
-      {/* 弹幕手动搜索按钮 - 仅在自动匹配失败时显示 */}
-      {danmakuList.length === 0 && !autoLoadStatus.loading && (
-        <div className="absolute top-3 right-3 z-40">
+      {/* 弹幕手动搜索按钮 - 始终显示，允许用户纠正自动匹配错误 */}
+      {!autoLoadStatus.loading && (
+        <div className="absolute top-3 right-3 z-40 flex items-center gap-2">
           <button
             onClick={() => setIsDanmakuPanelOpen(true)}
             className="flex items-center gap-2 px-3 py-2 bg-black/60 hover:bg-black/80 rounded-lg transition-colors"
-            title="手动搜索弹幕"
+            title="搜索弹幕"
           >
             <MessageSquare size={16} className="text-white" />
-            <span className="text-white text-xs">搜索弹幕</span>
+            <span className="text-white text-xs">
+              {danmakuList.length > 0 ? "换弹幕" : "搜索弹幕"}
+            </span>
           </button>
         </div>
       )}
 
       {/* 自动加载弹幕状态提示 */}
-      {autoLoadStatus.message && (
+      {autoLoadStatus.loading && autoLoadStatus.message && (
         <div className="absolute top-3 right-3 z-40">
-          <div
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs backdrop-blur-sm border ${
-              autoLoadStatus.loading
-                ? "bg-black/70 border-white/20 text-white/90"
-                : danmakuList.length > 0
-                ? "bg-black/70 border-green-500/50 text-green-400"
-                : "bg-black/70 border-yellow-500/50 text-yellow-400"
-            }`}
-          >
-            {autoLoadStatus.loading && (
-              <Loader2 size={12} className="animate-spin text-white/70" />
-            )}
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs backdrop-blur-sm border bg-black/70 border-white/20 text-white/90">
+            <Loader2 size={12} className="animate-spin text-white/70" />
             <span>{autoLoadStatus.message}</span>
           </div>
         </div>
