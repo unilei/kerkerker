@@ -280,11 +280,89 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
-// ==================== Utility ====================
-
 /**
  * 获取 API 服务地址（供调试用）
  */
 export function getDebugApiUrl(): string {
   return DOUBAN_API_URL;
 }
+
+// ==================== Calendar ====================
+
+export interface CalendarEntry {
+  show_id: number;
+  show_name: string;
+  show_name_cn?: string;
+  season_number: number;
+  episode_number: number;
+  episode_name: string;
+  air_date: string;
+  poster: string;
+  backdrop?: string;
+  overview?: string;
+  vote_average: number;
+  douban_id?: string;
+  douban_rating?: string;
+}
+
+export interface CalendarDay {
+  date: string;
+  entries: CalendarEntry[];
+}
+
+export interface CalendarResponse {
+  start_date: string;
+  end_date: string;
+  days: CalendarDay[];
+  total: number;
+}
+
+export interface CalendarFilters {
+  start_date?: string;
+  end_date?: string;
+  region?: string;
+}
+
+export interface AiringFilters {
+  page?: number;
+  region?: string;
+}
+
+/**
+ * 获取日历数据
+ * @param filters 筛选参数
+ */
+export async function getCalendar(filters: CalendarFilters = {}): Promise<CalendarResponse> {
+  const params = new URLSearchParams();
+  if (filters.start_date) params.append('start_date', filters.start_date);
+  if (filters.end_date) params.append('end_date', filters.end_date);
+  if (filters.region) params.append('region', filters.region);
+  
+  const queryString = params.toString();
+  const endpoint = queryString ? `/api/v1/calendar?${queryString}` : '/api/v1/calendar';
+  
+  return fetchFromService<CalendarResponse>(endpoint);
+}
+
+/**
+ * 获取今日热播剧集
+ * @param filters 筛选参数
+ */
+export async function getAiringToday(filters: AiringFilters = {}): Promise<CalendarEntry[]> {
+  const params = new URLSearchParams();
+  if (filters.page) params.append('page', String(filters.page));
+  if (filters.region) params.append('region', filters.region);
+  
+  const queryString = params.toString();
+  const endpoint = queryString ? `/api/v1/calendar/airing?${queryString}` : '/api/v1/calendar/airing';
+  
+  return fetchFromService<CalendarEntry[]>(endpoint);
+}
+
+/**
+ * 清除日历缓存
+ */
+export async function clearCalendarCache(): Promise<void> {
+  await fetchFromService('/api/v1/calendar', { method: 'DELETE' });
+}
+

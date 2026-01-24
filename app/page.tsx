@@ -21,7 +21,6 @@ import { EmptyState } from "@/components/home/EmptyState";
 import { HeroBanner } from "@/components/home/HeroBanner";
 import { CategoryRow } from "@/components/home/CategoryRow";
 import { LoadingOverlay } from "@/components/home/LoadingOverlay";
-import { WatchHistory } from "@/components/home/WatchHistory";
 import { Footer } from "@/components/home/Footer";
 
 // Utils
@@ -68,8 +67,6 @@ export default function HomePage() {
 
           {/* 分类列表区域 */}
           <div className="relative z-20 space-y-10 md:space-y-12 lg:space-y-16 pb-16">
-            {/* 继续观看区域 - 组件内部处理空状态，不占用空间 */}
-            <WatchHistory />
 
             {/* 渲染所有新 API 返回的分类 */}
             {categories.length > 0

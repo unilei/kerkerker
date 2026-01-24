@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 interface ToastProps {
   message: string;
@@ -10,13 +10,17 @@ interface ToastProps {
 }
 
 export function Toast({ message, type = 'info', onClose, duration = 3000 }: ToastProps) {
+  // Use ref to avoid dependency issues with onClose callback
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      onClose();
+      onCloseRef.current();
     }, duration);
 
     return () => clearTimeout(timer);
-  }, [duration, onClose]);
+  }, [duration]);
 
   const bgColor = {
     success: 'bg-green-500',
@@ -105,7 +109,7 @@ export function ConfirmDialog({
                 : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {isLoading ? '处理中...' : confirmText}
+            {isLoading ? '处理中…' : confirmText}
           </button>
         </div>
       </div>

@@ -46,3 +46,5 @@ next-env.d.ts
 /data/*.db-shm
 /data/*.db-wal
 /data/*.backup
+.agent/
+.agents/

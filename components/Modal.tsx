@@ -21,12 +21,19 @@ export function Modal({ isOpen, onClose, title, children, size = 'lg' }: ModalPr
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
-      <div className={`bg-slate-800 rounded-xl shadow-2xl border border-slate-700 ${sizeClasses[size]} w-full mx-4 max-h-[90vh] overflow-y-auto animate-scale-in`}>
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+      onKeyDown={(e) => e.key === 'Escape' && onClose()}
+    >
+      <div className={`bg-slate-800 rounded-xl shadow-2xl border border-slate-700 ${sizeClasses[size]} w-full mx-4 max-h-[90vh] overflow-y-auto animate-scale-in overscroll-contain`}>
         <div className="sticky top-0 bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between z-10">
-          <h3 className="text-xl font-bold text-white">{title}</h3>
+          <h3 id="modal-title" className="text-xl font-bold text-white">{title}</h3>
           <button
             onClick={onClose}
+            aria-label="关闭弹窗"
             className="text-slate-400 hover:text-white transition text-2xl leading-none"
           >
             ×

@@ -67,7 +67,7 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   if (e.key === "Enter") handleSearch();
                   if (e.key === "Escape") onClose();
                 }}
-                placeholder="搜索你想看的内容..."
+                placeholder="搜索你想看的内容…"
                 className="flex-1 px-2 py-5 text-lg text-black outline-none placeholder:text-gray-400"
                 autoFocus
               />

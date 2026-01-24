@@ -1,18 +1,25 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWatchHistory } from "@/hooks/useWatchHistory";
-import { History, X, ChevronRight, Trash2 } from "lucide-react";
+import { History, X, ChevronRight } from "lucide-react";
+
+// 首页显示的最大数量
+const MAX_DISPLAY_COUNT = 8;
 
 export function WatchHistory() {
   const router = useRouter();
-  const { history, isLoading, removeHistory, clearAllHistory } =
-    useWatchHistory();
+  const { history, isLoading, removeHistory } = useWatchHistory();
 
   // 如果加载中或没有历史记录，不显示
   if (isLoading || history.length === 0) {
     return null;
   }
+
+  // 限制首页显示数量
+  const displayHistory = history.slice(0, MAX_DISPLAY_COUNT);
+  const hasMore = history.length > MAX_DISPLAY_COUNT;
 
   const handleClick = (item: (typeof history)[0]) => {
     // 跳转到播放页面，带上 source 和 from=history 参数
@@ -29,32 +36,32 @@ export function WatchHistory() {
 
   return (
     <div className="px-4 md:px-12">
-      {/* 标题和清除全部 - 与 CategoryRow 保持一致 */}
+      {/* 标题和查看全部 */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-3">
           <History className="w-6 h-6 text-red-500" />
           <span>继续观看</span>
         </h2>
-        <button
-          onClick={clearAllHistory}
+        <Link
+          href="/history"
           className="text-sm text-gray-400 hover:text-white transition-colors flex items-center space-x-1 group"
         >
-          <span>清除全部</span>
-          <Trash2 className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-        </button>
+          <span>{hasMore ? `查看全部 (${history.length})` : "管理历史"}</span>
+          <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+        </Link>
       </div>
 
-      {/* 横向滚动列表 - 与 CategoryRow 保持一致 */}
+      {/* 横向滚动列表 */}
       <div className="relative group">
         <div className="flex overflow-x-auto space-x-3 md:space-x-4 pb-4 scrollbar-hide scroll-smooth">
-          {history.map((item) => (
+          {displayHistory.map((item) => (
             <div
               key={item.id}
               onClick={() => handleClick(item)}
               className="shrink-0 w-40 sm:w-48 md:w-56 cursor-pointer group/card"
             >
               <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-gray-800 shadow-lg transition-all duration-300 group-hover/card:shadow-xl group-hover/card:shadow-red-500/20 group-hover/card:scale-105">
-                {/* 封面图 - 添加 referrerPolicy 绕过防盗链 */}
+                {/* 封面图 */}
                 {item.cover && (
                   <img
                     src={item.cover}
@@ -63,13 +70,12 @@ export function WatchHistory() {
                     loading="lazy"
                     referrerPolicy="no-referrer"
                     onError={(e) => {
-                      // 图片加载失败时隐藏 img 标签
                       const target = e.target as HTMLImageElement;
                       target.classList.add("hidden");
                     }}
                   />
                 )}
-                {/* Fallback 占位 - 当图片失败或不存在时始终在底层显示 */}
+                {/* Fallback 占位 */}
                 <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-700 to-gray-900 -z-10">
                   <span className="text-gray-400 text-sm text-center px-2">
                     {item.name}
@@ -102,7 +108,7 @@ export function WatchHistory() {
                 <button
                   onClick={(e) => handleRemove(e, item.id)}
                   className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-red-600 rounded-full opacity-0 group-hover/card:opacity-100 transition-all duration-200"
-                  title="移除"
+                  aria-label="移除历史记录"
                 >
                   <X className="w-3.5 h-3.5 text-white" />
                 </button>

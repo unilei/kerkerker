@@ -17,15 +17,37 @@ export function HeroBanner({
 }: HeroBannerProps) {
   const [currentHeroIndex, setCurrentHeroIndex] = useState(0);
 
-  // 自动轮播
+  // 自动轮播 - 页面不可见时暂停
   useEffect(() => {
     if (heroMovies.length <= 1) return;
 
-    const timer = setInterval(() => {
-      setCurrentHeroIndex((prevIndex) => (prevIndex + 1) % heroMovies.length);
-    }, 5000); // 每5秒切换一次
+    let timer: NodeJS.Timeout;
 
-    return () => clearInterval(timer);
+    const startTimer = () => {
+      timer = setInterval(() => {
+        setCurrentHeroIndex((prevIndex) => (prevIndex + 1) % heroMovies.length);
+      }, 5000);
+    };
+
+    const stopTimer = () => {
+      clearInterval(timer);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopTimer();
+      } else {
+        startTimer();
+      }
+    };
+
+    startTimer();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      stopTimer();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [heroMovies.length]);
 
   // 手动切换

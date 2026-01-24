@@ -10,7 +10,6 @@ interface DramaCardProps {
 }
 
 export default function DramaCard({ drama, onSelect }: DramaCardProps) {
-  const [isHovered, setIsHovered] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
 
   const getProxyImageUrl = (url: string) => {
@@ -21,14 +20,10 @@ export default function DramaCard({ drama, onSelect }: DramaCardProps) {
   return (
     <div
       className="relative cursor-pointer transition-all duration-300 ease-out group"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
       onClick={() => onSelect(drama)}
     >
-      {/* 卡片容器 */}
-      <div className={`relative rounded overflow-hidden transition-all duration-300 ${
-        isHovered ? 'scale-102 z-10 shadow-2xl' : 'scale-100'
-      }`}>
+      {/* 卡片容器 - 使用 group-hover 代替 useState */}
+      <div className="relative rounded overflow-hidden transition-all duration-300 scale-100 group-hover:scale-102 group-hover:z-10 group-hover:shadow-2xl">
         {/* 图片 */}
         <div className="relative aspect-[2/3] bg-gray-900">
           {drama.pic ? (
@@ -60,10 +55,8 @@ export default function DramaCard({ drama, onSelect }: DramaCardProps) {
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
         </div>
 
-        {/* 悬停信息 */}
-        <div className={`absolute bottom-0 left-0 right-0 p-3 transform transition-all duration-300 ${
-          isHovered ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'
-        }`}>
+        {/* 悬停信息 - 使用 group-hover 代替 isHovered 状态 */}
+        <div className="absolute bottom-0 left-0 right-0 p-3 transform transition-all duration-300 translate-y-full opacity-0 group-hover:translate-y-0 group-hover:opacity-100">
           <h3 className="text-white font-semibold text-sm mb-1 line-clamp-2">{drama.name}</h3>
           
           <div className="flex items-center justify-between mb-2">
@@ -101,6 +94,7 @@ export default function DramaCard({ drama, onSelect }: DramaCardProps) {
                 e.stopPropagation();
               }}
               className="p-2 bg-gray-800/80 text-white rounded-full hover:bg-gray-700/80 transition-colors"
+              aria-label="添加到收藏"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -109,9 +103,9 @@ export default function DramaCard({ drama, onSelect }: DramaCardProps) {
           </div>
         </div>
 
-        {/* 标签 */}
-        {!isHovered && drama.remarks && (
-          <div className="absolute top-2 right-2 px-2 py-1 bg-green-600/90 backdrop-blur-sm text-white rounded text-xs font-medium">
+        {/* 标签 - 使用 group-hover 隐藏 */}
+        {drama.remarks && (
+          <div className="absolute top-2 right-2 px-2 py-1 bg-green-600/90 backdrop-blur-sm text-white rounded text-xs font-medium opacity-100 group-hover:opacity-0 transition-opacity duration-300">
             {drama.remarks}
           </div>
         )}
