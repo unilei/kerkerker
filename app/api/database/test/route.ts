@@ -10,7 +10,7 @@ import { requireAdminRequest } from '@/lib/admin-route';
  * 
  * 创建新连接进行测试，不影响现有连接池
  */
-export async function POST(request?: NextRequest) {
+export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const unauthorizedResponse = requireAdminRequest(request);
   if (unauthorizedResponse) {

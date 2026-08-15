@@ -1,3 +1,7 @@
+import {
+  assertSafeOutboundUrl,
+  UnsafeOutboundUrlError,
+} from '@/lib/url-security';
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiResponse, DramaDetail, Episode, VodSource } from '@/types/drama';
 
@@ -99,12 +103,20 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const source: VodSource = body.source;
     const vodName: string = body.vodName; // 用于代理搜索
-    
+
+    // SSRF 防御：source 来自请求体，需要校验所有对外请求目标
+    const [safeApi, safeSearchProxy] = await Promise.all([
+      source.api ? assertSafeOutboundUrl(source.api) : Promise.resolve(null),
+      source.searchProxy
+        ? assertSafeOutboundUrl(source.searchProxy)
+        : Promise.resolve(null),
+    ]);
+
     let response: Response;
 
     // 如果有搜索代理，使用代理搜索获取详情
-    if (source.searchProxy && vodName) {
-      response = await fetch(source.searchProxy, {
+    if (safeSearchProxy && vodName) {
+      response = await fetch(safeSearchProxy.toString(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,7 +138,8 @@ export async function POST(request: NextRequest) {
         ac: 'detail',
         ids: body.ids,
       });
-      const apiUrl = `${source.api}?${apiParams.toString()}`;
+      const safeApiBase = safeApi ? safeApi.toString() : '';
+      const apiUrl = `${safeApiBase}?${apiParams.toString()}`;
       
       response = await fetch(apiUrl, {
         method: 'GET',
@@ -189,6 +202,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof UnsafeOutboundUrlError) {
+      return errorResponse(error.message, error.status);
+    }
+
     // 只对意外错误输出完整日志
     if (error instanceof Error && error.name === 'AbortError') {
       console.warn('⚠️ 请求超时');

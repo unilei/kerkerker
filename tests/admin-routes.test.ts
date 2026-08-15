@@ -48,7 +48,9 @@ test("dailymotion config updates require an authenticated admin session", async 
 });
 
 test("database diagnostics require an authenticated admin session", async () => {
-  const response = await testDatabaseConnection();
+  const response = await testDatabaseConnection(
+    jsonRequest("http://localhost/api/database/test", {})
+  );
 
   assert.equal(response.status, 401);
 });

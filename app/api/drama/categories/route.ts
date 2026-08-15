@@ -1,3 +1,7 @@
+import {
+  assertSafeOutboundUrl,
+  UnsafeOutboundUrlError,
+} from '@/lib/url-security';
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiResponse, Category } from '@/types/drama';
 
@@ -15,12 +19,17 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
+    // SSRF 防御：source.api 来自请求体
+    const safeApiBase = body.source?.api
+      ? (await assertSafeOutboundUrl(body.source.api)).toString()
+      : '';
+
     // 构建API请求参数
     const apiParams = new URLSearchParams({
       ac: 'list',
     });
 
-    const apiUrl = `${body.source.api}?${apiParams.toString()}`;
+    const apiUrl = `${safeApiBase}?${apiParams.toString()}`;
 
     // 调用影视API获取分类
     const response = await fetch(apiUrl, {
@@ -57,6 +66,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof UnsafeOutboundUrlError) {
+      return NextResponse.json(
+        { code: error.status, msg: error.message, data: [] },
+        { status: error.status }
+      );
+    }
+
     console.error('Categories API error:', error);
 
     const errorResult: ApiResponse<Category[]> = {

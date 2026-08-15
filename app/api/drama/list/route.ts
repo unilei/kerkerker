@@ -1,3 +1,7 @@
+import {
+  assertSafeOutboundUrl,
+  UnsafeOutboundUrlError,
+} from '@/lib/url-security';
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiResponse, DramaListData, VodSource } from '@/types/drama';
 
@@ -70,12 +74,20 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const source: VodSource = body.source;
-    
+
+    // SSRF 防御：source 来自请求体，需要校验所有对外请求目标
+    const [safeApi, safeSearchProxy] = await Promise.all([
+      source.api ? assertSafeOutboundUrl(source.api) : Promise.resolve(null),
+      source.searchProxy
+        ? assertSafeOutboundUrl(source.searchProxy)
+        : Promise.resolve(null),
+    ]);
+
     let response: Response;
-    
+
     // 如果有搜索代理且有关键词，使用 POST 请求
-    if (source.searchProxy && body.keyword) {
-      response = await fetch(source.searchProxy, {
+    if (safeSearchProxy && body.keyword) {
+      response = await fetch(safeSearchProxy.toString(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -104,7 +116,8 @@ export async function POST(request: NextRequest) {
       }
 
       const queryString = new URLSearchParams(apiParams).toString();
-      const apiUrl = `${source.api}?${queryString}`;
+      const safeApiBase = safeApi ? safeApi.toString() : '';
+      const apiUrl = `${safeApiBase}?${queryString}`;
 
       response = await fetch(apiUrl, {
         method: 'GET',
@@ -190,6 +203,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof UnsafeOutboundUrlError) {
+      return NextResponse.json(
+        { code: error.status, msg: error.message, data: null },
+        { status: error.status }
+      );
+    }
+
     // 简短错误日志，避免输出冗长堆栈
     const errMsg = error instanceof Error ? error.message : 'Unknown error';
     console.warn(`[Drama API] 请求失败: ${errMsg}`);

@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  assertSafeOutboundUrl,
+  UnsafeOutboundUrlError,
+} from "@/lib/url-security";
 import { getShortsSourcesFromDB, getShortsSourceByKey } from "@/lib/shorts-sources-db";
 import type { ShortDramaSource } from "@/types/shorts-source";
 
@@ -60,8 +64,11 @@ export async function GET(request: NextRequest) {
       source = sources[0];
     }
 
+    // SSRF 防御：即便 source 来自 DB，该接口匿名开放，仍校验对外请求目标
+    const safeApiBase = (await assertSafeOutboundUrl(source.api)).toString();
+
     // 构建 API URL
-    let apiUrl = `${source.api}?pg=${page}`;
+    let apiUrl = `${safeApiBase}?pg=${page}`;
     if (source.typeId) {
       apiUrl += `&t=${source.typeId}`;
     }
@@ -99,6 +106,12 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof UnsafeOutboundUrlError) {
+      return NextResponse.json(
+        { code: error.status, msg: error.message, data: null },
+        { status: error.status }
+      );
+    }
     console.error("[Shorts List API Error]", error);
     return NextResponse.json(
       { code: 500, msg: "获取短剧列表失败", data: null },

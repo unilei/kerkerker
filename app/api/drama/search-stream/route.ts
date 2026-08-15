@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { assertSafeOutboundUrl } from '@/lib/url-security';
 import { getVodSourcesFromDB } from '@/lib/vod-sources-db';
 import { VodSource } from '@/types/drama';
 
@@ -67,11 +68,19 @@ function formatDramaList(list: DramaListItem[], source: VodSource) {
 // 搜索单个源
 async function searchSingleSource(source: VodSource, keyword: string) {
   try {
+    // SSRF 防御：即便 source 来自 DB，该接口匿名开放，仍校验对外请求目标
+    const [safeApi, safeSearchProxy] = await Promise.all([
+      source.api ? assertSafeOutboundUrl(source.api) : Promise.resolve(null),
+      source.searchProxy
+        ? assertSafeOutboundUrl(source.searchProxy)
+        : Promise.resolve(null),
+    ]);
+
     let response: Response;
 
     // 如果有搜索代理，使用 POST 请求
-    if (source.searchProxy) {
-      response = await fetch(source.searchProxy, {
+    if (safeSearchProxy) {
+      response = await fetch(safeSearchProxy.toString(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -92,7 +101,7 @@ async function searchSingleSource(source: VodSource, keyword: string) {
         wd: keyword,
       });
       
-      const apiUrl = `${source.api}?${apiParams.toString()}`;
+      const apiUrl = `${(safeApi ?? '').toString()}?${apiParams.toString()}`;
       
       response = await fetch(apiUrl, {
         method: 'GET',

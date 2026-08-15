@@ -1,4 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+
+import {
+  assertSafeOutboundUrl,
+  UnsafeOutboundUrlError,
+} from '@/lib/url-security';
 import { VodSource } from '@/types/drama';
 
 interface ParseResponse {
@@ -7,14 +13,9 @@ interface ParseResponse {
   url: string;
 }
 
-// 生成随机 token（32位十六进制字符串）
+// 生成随机 token（32位十六进制字符串），用密码学安全的随机源
 function generateRandomToken(): string {
-  const chars = '0123456789abcdef';
-  let token = '';
-  for (let i = 0; i < 32; i++) {
-    token += chars[Math.floor(Math.random() * 16)];
-  }
-  return token;
+  return randomBytes(16).toString('hex');
 }
 
 export async function POST(request: NextRequest) {
@@ -38,6 +39,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // SSRF 防御：验证解析代理目标
+    const safeParseProxy = (await assertSafeOutboundUrl(source.parseProxy)).toString();
+
     // 构建解析请求URL
     const parseParams = new URLSearchParams();
     if (source.parseId) {
@@ -47,10 +51,10 @@ export async function POST(request: NextRequest) {
     // 使用随机 token（每次请求生成新的）
     parseParams.set('token', generateRandomToken());
 
-    const parseUrl = `${source.parseProxy}?${parseParams.toString()}`;
+    const parseUrl = `${safeParseProxy}?${parseParams.toString()}`;
 
     // 从 parseProxy URL 提取 origin 用于 Referer 和 Origin 头
-    const parseOrigin = new URL(source.parseProxy).origin;
+    const parseOrigin = new URL(safeParseProxy).origin;
 
     // 调用解析API
     const response = await fetch(parseUrl, {
@@ -96,6 +100,13 @@ export async function POST(request: NextRequest) {
       data: { url: parsedUrl },
     });
   } catch (error) {
+    if (error instanceof UnsafeOutboundUrlError) {
+      return NextResponse.json(
+        { code: error.status, msg: error.message, data: null },
+        { status: error.status }
+      );
+    }
+
     // 仅在开发模式下用 warn 输出，避免触发 Next.js 错误覆盖层
     console.warn('[Parse API] 请求异常:', error instanceof Error ? error.message : error);
     return NextResponse.json({
