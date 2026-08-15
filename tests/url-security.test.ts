@@ -58,3 +58,13 @@ test("assertSafeOutboundUrl accepts public IPv6 literal targets without DNS look
 
   assert.equal(url.href, "https://[2606:4700:4700::1111]/poster.jpg");
 });
+
+test("assertSafeOutboundUrl does not block RFC 2544 benchmark range 198.18.0.0/15", async () => {
+  // 该范围在某些部署环境（VPN/代理）下被用作公网目标的本地路由地址，
+  // 屏蔽会造成误杀。仅保留环回/私网/链路本地/元数据等真正危险的范围。
+  const url = await assertSafeOutboundUrl("https://api.example.com/feed.m3u8", {
+    resolveHostname: async () => ["198.18.0.113"],
+  });
+
+  assert.equal(url.href, "https://api.example.com/feed.m3u8");
+});
