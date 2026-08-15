@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+import {
+  assertSafeOutboundUrl,
+  UnsafeOutboundUrlError,
+} from '@/lib/url-security';
+
 // 代理池配置
 const PROXY_POOL = [
   {
@@ -101,8 +106,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'URL parameter is required' }, { status: 400 });
     }
 
+    const safeUrl = await assertSafeOutboundUrl(url);
+
     // 使用代理池获取图片
-    const response = await fetchImageWithProxy(url);
+    const response = await fetchImageWithProxy(safeUrl.toString());
     
     const imageBuffer = await response.arrayBuffer();
     const contentType = response.headers.get('content-type') || 'image/jpeg';
@@ -115,6 +122,10 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof UnsafeOutboundUrlError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     console.error('Image proxy error:', error);
     return NextResponse.json({ error: 'Failed to fetch image' }, { status: 500 });
   }

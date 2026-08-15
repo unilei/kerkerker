@@ -1,5 +1,6 @@
 // 播放器配置管理API
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminRequest } from '@/lib/admin-route';
 import { getDatabase } from '@/lib/db';
 import { COLLECTIONS } from '@/lib/constants/db';
 
@@ -150,6 +151,11 @@ export async function GET() {
 // 更新配置
 export async function POST(request: NextRequest) {
   try {
+    const unauthorizedResponse = requireAdminRequest(request);
+    if (unauthorizedResponse) {
+      return unauthorizedResponse;
+    }
+
     const config: Partial<PlayerConfig> = await request.json();
 
     // 验证配置格式

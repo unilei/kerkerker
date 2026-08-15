@@ -1,5 +1,8 @@
 // 获取默认播放器配置API
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+import { requireAdminRequest } from '@/lib/admin-route';
 import type { PlayerConfig } from '../route';
 
 // 默认配置
@@ -71,7 +74,12 @@ const DEFAULT_CONFIG: PlayerConfig = {
   },
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const unauthorizedResponse = requireAdminRequest(request);
+  if (unauthorizedResponse) {
+    return unauthorizedResponse;
+  }
+
   return NextResponse.json({
     code: 200,
     data: DEFAULT_CONFIG,

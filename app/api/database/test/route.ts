@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { MongoClient } from 'mongodb';
+
+import { requireAdminRequest } from '@/lib/admin-route';
 
 /**
  * 数据库连接测试 API
@@ -7,8 +10,13 @@ import { MongoClient } from 'mongodb';
  * 
  * 创建新连接进行测试，不影响现有连接池
  */
-export async function POST() {
+export async function POST(request?: NextRequest) {
   const startTime = Date.now();
+  const unauthorizedResponse = requireAdminRequest(request);
+  if (unauthorizedResponse) {
+    return unauthorizedResponse;
+  }
+
   const uri = process.env.MONGODB_URI;
   
   if (!uri) {

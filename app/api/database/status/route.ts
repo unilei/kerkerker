@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+import { requireAdminRequest } from '@/lib/admin-route';
 import { getDatabase, getMongoClient } from '@/lib/db';
 
 /**
@@ -7,8 +10,13 @@ import { getDatabase, getMongoClient } from '@/lib/db';
  * 
  * 返回数据库连接状态、延迟、基本信息
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const startTime = Date.now();
+
+  const unauthorizedResponse = requireAdminRequest(request);
+  if (unauthorizedResponse) {
+    return unauthorizedResponse;
+  }
   
   try {
     const db = await getDatabase();

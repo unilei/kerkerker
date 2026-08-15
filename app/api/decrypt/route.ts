@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 
+import { requireAdminRequest } from '@/lib/admin-route';
+import {
+  assertSafeOutboundUrl,
+  UnsafeOutboundUrlError,
+} from '@/lib/url-security';
+
 const PBKDF2_ITERATIONS = 100000;
 
 interface EncryptedPackage {
@@ -106,6 +112,11 @@ function parseEncryptedString(input: string): EncryptedPackage {
 // POST - 解密配置
 export async function POST(request: NextRequest) {
   try {
+    const unauthorizedResponse = requireAdminRequest(request);
+    if (unauthorizedResponse) {
+      return unauthorizedResponse;
+    }
+
     const body = await request.json();
     const { password, encryptedData, subscriptionUrl } = body;
 
@@ -120,7 +131,8 @@ export async function POST(request: NextRequest) {
 
     if (subscriptionUrl) {
       // 从 URL 获取加密配置
-      const response = await fetch(subscriptionUrl);
+      const safeSubscriptionUrl = await assertSafeOutboundUrl(subscriptionUrl);
+      const response = await fetch(safeSubscriptionUrl);
       if (!response.ok) {
         throw new Error(`获取配置失败: ${response.status}`);
       }
@@ -151,6 +163,17 @@ export async function POST(request: NextRequest) {
       data: payload,
     });
   } catch (error) {
+    if (error instanceof UnsafeOutboundUrlError) {
+      return NextResponse.json(
+        {
+          code: error.status,
+          message: error.message,
+          data: null,
+        },
+        { status: error.status }
+      );
+    }
+
     console.error('❌ 解密失败:', error);
     return NextResponse.json(
       {
