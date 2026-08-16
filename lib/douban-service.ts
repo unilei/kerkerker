@@ -105,6 +105,7 @@ export async function getTop250(): Promise<Top250Response> {
 
 export interface SubjectDetail {
   id: string;
+  internal_id?: number;
   title: string;
   rate: string;
   url: string;
@@ -128,6 +129,14 @@ export interface SubjectDetail {
 export async function getSubjectDetail(id: string): Promise<SubjectDetail | null> {
   try {
     return await fetchFromService<SubjectDetail>(`/api/v1/detail/${id}`);
+  } catch {
+    return null;
+  }
+}
+
+export async function getMovieByInternalID(internalId: number | string): Promise<SubjectDetail | null> {
+  try {
+    return await fetchFromService<SubjectDetail>(`/api/v1/movies/${internalId}`);
   } catch {
     return null;
   }
