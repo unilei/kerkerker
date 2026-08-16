@@ -66,3 +66,8 @@ export interface DailymotionChannelsTabProps {
   onShowConfirm: (confirm: ConfirmState) => void;
   unifiedImport?: UnifiedImportCallbacks;
 }
+
+export interface PanResourcesTabProps {
+  onShowToast: (toast: ToastState) => void;
+  onShowConfirm: (confirm: ConfirmState) => void;
+}

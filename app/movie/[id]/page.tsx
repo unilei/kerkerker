@@ -21,6 +21,7 @@ import Link from "next/link";
 import { getImageUrl } from "@/lib/utils/image-utils";
 import { cleanTitleForSearch } from "@/lib/utils/title-utils";
 import { loadMovieCache } from "@/hooks/useMovieMatch";
+import { PanResourceSection } from "@/components/movie/PanResourceSection";
 
 interface AvailableSource {
   source_key: string;
@@ -41,6 +42,7 @@ interface CachedMatchData {
 // 完整的电影详情
 interface MovieDetail {
   id: string;
+  internal_id?: number;
   title: string; // 完整标题（含外文名/年份）用于显示
   searchTitle: string; // 简短标题用于搜索
   cover: string;
@@ -132,6 +134,7 @@ export default function MovieDetailPage() {
             const cachedData = prev || ({} as MovieDetail);
             return {
               id: cachedData.id || apiData.id,
+              internal_id: apiData.internal_id ?? cachedData.internal_id,
               title: cachedData.title || apiData.title,
               searchTitle:
                 cachedData.searchTitle || cleanTitleForSearch(apiData.title),
@@ -785,6 +788,9 @@ export default function MovieDetailPage() {
               </div>
             </div>
           </div>
+
+          {/* 网盘资源 */}
+          <PanResourceSection doubanId={doubanId} />
 
           {/* 相关推荐 */}
           {movieDetail?.recommendations &&

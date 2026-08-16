@@ -137,6 +137,12 @@ async function initializeDatabase(db: Db) {
     const dailymotionConfigCollection = db.collection(COLLECTIONS.DAILYMOTION_CONFIG);
     await dailymotionConfigCollection.createIndex({ id: 1 }, { unique: true });
 
+    // 创建 pan_resources 集合的索引
+    const panResourcesCollection = db.collection(COLLECTIONS.PAN_RESOURCES);
+    await panResourcesCollection.createIndex({ douban_id: 1 });
+    await panResourcesCollection.createIndex({ enabled: 1 });
+    await panResourcesCollection.createIndex({ internal_id: 1 });
+
     globalForMongo.initialized = true;
     console.log('✅ MongoDB 数据库初始化完成');
   } catch (error) {
