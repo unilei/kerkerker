@@ -4,6 +4,7 @@ import test from "node:test";
 import { NextRequest } from "next/server";
 
 import { POST as testDatabaseConnection } from "@/app/api/database/test/route";
+import { GET as getAuthMe } from "@/app/api/auth/me/route";
 import {
   POST as createPanResource,
   PUT as updatePanResource,
@@ -62,6 +63,16 @@ test("pan resource admin listing requires an authenticated admin session", async
   );
 
   assert.equal(response.status, 401);
+});
+
+test("session probe reports unauthenticated for anonymous visitors", async () => {
+  const response = await getAuthMe(
+    new NextRequest("http://localhost/api/auth/me")
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.authenticated, false);
 });
 
 test("database diagnostics require an authenticated admin session", async () => {

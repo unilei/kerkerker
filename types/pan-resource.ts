@@ -22,8 +22,9 @@ export interface PanBrandConfig {
   key: PanBrand;
   name: string; // 完整名称
   shortName: string; // 徽标内字符
-  badgeClass: string; // 徽标背景色（Tailwind class）
+  badgeClass: string; // 兜底徽标背景色（Tailwind class，icon 加载失败时使用）
   textClass: string; // 品牌文字色（Tailwind class）
+  icon?: string; // 官方 logo（自托管于 public/pan-icons/）
 }
 
 export const PAN_BRAND_CONFIGS: Record<PanBrand, PanBrandConfig> = {
@@ -33,6 +34,7 @@ export const PAN_BRAND_CONFIGS: Record<PanBrand, PanBrandConfig> = {
     shortName: "夸",
     badgeClass: "bg-orange-500",
     textClass: "text-orange-400",
+    icon: "/pan-icons/quark.png",
   },
   baidu: {
     key: "baidu",
@@ -40,6 +42,7 @@ export const PAN_BRAND_CONFIGS: Record<PanBrand, PanBrandConfig> = {
     shortName: "百",
     badgeClass: "bg-blue-500",
     textClass: "text-blue-400",
+    icon: "/pan-icons/baidu.png",
   },
   xunlei: {
     key: "xunlei",
@@ -47,6 +50,7 @@ export const PAN_BRAND_CONFIGS: Record<PanBrand, PanBrandConfig> = {
     shortName: "迅",
     badgeClass: "bg-red-500",
     textClass: "text-red-400",
+    icon: "/pan-icons/xunlei.png",
   },
   guangya: {
     key: "guangya",
@@ -54,6 +58,7 @@ export const PAN_BRAND_CONFIGS: Record<PanBrand, PanBrandConfig> = {
     shortName: "鸭",
     badgeClass: "bg-purple-500",
     textClass: "text-purple-400",
+    // 官方 logo 待补充域名后抓取，先用品牌色字标
   },
   uc: {
     key: "uc",
@@ -61,6 +66,7 @@ export const PAN_BRAND_CONFIGS: Record<PanBrand, PanBrandConfig> = {
     shortName: "UC",
     badgeClass: "bg-emerald-500",
     textClass: "text-emerald-400",
+    icon: "/pan-icons/uc.png",
   },
 };
 
@@ -75,6 +81,7 @@ export interface PanResource {
   size?: string;
   format?: string;
   url: string;
+  code?: string; // 提取码（如 4 位字母数字）
   note?: string;
   enabled: boolean;
   created_at: string; // ISO 字符串
@@ -91,6 +98,7 @@ export interface PanResourceInput {
   size?: string;
   format?: string;
   url?: string;
+  code?: string;
   note?: string;
   enabled?: boolean;
 }

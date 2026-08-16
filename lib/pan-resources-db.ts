@@ -19,6 +19,7 @@ export interface PanResourceDoc {
   size?: string;
   format?: string;
   url: string;
+  code?: string;
   note?: string;
   enabled: boolean;
   created_at: string; // ISO 字符串格式
@@ -43,6 +44,7 @@ function docToPanResource(doc: PanResourceDoc): PanResource {
     size: doc.size,
     format: doc.format,
     url: doc.url,
+    code: doc.code,
     note: doc.note,
     enabled: doc.enabled,
     created_at: doc.created_at,
@@ -126,6 +128,7 @@ export async function createPanResourceInDB(
     size: input.size,
     format: input.format,
     url: input.url,
+    code: input.code,
     note: input.note,
     enabled: input.enabled ?? true,
     created_at: now,
@@ -156,6 +159,7 @@ export async function updatePanResourceInDB(
   if (updates.size !== undefined) setDoc.size = updates.size;
   if (updates.format !== undefined) setDoc.format = updates.format;
   if (updates.url !== undefined) setDoc.url = updates.url;
+  if (updates.code !== undefined) setDoc.code = updates.code;
   if (updates.note !== undefined) setDoc.note = updates.note;
   if (updates.enabled !== undefined) setDoc.enabled = updates.enabled;
 

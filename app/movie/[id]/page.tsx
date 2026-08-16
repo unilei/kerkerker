@@ -407,7 +407,11 @@ export default function MovieDetailPage() {
           </div>
 
           {/* 网盘资源 */}
-          <PanResourceSection doubanId={doubanId} />
+          <PanResourceSection
+            doubanId={doubanId}
+            title={movieDetail?.title}
+            internalId={movieDetail?.internal_id}
+          />
 
           {/* 相关推荐 */}
           {movieDetail?.recommendations &&
