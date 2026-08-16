@@ -12,6 +12,7 @@ import {
   ImageIcon,
   MessageCircle,
   Film,
+  FileText,
 } from "lucide-react";
 import Link from "next/link";
 import { getImageUrl } from "@/lib/utils/image-utils";
@@ -32,6 +33,7 @@ interface MovieDetail {
   region: string;
   release_year: string;
   episodes_count: string;
+  description?: string; // 剧情简介全文（豆瓣 v:summary）
   short_comment?: {
     content: string;
     author: string | { name: string };
@@ -67,6 +69,8 @@ export default function MovieDetailPage() {
   // 电影详情状态
   const [movieDetail, setMovieDetail] = useState<MovieDetail | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(true);
+  // 剧情简介展开/收起
+  const [introExpanded, setIntroExpanded] = useState(false);
 
   // 智能返回：如果有历史记录则返回，否则跳转首页
   const goBack = useCallback(() => {
@@ -125,6 +129,7 @@ export default function MovieDetailPage() {
                 apiData.release_year || cachedData.release_year || "",
               episodes_count:
                 cachedData.episodes_count || apiData.episodes_count || "",
+              description: apiData.description || cachedData.description,
               short_comment: apiData.short_comment || cachedData.short_comment,
               // 新增字段
               photos: apiData.photos || [],
@@ -335,6 +340,31 @@ export default function MovieDetailPage() {
                     </div>
                   )}
                 </div>
+
+                {/* 剧情简介 */}
+                {movieDetail?.description && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-blue-400" />
+                      剧情简介
+                    </h3>
+                    <p
+                      className={`text-gray-300 text-sm leading-relaxed whitespace-pre-line ${
+                        introExpanded ? "" : "line-clamp-4"
+                      }`}
+                    >
+                      {movieDetail.description}
+                    </p>
+                    {movieDetail.description.length > 120 && (
+                      <button
+                        onClick={() => setIntroExpanded((v) => !v)}
+                        className="mt-2 text-xs text-gray-500 hover:text-red-400 transition-colors"
+                      >
+                        {introExpanded ? "收起" : "展开全部"}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* 短评 */}
                 {movieDetail?.short_comment && (

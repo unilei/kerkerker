@@ -117,6 +117,7 @@ export interface SubjectDetail {
   duration: string;
   region: string;
   episodes_count: string;
+  description?: string;
   short_comment?: {
     content: string;
     author: { name: string };
