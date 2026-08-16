@@ -15,7 +15,6 @@ import { useMovieMatch } from '@/hooks/useMovieMatch';
 import { Navbar } from '@/components/home/Navbar';
 import { SearchModal } from '@/components/home/SearchModal';
 import { Footer } from '@/components/home/Footer';
-import { LoadingOverlay } from '@/components/home/LoadingOverlay';
 
 const REGIONS = [
   { code: 'CN', label: '中国', emoji: '🇨🇳' },
@@ -231,7 +230,7 @@ export default function CalendarPage() {
   const router = useRouter();
   const [showSearch, setShowSearch] = useState(false);
   const scrolled = useScrollState(50);
-  const { matchingMovie, handleMovieClick, toast, setToast } = useMovieMatch();
+  const { handleMovieClick, toast, setToast } = useMovieMatch();
 
   const [calendarData, setCalendarData] = useState<CalendarResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -399,8 +398,6 @@ export default function CalendarPage() {
       )}
 
       {/* 匹配中遮罩 */}
-      {matchingMovie && <LoadingOverlay />}
-
       {/* Toast 通知 */}
       {toast && (
         <Toast

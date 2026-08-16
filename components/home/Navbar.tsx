@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
-import { Menu, X, Home, Film, Tv, Clock, Video, Github, Calendar, History } from "lucide-react";
-import { HistoryPopup } from "./HistoryPopup";
+import { Menu, X, Home, Film, Tv, Clock, Github, Calendar } from "lucide-react";
 
 interface NavbarProps {
   scrolled: boolean;
@@ -33,15 +32,6 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
     { href: "/browse/tv", label: "电视剧", icon: Tv },
     { href: "/calendar", label: "追剧日历", icon: Calendar },
     { href: "/browse/latest", label: "最新", icon: Clock },
-    { href: "/history", label: "历史记录", icon: History, mobileOnly: true },
-    {
-      label: "短剧",
-      icon: Video,
-      children: [
-        { href: "/shorts", label: "短剧" },
-        { href: "/dailymotion", label: "短剧Motion" },
-      ],
-    },
     {
       href: "https://github.com/unilei/kerkerker",
       label: "Github",
@@ -49,8 +39,6 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
       external: true,
     },
   ];
-
-  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
   return (
     <>
@@ -95,52 +83,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
 
             {/* 导航链接 - 桌面端 */}
             <div className="hidden md:flex items-center space-x-6">
-              {navItems.filter(item => !('mobileOnly' in item && item.mobileOnly)).map((item) =>
-                item.children ? (
-                  <div
-                    key={item.label}
-                    className="relative group"
-                    onMouseEnter={() => setOpenDropdown(item.label)}
-                    onMouseLeave={() => setOpenDropdown(null)}
-                  >
-                    <button className="text-gray-400 hover:text-white transition-colors text-sm font-medium flex items-center gap-1 py-2">
-                      {item.label}
-                      <svg
-                        className={`w-3 h-3 transition-transform duration-200 ${
-                          openDropdown === item.label ? "rotate-180" : ""
-                        }`}
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </button>
-                    {/* 下拉菜单 - 使用 pt-2 创建无缝hover区域 */}
-                    {openDropdown === item.label && (
-                      <div className="absolute top-full left-0 pt-1">
-                        <div className="py-2 bg-zinc-900 rounded-lg shadow-2xl border border-zinc-800 min-w-[140px] overflow-hidden">
-                          {/* 顶部红色装饰线 - Netflix风格 */}
-                          <div className="absolute top-1 left-0 right-0 h-0.5 bg-red-600" />
-                          {item.children.map((child) => (
-                            <Link
-                              key={child.href}
-                              href={child.href}
-                              className="block px-4 py-2.5 text-sm text-gray-300 hover:text-white hover:bg-red-600/20 transition-colors"
-                            >
-                              {child.label}
-                            </Link>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
+              {navItems.filter(item => !('mobileOnly' in item && item.mobileOnly)).map((item) => (
                   <Link
                     key={item.href}
                     href={item.href!}
@@ -149,8 +92,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                   >
                     {item.label}
                   </Link>
-                )
-              )}
+              ))}
             </div>
           </div>
 
@@ -176,9 +118,6 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                 />
               </svg>
             </button>
-
-            {/* 历史记录弹出 */}
-            <HistoryPopup />
           </div>
         </div>
       </nav>
@@ -217,30 +156,6 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
           <nav className="p-4 space-y-2">
             {navItems.map((item) => {
               const Icon = item.icon;
-              if (item.children) {
-                return (
-                  <div key={item.label} className="space-y-1">
-                    <div className="flex items-center space-x-3 px-4 py-3 text-gray-400">
-                      <Icon className="w-5 h-5" />
-                      <span className="text-base font-medium">
-                        {item.label}
-                      </span>
-                    </div>
-                    {item.children.map((child) => (
-                      <Link
-                        key={child.href}
-                        href={child.href}
-                        onClick={() => setIsMobileMenuOpen(false)}
-                        className="flex items-center space-x-3 px-4 py-2 pl-12 rounded-lg text-gray-300 hover:text-white hover:bg-white/10 transition-all duration-200"
-                      >
-                        <span className="text-sm font-medium">
-                          {child.label}
-                        </span>
-                      </Link>
-                    ))}
-                  </div>
-                );
-              }
               return (
                 <Link
                   key={item.href}

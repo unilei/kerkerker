@@ -20,7 +20,6 @@ import { ErrorState } from "@/components/home/ErrorState";
 import { EmptyState } from "@/components/home/EmptyState";
 import { HeroBanner } from "@/components/home/HeroBanner";
 import { CategoryRow } from "@/components/home/CategoryRow";
-import { LoadingOverlay } from "@/components/home/LoadingOverlay";
 import { Footer } from "@/components/home/Footer";
 
 // Utils
@@ -34,7 +33,7 @@ export default function HomePage() {
   const scrolled = useScrollState(50);
   const { categories, heroMovies, heroDataList, loading, error, refetch } =
     useHomeData();
-  const { matchingMovie, handleMovieClick, toast, setToast } = useMovieMatch();
+  const { handleMovieClick, toast, setToast } = useMovieMatch();
 
   // 滚动位置恢复（导航返回时保持位置）
   useScrollRestoration("home", { delay: 100 });
@@ -108,8 +107,6 @@ export default function HomePage() {
       )}
 
       {/* 匹配中遮罩 */}
-      {matchingMovie && <LoadingOverlay />}
-
       {/* Toast 通知 */}
       {toast && (
         <Toast

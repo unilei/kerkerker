@@ -117,26 +117,6 @@ async function initializeDatabase(db: Db) {
   if (globalForMongo.initialized) return;
 
   try {
-    // 创建 vod_sources 集合的索引
-    const vodSourcesCollection = db.collection(COLLECTIONS.VOD_SOURCES);
-    await vodSourcesCollection.createIndex({ key: 1 }, { unique: true });
-    await vodSourcesCollection.createIndex({ enabled: 1 });
-    await vodSourcesCollection.createIndex({ sort_order: 1 });
-
-    // 创建 vod_source_selection 集合的索引
-    const selectionCollection = db.collection(COLLECTIONS.VOD_SOURCE_SELECTION);
-    await selectionCollection.createIndex({ id: 1 }, { unique: true });
-
-    // 创建 dailymotion_channels 集合的索引
-    const dailymotionChannelsCollection = db.collection(COLLECTIONS.DAILYMOTION_CHANNELS);
-    await dailymotionChannelsCollection.createIndex({ id: 1 }, { unique: true });
-    await dailymotionChannelsCollection.createIndex({ username: 1 });
-    await dailymotionChannelsCollection.createIndex({ isActive: 1 });
-
-    // 创建 dailymotion_config 集合的索引
-    const dailymotionConfigCollection = db.collection(COLLECTIONS.DAILYMOTION_CONFIG);
-    await dailymotionConfigCollection.createIndex({ id: 1 }, { unique: true });
-
     // 创建 pan_resources 集合的索引
     const panResourcesCollection = db.collection(COLLECTIONS.PAN_RESOURCES);
     await panResourcesCollection.createIndex({ douban_id: 1 });

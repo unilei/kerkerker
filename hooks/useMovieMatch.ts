@@ -8,7 +8,6 @@ interface ToastState {
 }
 
 interface UseMovieMatchReturn {
-  matchingMovie: string | null;
   handleMovieClick: (movie: DoubanMovie) => void;
   toast: ToastState | null;
   setToast: (toast: ToastState | null) => void;
@@ -73,7 +72,6 @@ export function loadMovieCache(movieId: string): MovieCacheData | null {
  */
 export function useMovieMatch(): UseMovieMatchReturn {
   const router = useRouter();
-  const [matchingMovie] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const handleMovieClick = (movie: DoubanMovie) => {
@@ -85,7 +83,6 @@ export function useMovieMatch(): UseMovieMatchReturn {
   };
 
   return {
-    matchingMovie,
     handleMovieClick,
     toast,
     setToast,

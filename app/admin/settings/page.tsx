@@ -1,28 +1,16 @@
 "use client";
 
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { VodSource } from "@/types/drama";
-import { ShortDramaSource } from "@/types/shorts-source";
 import { Toast, ConfirmDialog } from "@/components/Toast";
-import type { PlayerConfig } from "@/app/api/player-config/route";
-import { VodSourcesTab } from "@/components/admin/VodSourcesTab";
-import { PlayerConfigTab } from "@/components/admin/PlayerConfigTab";
-import { DailymotionChannelsTab } from "@/components/admin/DailymotionChannelsTab";
-import { ShortsSourcesTab } from "@/components/admin/ShortsSourcesTab";
-import { DatabaseSettingsTab } from "@/components/admin/DatabaseSettingsTab";
 import { PanResourcesTab } from "@/components/admin/PanResourcesTab";
-import type {
-  ToastState,
-  ConfirmState,
-  UnifiedImportCallbacks,
-} from "@/components/admin/types";
-import type { DailymotionChannelConfig } from "@/types/dailymotion-config";
-import { Tv, Film, Youtube, Settings, Database, HardDrive } from "lucide-react";
+import { DatabaseSettingsTab } from "@/components/admin/DatabaseSettingsTab";
+import type { ToastState, ConfirmState } from "@/components/admin/types";
+import { HardDrive, Database } from "lucide-react";
 
-type TabType = "sources" | "shorts" | "dailymotion" | "player" | "database" | "pan";
+type TabType = "pan" | "database";
 
-const VALID_TABS: TabType[] = ["sources", "shorts", "dailymotion", "player", "database", "pan"];
+const VALID_TABS: TabType[] = ["pan", "database"];
 
 function SettingsContent() {
   const router = useRouter();
@@ -34,21 +22,10 @@ function SettingsContent() {
     if (urlTab && VALID_TABS.includes(urlTab as TabType)) {
       return urlTab as TabType;
     }
-    return "sources";
+    return "pan";
   };
 
   const [activeTab, setActiveTab] = useState<TabType>(getInitialTab);
-  const [sources, setSources] = useState<VodSource[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string>("");
-  const [shortsSources, setShortsSources] = useState<ShortDramaSource[]>([]);
-  const [selectedShortsKey, setSelectedShortsKey] = useState<string>("");
-  const [playerConfig, setPlayerConfig] = useState<PlayerConfig | null>(null);
-  const [dailymotionChannels, setDailymotionChannels] = useState<
-    DailymotionChannelConfig[]
-  >([]);
-  const [defaultChannelId, setDefaultChannelId] = useState<
-    string | undefined
-  >();
   const [toast, setToast] = useState<ToastState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
@@ -60,51 +37,6 @@ function SettingsContent() {
     router.replace(`?${params.toString()}`, { scroll: false });
   };
 
-  useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const vodResponse = await fetch("/api/vod-sources");
-        const vodResult = await vodResponse.json();
-
-        if (vodResult.code === 200 && vodResult.data) {
-          setSources(vodResult.data.sources || []);
-          setSelectedKey(vodResult.data.selected?.key || "");
-        }
-
-        // 加载短剧源配置
-        const shortsResponse = await fetch("/api/shorts-sources");
-        const shortsResult = await shortsResponse.json();
-
-        if (shortsResult.code === 200 && shortsResult.data) {
-          setShortsSources(shortsResult.data.sources || []);
-          setSelectedShortsKey(shortsResult.data.selected?.key || "");
-        }
-
-        const playerResponse = await fetch("/api/player-config");
-        const playerResult = await playerResponse.json();
-
-        if (playerResult.code === 200 && playerResult.data) {
-          setPlayerConfig(playerResult.data);
-        }
-
-        const dailymotionResponse = await fetch("/api/dailymotion-config");
-        const dailymotionResult = await dailymotionResponse.json();
-
-        if (dailymotionResult.code === 200 && dailymotionResult.data) {
-          setDailymotionChannels(dailymotionResult.data.channels || []);
-          setDefaultChannelId(dailymotionResult.data.defaultChannelId);
-        }
-      } catch (error) {
-        setToast({
-          message: error instanceof Error ? error.message : "加载配置失败",
-          type: "error",
-        });
-      }
-    };
-
-    loadSettings();
-  }, []);
-
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
@@ -115,30 +47,7 @@ function SettingsContent() {
     }
   };
 
-  // 统一导入回调 - 允许任意 Tab 更新所有类型的源
-  const unifiedImportCallbacks: UnifiedImportCallbacks = useMemo(
-    () => ({
-      onVodSourcesImport: (newSources, selected) => {
-        setSources(newSources);
-        if (selected) setSelectedKey(selected);
-      },
-      onShortsSourcesImport: (newSources, selected) => {
-        setShortsSources(newSources);
-        if (selected) setSelectedShortsKey(selected);
-      },
-      onDailymotionImport: (channels, defaultId) => {
-        setDailymotionChannels(channels);
-        if (defaultId) setDefaultChannelId(defaultId);
-      },
-    }),
-    []
-  );
-
   const tabs = [
-    { id: "sources" as TabType, name: "视频源管理", icon: Tv },
-    { id: "shorts" as TabType, name: "短剧源管理", icon: Film },
-    { id: "dailymotion" as TabType, name: "Dailymotion", icon: Youtube },
-    { id: "player" as TabType, name: "播放器设置", icon: Settings },
     { id: "pan" as TabType, name: "网盘资源", icon: HardDrive },
     { id: "database" as TabType, name: "数据库", icon: Database },
   ];
@@ -193,53 +102,6 @@ function SettingsContent() {
 
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === "sources" && (
-          <VodSourcesTab
-            sources={sources}
-            selectedKey={selectedKey}
-            onSourcesChange={setSources}
-            onSelectedKeyChange={setSelectedKey}
-            onShowToast={setToast}
-            onShowConfirm={setConfirm}
-            unifiedImport={unifiedImportCallbacks}
-          />
-        )}
-
-        {activeTab === "shorts" && (
-          <ShortsSourcesTab
-            sources={shortsSources}
-            selectedKey={selectedShortsKey}
-            onSourcesChange={setShortsSources}
-            onSelectedKeyChange={setSelectedShortsKey}
-            onShowToast={setToast}
-            onShowConfirm={setConfirm}
-            unifiedImport={unifiedImportCallbacks}
-          />
-        )}
-
-        {activeTab === "player" && playerConfig && (
-          <PlayerConfigTab
-            playerConfig={playerConfig}
-            onConfigChange={setPlayerConfig}
-            onShowToast={setToast}
-            onShowConfirm={setConfirm}
-          />
-        )}
-
-        {activeTab === "dailymotion" && (
-          <DailymotionChannelsTab
-            channels={dailymotionChannels}
-            defaultChannelId={defaultChannelId}
-            onChannelsChange={(channels, defaultId) => {
-              setDailymotionChannels(channels);
-              setDefaultChannelId(defaultId);
-            }}
-            onShowToast={setToast}
-            onShowConfirm={setConfirm}
-            unifiedImport={unifiedImportCallbacks}
-          />
-        )}
-
         {activeTab === "pan" && (
           <PanResourcesTab
             onShowToast={setToast}

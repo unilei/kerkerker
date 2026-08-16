@@ -1,21 +1,15 @@
 "use client";
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  Suspense,
-  useTransition,
-  useRef,
-} from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Drama, VodSource } from "@/types/drama";
+import type { DoubanMovie } from "@/types/douban";
 import DoubanCard from "@/components/DoubanCard";
-import { useVodSources } from "@/hooks/useVodSources";
-import { mutate } from "swr";
-
-// SWR 缓存键前缀
-const SWR_SEARCH_KEY_PREFIX = "search-results-";
+import { useMovieMatch } from "@/hooks/useMovieMatch";
+import {
+  searchDouban,
+  type SuggestItem,
+  type Subject,
+} from "@/lib/douban-service";
 
 function SearchSkeleton() {
   return (
@@ -33,179 +27,74 @@ function SearchSkeleton() {
   );
 }
 
+// 将豆瓣搜索结果统一映射为卡片数据
+function toMovie(item: SuggestItem | Subject): DoubanMovie {
+  const suggest = item as SuggestItem;
+  const advanced = item as Subject;
+  return {
+    id: String(item.id),
+    title: item.title,
+    cover: suggest.img || advanced.cover || "",
+    rate: advanced.rate || "",
+    episode_info: suggest.episode || advanced.episode_info || "",
+    is_new: false,
+    playable: false,
+    url: item.url,
+    cover_x: 0,
+    cover_y: 0,
+  };
+}
+
 function SearchContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryKeyword = searchParams.get("q") || "";
+  const { handleMovieClick } = useMovieMatch();
 
   const [searchKeyword, setSearchKeyword] = useState(queryKeyword);
-  const [searchResults, setSearchResults] = useState<
-    (Drama & { source: VodSource })[]
-  >([]);
+  const [searchResults, setSearchResults] = useState<DoubanMovie[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
-
-  // 使用 SWR 缓存的视频源配置
-  const { sources: allSources } = useVodSources();
-  const [currentSource, setCurrentSource] = useState<VodSource | null>(null);
-  const [searchStats, setSearchStats] = useState<{
-    total: number;
-    bySource: Record<string, number>;
-  }>({ total: 0, bySource: {} });
-
-  // 流式搜索进度
-  const [searchProgress, setSearchProgress] = useState<{
-    completed: number;
-    total: number;
-  }>({ completed: 0, total: 0 });
-
-  // 使用 useTransition 让渲染不阻塞用户交互
-  const [, startTransition] = useTransition();
-
-  // 防止重复搜索
-  const searchingRef = useRef<string | null>(null);
 
   // 同步 URL 参数到本地搜索框状态
   useEffect(() => {
     setSearchKeyword(queryKeyword);
   }, [queryKeyword]);
 
-  // 执行流式搜索 - 每个源完成就立即显示结果
-  const performSearch = useCallback(
-    async (keyword: string) => {
-      if (!keyword.trim()) return;
+  // 执行豆瓣搜索
+  useEffect(() => {
+    if (!queryKeyword.trim()) return;
 
+    let cancelled = false;
+    const performSearch = async () => {
       setLoading(true);
       setSearched(true);
-      setSearchResults([]);
-      setSearchStats({ total: 0, bySource: {} });
-      setSearchProgress({ completed: 0, total: 0 });
-
       try {
-        console.log(`🔍 开始流式搜索: ${keyword}`);
-
-        // 使用流式搜索 API
-        const response = await fetch(
-          `/api/drama/search-stream?q=${encodeURIComponent(keyword.trim())}`
-        );
-
-        if (!response.ok) {
-          throw new Error("搜索请求失败");
-        }
-
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error("无法读取响应流");
-        }
-
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // 解析 SSE 数据
-          const lines = buffer.split("\n\n");
-          buffer = lines.pop() || ""; // 保留未完成的部分
-
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-
-                if (data.type === "init") {
-                  // 初始化：设置总源数（源列表来自 useVodSources hook）
-                  console.log(`📡 开始搜索 ${data.totalSources} 个视频源`);
-                  setSearchProgress({ completed: 0, total: data.totalSources });
-                } else if (data.type === "result") {
-                  // 收到单个源的结果 - 立即追加显示
-                  console.log(
-                    `  ✅ ${data.sourceName} 找到 ${data.count} 个结果`
-                  );
-
-                  startTransition(() => {
-                    setSearchResults((prev) => [...prev, ...data.results]);
-                    setSearchStats((prev) => ({
-                      total: prev.total + data.count,
-                      bySource: {
-                        ...prev.bySource,
-                        [data.sourceKey]: data.count,
-                      },
-                    }));
-                  });
-
-                  setSearchProgress((prev) => ({
-                    ...prev,
-                    completed: prev.completed + 1,
-                  }));
-                } else if (data.type === "done") {
-                  console.log("📊 所有视频源搜索完成");
-
-                  // 搜索完成后，使用 SWR mutate 缓存结果
-                  setSearchResults((currentResults) => {
-                    setSearchStats((currentStats) => {
-                      // 缓存到 SWR
-                      mutate(
-                        `${SWR_SEARCH_KEY_PREFIX}${keyword}`,
-                        {
-                          results: currentResults,
-                          stats: currentStats,
-                        },
-                        false
-                      );
-                      return currentStats;
-                    });
-                    return currentResults;
-                  });
-                }
-              } catch (e) {
-                console.error("解析 SSE 数据失败:", e);
-              }
-            }
-          }
-        }
+        const data = await searchDouban(queryKeyword.trim());
+        if (cancelled) return;
+        const items: DoubanMovie[] = (data.suggest?.length
+          ? data.suggest
+          : data.advanced || []
+        ).map(toMovie);
+        setSearchResults(items);
       } catch (error) {
         console.error("搜索失败:", error);
-        // 检查是否是因为没有配置视频源
-        if (allSources.length === 0) {
-          // 会在 UI 中显示配置提示
-        }
-        setSearchResults([]);
+        if (!cancelled) setSearchResults([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    },
-    [startTransition]
-  );
+    };
 
-  // 当搜索关键词变化时执行搜索
-  useEffect(() => {
-    if (queryKeyword && searchingRef.current !== queryKeyword) {
-      searchingRef.current = queryKeyword;
-      performSearch(queryKeyword);
-    }
-  }, [queryKeyword, performSearch]);
+    performSearch();
+    return () => {
+      cancelled = true;
+    };
+  }, [queryKeyword]);
 
   // 处理搜索提交
   const handleSearch = () => {
     if (!searchKeyword.trim()) return;
     router.push(`/search?q=${encodeURIComponent(searchKeyword.trim())}`);
-  };
-
-  // 点击影片 - 清除旧缓存后跳转播放页面
-  const handlePlayClick = (drama: Drama & { source: VodSource }) => {
-    // 清除旧的 multi_source_matches 缓存，避免 SourceSelector 显示旧数据
-    try {
-      localStorage.removeItem("multi_source_matches");
-    } catch {
-      // 静默处理
-    }
-
-    router.push(`/play/${drama.id}?source=${drama.source.key}`);
   };
 
   // 返回首页
@@ -305,56 +194,6 @@ function SearchContent() {
             <div className="w-10 sm:w-[88px] shrink-0" />{" "}
             {/* Spacer for alignment */}
           </div>
-
-          {/* 视频源筛选器 - 只有在有结果或有源时显示 */}
-          {allSources.length > 0 && (
-            <div className="mt-4 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 overflow-x-auto scrollbar-hide">
-              <div className="flex items-center gap-2 min-w-max pb-1">
-                <button
-                  onClick={() => setCurrentSource(null)}
-                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                    currentSource === null
-                      ? "bg-white text-black shadow-lg shadow-white/10"
-                      : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-transparent hover:border-white/10"
-                  }`}
-                >
-                  全部
-                  <span className="ml-1.5 opacity-60">
-                    {searchResults.length}
-                  </span>
-                </button>
-                {allSources.map((source) => {
-                  const count = searchStats.bySource[source.key] || 0;
-                  if (count === 0 && searched && !loading) return null; // 搜索完成且无结果的源隐藏? 不，还是显示好，或者变灰
-
-                  return (
-                    <button
-                      key={source.key}
-                      onClick={() => setCurrentSource(source)}
-                      className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 ${
-                        currentSource?.key === source.key
-                          ? "bg-red-600 text-white shadow-lg shadow-red-900/20"
-                          : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-transparent hover:border-white/10"
-                      }`}
-                    >
-                      {source.name}
-                      {count > 0 && (
-                        <span
-                          className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                            currentSource?.key === source.key
-                              ? "bg-white/20 text-white"
-                              : "bg-white/10 text-gray-500"
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -367,10 +206,7 @@ function SearchContent() {
               {loading ? (
                 <>
                   <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                  正在从 {searchProgress.total} 个源中搜索...
-                  <span className="ml-2 px-2 py-0.5 bg-white/5 rounded-md text-xs">
-                    已完成 {searchProgress.completed}/{searchProgress.total}
-                  </span>
+                  正在搜索...
                 </>
               ) : (
                 <>
@@ -393,78 +229,20 @@ function SearchContent() {
         )}
 
         {/* 结果展示 */}
-        {allSources.length === 0 ? (
-          // 无视频源配置
-          <div className="flex flex-col items-center justify-center py-32 animate-fade-in">
-            <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6 border border-red-500/20">
-              <svg
-                className="w-10 h-10 text-red-500"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
-            </div>
-            <h3 className="text-xl font-bold text-white mb-2">未配置视频源</h3>
-            <p className="text-gray-400 mb-8 max-w-sm text-center">
-              请先在后台管理中配置视频源后再使用搜索功能
-            </p>
-            <a
-              href="/admin/settings"
-              className="px-8 py-3 bg-white text-black font-medium rounded-full hover:bg-gray-200 transition-colors"
-            >
-              前往配置
-            </a>
-          </div>
-        ) : loading && searchResults.length === 0 ? (
+        {loading && searchResults.length === 0 ? (
           // 初始加载中 (Skeleton)
           <SearchSkeleton />
         ) : searched || searchResults.length > 0 ? (
           searchResults.length > 0 ? (
             <div className="animate-fade-in">
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-y-8 gap-x-4">
-                {searchResults
-                  .filter(
-                    (drama) =>
-                      !currentSource || drama.source.key === currentSource.key
-                  )
-                  .map((drama, index) => {
-                    const movieData = {
-                      id: String(drama.id),
-                      title: drama.name,
-                      cover: drama.pic,
-                      rate: drama.score || "",
-                      episode_info: drama.remarks || drama.note || "",
-                      is_new: false,
-                      playable: true,
-                      url: "",
-                      cover_x: 0,
-                      cover_y: 0,
-                    };
-
-                    return (
-                      <div
-                        key={`${drama.source.key}-${drama.id}-${index}`}
-                        className="relative group z-0 hover:z-50"
-                      >
-                        <div className="absolute top-2 left-2 z-40 flex gap-1 pointer-events-none">
-                          <div className="bg-black/60 backdrop-blur-md border border-white/10 text-white text-[10px] px-2 py-0.5 rounded-md shadow-xl">
-                            {drama.source.name}
-                          </div>
-                        </div>
-                        <DoubanCard
-                          movie={movieData}
-                          onSelect={() => handlePlayClick(drama)}
-                        />
-                      </div>
-                    );
-                  })}
+                {searchResults.map((movie) => (
+                  <DoubanCard
+                    key={movie.id}
+                    movie={movie}
+                    onSelect={handleMovieClick}
+                  />
+                ))}
               </div>
             </div>
           ) : (
@@ -488,12 +266,8 @@ function SearchContent() {
               <h3 className="text-xl font-bold text-white mb-2">
                 未找到相关内容
               </h3>
-              <p className="text-gray-400 mb-2">
-                在所有 {allSources.length} 个视频源中搜索 &ldquo;{queryKeyword}
-                &rdquo; 没有结果
-              </p>
-              <p className="text-gray-500 text-sm mb-6">
-                已搜索: {allSources.map((s) => s.name).join("、")}
+              <p className="text-gray-400 mb-6">
+                搜索 &ldquo;{queryKeyword}&rdquo; 没有结果，换个关键词试试
               </p>
               <div className="flex items-center space-x-4">
                 <button
@@ -529,13 +303,8 @@ function SearchContent() {
                 />
               </svg>
             </div>
-            <h3 className="text-xl font-bold text-white mb-2">搜索影视资源</h3>
-            <p className="text-gray-400 mb-2">
-              输入关键词，将在 {allSources.length} 个视频源中搜索
-            </p>
-            <p className="text-gray-500 text-sm">
-              {allSources.map((s) => s.name).join("、")}
-            </p>
+            <h3 className="text-xl font-bold text-white mb-2">搜索影视信息</h3>
+            <p className="text-gray-400">输入关键词，查找影片信息与网盘资源</p>
           </div>
         )}
       </div>

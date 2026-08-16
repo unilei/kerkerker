@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Play, ChevronLeft, ChevronRight } from "lucide-react";
+import { Info, ChevronLeft, ChevronRight } from "lucide-react";
 import type { DoubanMovie } from "@/types/douban";
 import type { HeroData } from "@/types/home";
 import { getImageUrl } from "@/lib/utils/image-utils";
@@ -189,8 +189,8 @@ export function HeroBanner({
                         onClick={() => onMovieClick(movie)}
                         className="group flex items-center gap-3 bg-white text-black px-8 py-3.5 rounded-xl font-bold hover:bg-primary hover:scale-105 transition-all duration-300 shadow-lg shadow-white/5"
                       >
-                        <Play className="w-6 h-6 fill-black group-hover:fill-black transition-colors" />
-                        <span className="text-lg">立即播放</span>
+                        <Info className="w-6 h-6" />
+                        <span className="text-lg">查看详情</span>
                       </button>
                     </div>
                   </div>
