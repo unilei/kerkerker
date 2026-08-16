@@ -58,7 +58,7 @@ export const PAN_BRAND_CONFIGS: Record<PanBrand, PanBrandConfig> = {
     shortName: "鸭",
     badgeClass: "bg-purple-500",
     textClass: "text-purple-400",
-    // 官方 logo 待补充域名后抓取，先用品牌色字标
+    icon: "/pan-icons/guangya.png",
   },
   uc: {
     key: "uc",

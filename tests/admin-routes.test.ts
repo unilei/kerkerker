@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 
 import { POST as testDatabaseConnection } from "@/app/api/database/test/route";
 import { GET as getAuthMe } from "@/app/api/auth/me/route";
+import { GET as getKkpanSearch } from "@/app/api/kkpan/search/route";
 import {
   POST as createPanResource,
   PUT as updatePanResource,
@@ -73,6 +74,14 @@ test("session probe reports unauthenticated for anonymous visitors", async () =>
 
   assert.equal(response.status, 200);
   assert.equal(body.data.authenticated, false);
+});
+
+test("kkpans pull requires an authenticated admin session", async () => {
+  const response = await getKkpanSearch(
+    new NextRequest("http://localhost/api/kkpan/search?keyword=test")
+  );
+
+  assert.equal(response.status, 401);
 });
 
 test("database diagnostics require an authenticated admin session", async () => {

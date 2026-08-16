@@ -24,9 +24,8 @@ const BRAND_DOMAINS: Array<[PanBrand, string[]]> = [
   ["baidu", ["pan.baidu.com", "yun.baidu.com"]],
   ["xunlei", ["pan.xunlei.com", "xunlei.com"]],
   ["uc", ["drive.uc.cn", "pcl.uc.cn", "drive.ucweb.com"]],
+  ["guangya", ["guangyapan.com"]],
 ];
-
-// 光鸭官方域名待确认，识别到后补充到这里
 
 const URL_RE = /https?:\/\/[^\s，,、"'）)\]】<>]+/gi;
 const URL_TEST_RE = /https?:\/\//i;

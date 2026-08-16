@@ -11,6 +11,8 @@ import {
   Power,
   ClipboardPaste,
   Sparkles,
+  CloudDownload,
+  Search,
 } from "lucide-react";
 import {
   PAN_BRANDS,
@@ -53,6 +55,17 @@ interface DraftRow {
 const inputClass =
   "w-full bg-black/30 border border-white/10 rounded px-2.5 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-red-500/60 transition-colors";
 
+// kkpans 拉取结果（/api/kkpan/search 归一化后的条目）
+interface KkpanItem {
+  brand: PanBrand;
+  title: string;
+  url: string;
+  code?: string;
+  size?: string;
+  format?: string;
+  updatedAt?: string;
+}
+
 function emptyRow(): DraftRow {
   return {
     key: Math.random().toString(36).slice(2),
@@ -89,6 +102,19 @@ export function PanResourceManager({
   const [pasteText, setPasteText] = useState("");
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // 从 kkpans 拉取（仅转存成功的资源）
+  const [kkpanKeyword, setKkpanKeyword] = useState(movie.title);
+  const [kkpanResults, setKkpanResults] = useState<KkpanItem[]>([]);
+  const [kkpanChecked, setKkpanChecked] = useState<Set<string>>(new Set());
+  const [kkpanLoading, setKkpanLoading] = useState(false);
+
+  // 切换影片时重置拉取状态，关键词预填当前片名
+  useEffect(() => {
+    setKkpanKeyword(movie.title);
+    setKkpanResults([]);
+    setKkpanChecked(new Set());
+  }, [movie.douban_id, movie.title]);
 
   // 加载该片全部资源（含禁用，需管理员会话）
   const loadResources = useCallback(async () => {
@@ -162,6 +188,91 @@ export function PanResourceManager({
 
   const clearDrafts = () => {
     setDrafts([]);
+  };
+
+  // 搜索 kkpans 公开目录（服务端代理，仅转存成功资源）
+  const handleKkpanSearch = async () => {
+    const keyword = kkpanKeyword.trim();
+    if (!keyword) {
+      onShowToast({ message: "请输入搜索关键词", type: "warning" });
+      return;
+    }
+    setKkpanLoading(true);
+    try {
+      const response = await fetch(
+        `/api/kkpan/search?keyword=${encodeURIComponent(keyword)}`
+      );
+      const result = await response.json();
+      if (result.code !== 200) {
+        throw new Error(result.message || "kkpans 拉取失败");
+      }
+      const items: KkpanItem[] = result.data?.items || [];
+      setKkpanResults(items);
+      setKkpanChecked(new Set(items.map((item) => item.url)));
+      onShowToast({
+        message:
+          items.length > 0
+            ? `找到 ${items.length} 条转存成功的资源`
+            : "kkpans 上未找到相关资源",
+        type: items.length > 0 ? "success" : "info",
+      });
+    } catch (error) {
+      onShowToast({
+        message: error instanceof Error ? error.message : "kkpans 拉取失败",
+        type: "error",
+      });
+      setKkpanResults([]);
+    } finally {
+      setKkpanLoading(false);
+    }
+  };
+
+  // 该链接是否已存在（已有资源或待入库草稿中）
+  const isUrlExists = useCallback(
+    (url: string) =>
+      resources.some((r) => r.url === url) || drafts.some((d) => d.url === url),
+    [resources, drafts]
+  );
+
+  // 勾选/取消勾选
+  const toggleKkpanCheck = (url: string) => {
+    setKkpanChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) {
+        next.delete(url);
+      } else {
+        next.add(url);
+      }
+      return next;
+    });
+  };
+
+  // 勾选项导入待入库草稿（跳过已存在的链接）
+  const importKkpanChecked = () => {
+    const importable = kkpanResults.filter(
+      (item) => kkpanChecked.has(item.url) && !isUrlExists(item.url)
+    );
+    if (importable.length === 0) {
+      onShowToast({ message: "没有可导入的条目", type: "warning" });
+      return;
+    }
+    const rows: DraftRow[] = importable.map((item) => ({
+      key: nextKey(),
+      brand: item.brand,
+      title: item.title,
+      url: item.url,
+      size: item.size || "",
+      format: item.format || "",
+      code: item.code || "",
+      note: "",
+    }));
+    setDrafts((prev) => [...prev, ...rows]);
+    setKkpanResults([]);
+    setKkpanChecked(new Set());
+    onShowToast({
+      message: `已导入 ${rows.length} 条到待入库列表，确认后点「全部入库」`,
+      type: "success",
+    });
   };
 
   // 校验草稿行，返回首个错误信息
@@ -323,6 +434,101 @@ export function PanResourceManager({
 
   return (
     <div className="space-y-5">
+      {/* 从 kkpans 拉取 */}
+      <div className="bg-black/20 border border-white/10 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm text-gray-300 font-medium flex items-center gap-2">
+            <CloudDownload size={14} className="text-red-400" />
+            从 kkpans 拉取
+          </h4>
+          <span className="text-xs text-gray-500">
+            仅拉取转存成功的资源（分享链接有效）
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={kkpanKeyword}
+            onChange={(e) => setKkpanKeyword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleKkpanSearch()}
+            placeholder="输入片名搜索 kkpans 资源库"
+            className={inputClass}
+          />
+          <button
+            onClick={handleKkpanSearch}
+            disabled={kkpanLoading}
+            className="px-4 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5 shrink-0"
+          >
+            {kkpanLoading ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Search size={14} />
+            )}
+            搜索
+          </button>
+        </div>
+
+        {/* 拉取结果 */}
+        {kkpanResults.length > 0 && (
+          <div className="mt-3 space-y-2 max-h-80 overflow-y-auto">
+            {kkpanResults.map((item) => {
+              const config = PAN_BRAND_CONFIGS[item.brand];
+              const exists = isUrlExists(item.url);
+              const checked = kkpanChecked.has(item.url);
+              return (
+                <label
+                  key={item.url}
+                  className={`flex items-center gap-3 bg-black/30 border rounded-lg px-3 py-2 cursor-pointer transition-colors ${
+                    exists
+                      ? "border-white/5 opacity-50 cursor-not-allowed"
+                      : checked
+                        ? "border-red-500/50"
+                        : "border-white/10 hover:border-white/25"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked && !exists}
+                    disabled={exists}
+                    onChange={() => toggleKkpanCheck(item.url)}
+                    className="accent-red-600 shrink-0"
+                  />
+                  <BrandBadge brand={item.brand} size="sm" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm text-white truncate">
+                      {item.title}
+                    </span>
+                    <span className="block text-xs text-gray-500 truncate mt-0.5">
+                      {[config.name, item.size, item.format, item.code ? `提取码 ${item.code}` : null, item.updatedAt]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </span>
+                  {exists && (
+                    <span className="text-[10px] text-gray-400 bg-white/10 px-1.5 py-0.5 rounded shrink-0">
+                      已存在
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+            <button
+              onClick={importKkpanChecked}
+              className="w-full py-2 bg-white/10 hover:bg-white/20 text-white text-sm rounded-lg transition-colors flex items-center justify-center gap-2"
+            >
+              <Plus size={14} />
+              导入所选（
+              {
+                kkpanResults.filter(
+                  (item) => kkpanChecked.has(item.url) && !isUrlExists(item.url)
+                ).length
+              }{" "}
+              条）
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* 智能粘贴 */}
       <div className="bg-black/20 border border-white/10 rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
