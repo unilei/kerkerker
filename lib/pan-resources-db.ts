@@ -21,9 +21,21 @@ export interface PanResourceDoc {
   url: string;
   code?: string;
   note?: string;
+  source?: "manual" | "kkpan";
+  kkpan_id?: number;
   enabled: boolean;
   created_at: string; // ISO 字符串格式
   updated_at: string; // ISO 字符串格式
+}
+
+// 同步状态文档（pan_sync_state 集合，单例 id:1）
+export interface PanSyncStateDoc {
+  _id?: ObjectId;
+  id: number;
+  last_incremental_at?: string;
+  last_backfill_at?: string;
+  last_stats?: Record<string, unknown>;
+  updated_at: string;
 }
 
 // 品牌排序权重（用于前台按固定品牌顺序展示）
@@ -46,6 +58,8 @@ function docToPanResource(doc: PanResourceDoc): PanResource {
     url: doc.url,
     code: doc.code,
     note: doc.note,
+    source: doc.source,
+    kkpan_id: doc.kkpan_id,
     enabled: doc.enabled,
     created_at: doc.created_at,
     updated_at: doc.updated_at,
@@ -130,6 +144,8 @@ export async function createPanResourceInDB(
     url: input.url,
     code: input.code,
     note: input.note,
+    source: input.source,
+    kkpan_id: input.kkpan_id,
     enabled: input.enabled ?? true,
     created_at: now,
     updated_at: now,
@@ -161,6 +177,8 @@ export async function updatePanResourceInDB(
   if (updates.url !== undefined) setDoc.url = updates.url;
   if (updates.code !== undefined) setDoc.code = updates.code;
   if (updates.note !== undefined) setDoc.note = updates.note;
+  if (updates.source !== undefined) setDoc.source = updates.source;
+  if (updates.kkpan_id !== undefined) setDoc.kkpan_id = updates.kkpan_id;
   if (updates.enabled !== undefined) setDoc.enabled = updates.enabled;
 
   let objectId: ObjectId;
@@ -190,4 +208,63 @@ export async function deletePanResourceFromDB(id: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// 已存在资源的去重键（url 全集 + kkpan_id 全集），供同步去重
+export async function getExistingPanKeys(): Promise<{
+  urls: Set<string>;
+  kkpanIds: Set<number>;
+}> {
+  const db = await getDatabase();
+  const collection = db.collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES);
+
+  const [urls, kkpanIds] = await Promise.all([
+    collection.distinct("url") as unknown as Promise<string[]>,
+    collection.distinct("kkpan_id") as unknown as Promise<number[]>,
+  ]);
+
+  return {
+    urls: new Set(urls.filter(Boolean)),
+    kkpanIds: new Set(kkpanIds.filter((v) => typeof v === "number")),
+  };
+}
+
+// kkpan 来源的资源（失效联动检测用），按更新时间倒序
+export async function getKkpanSourceResources(limit = 200): Promise<PanResource[]> {
+  const db = await getDatabase();
+  const collection = db.collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES);
+
+  const docs = await collection
+    .find({ source: "kkpan" as const })
+    .sort({ updated_at: -1 })
+    .limit(limit)
+    .toArray();
+
+  return docs.map(docToPanResource);
+}
+
+// ==================== 同步状态 ====================
+
+// 读取同步状态（无则返回 null）
+export async function getPanSyncState(): Promise<PanSyncStateDoc | null> {
+  const db = await getDatabase();
+  const collection = db.collection<PanSyncStateDoc>(COLLECTIONS.PAN_SYNC_STATE);
+  return collection.findOne({ id: 1 });
+}
+
+// 更新同步状态
+export async function savePanSyncState(patch: {
+  last_incremental_at?: string;
+  last_backfill_at?: string;
+  last_stats?: Record<string, unknown>;
+}): Promise<void> {
+  const db = await getDatabase();
+  const collection = db.collection<PanSyncStateDoc>(COLLECTIONS.PAN_SYNC_STATE);
+  const now = new Date().toISOString();
+
+  await collection.updateOne(
+    { id: 1 },
+    { $set: { id: 1, ...patch, updated_at: now } },
+    { upsert: true }
+  );
 }

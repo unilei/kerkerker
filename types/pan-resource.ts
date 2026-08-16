@@ -83,10 +83,15 @@ export interface PanResource {
   url: string;
   code?: string; // 提取码（如 4 位字母数字）
   note?: string;
+  source?: PanResourceSource; // 录入来源
+  kkpan_id?: number; // kkpans 资源 ID（同步去重 / 对账用）
   enabled: boolean;
   created_at: string; // ISO 字符串
   updated_at: string; // ISO 字符串
 }
+
+// 资源录入来源
+export type PanResourceSource = "manual" | "kkpan";
 
 // 新增/更新网盘资源的入参
 export interface PanResourceInput {
@@ -100,5 +105,7 @@ export interface PanResourceInput {
   url?: string;
   code?: string;
   note?: string;
+  source?: PanResourceSource;
+  kkpan_id?: number;
   enabled?: boolean;
 }

@@ -20,6 +20,7 @@ async function fetchFromService<T>(endpoint: string, options?: RequestInit): Pro
         'Content-Type': 'application/json',
         ...options?.headers,
       },
+      signal: AbortSignal.timeout(15000),
     });
     
     const data = await response.json();

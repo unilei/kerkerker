@@ -122,6 +122,11 @@ async function initializeDatabase(db: Db) {
     await panResourcesCollection.createIndex({ douban_id: 1 });
     await panResourcesCollection.createIndex({ enabled: 1 });
     await panResourcesCollection.createIndex({ internal_id: 1 });
+    await panResourcesCollection.createIndex({ kkpan_id: 1 });
+
+    // 创建 pan_sync_state 集合的索引
+    const panSyncStateCollection = db.collection(COLLECTIONS.PAN_SYNC_STATE);
+    await panSyncStateCollection.createIndex({ id: 1 }, { unique: true });
 
     globalForMongo.initialized = true;
     console.log('✅ MongoDB 数据库初始化完成');

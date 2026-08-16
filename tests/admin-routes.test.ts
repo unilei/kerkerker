@@ -12,6 +12,10 @@ import {
   DELETE as deletePanResource,
   GET as getPanResources,
 } from "@/app/api/pan-resources/route";
+import {
+  GET as getSyncState,
+  POST as runSync,
+} from "@/app/api/pan-resources/sync-kkpan/route";
 
 function jsonRequest(url: string, body: unknown): NextRequest {
   return new NextRequest(url, {
@@ -79,6 +83,24 @@ test("session probe reports unauthenticated for anonymous visitors", async () =>
 test("kkpans pull requires an authenticated admin session", async () => {
   const response = await getKkpanSearch(
     new NextRequest("http://localhost/api/kkpan/search?keyword=test")
+  );
+
+  assert.equal(response.status, 401);
+});
+
+test("kkpans sync requires an authenticated admin session (GET)", async () => {
+  const response = await getSyncState(
+    new NextRequest("http://localhost/api/pan-resources/sync-kkpan")
+  );
+
+  assert.equal(response.status, 401);
+});
+
+test("kkpans sync requires an authenticated admin session (POST)", async () => {
+  const response = await runSync(
+    jsonRequest("http://localhost/api/pan-resources/sync-kkpan", {
+      mode: "incremental",
+    })
   );
 
   assert.equal(response.status, 401);

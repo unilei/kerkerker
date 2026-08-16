@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Search, Loader2, Film } from "lucide-react";
+import { Search, Loader2, Film, RefreshCw, DatabaseZap } from "lucide-react";
 import {
   searchDouban,
   getSubjectDetail,
@@ -33,6 +33,23 @@ interface SelectedMovie {
   internal_id?: number;
 }
 
+// kkpans 同步状态
+interface SyncState {
+  last_incremental_at: string | null;
+  last_backfill_at: string | null;
+}
+
+interface SyncStatsView {
+  mode: string;
+  pulled: number;
+  imported: number;
+  skippedExisting: number;
+  unmatched: number;
+  disabled: number;
+  checkedTitles: number;
+  durationMs: number;
+}
+
 const inputClass =
   "flex-1 bg-[#333] border border-[#444] rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-[#E50914] transition-colors";
 
@@ -49,6 +66,25 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
   // 最近录入（未选中影片时展示）
   const [recentResources, setRecentResources] = useState<PanResource[]>([]);
 
+  // kkpans 自动同步
+  const [syncState, setSyncState] = useState<SyncState | null>(null);
+  const [syncingMode, setSyncingMode] = useState<"incremental" | "backfill" | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncStatsView | null>(null);
+  const [backfillLimit, setBackfillLimit] = useState("100");
+
+  // 加载同步状态
+  const loadSyncState = useCallback(async () => {
+    try {
+      const response = await fetch("/api/pan-resources/sync-kkpan");
+      const result = await response.json();
+      if (result.code === 200) {
+        setSyncState(result.data);
+      }
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
   // 加载最近录入
   const loadRecent = useCallback(async () => {
     try {
@@ -64,7 +100,43 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
 
   useEffect(() => {
     loadRecent();
-  }, [loadRecent]);
+    loadSyncState();
+  }, [loadRecent, loadSyncState]);
+
+  // 执行同步（incremental=增量 / backfill=批量补库）
+  const handleSync = async (mode: "incremental" | "backfill") => {
+    setSyncingMode(mode);
+    setSyncResult(null);
+    try {
+      const limit =
+        mode === "backfill"
+          ? Math.min(Math.max(parseInt(backfillLimit, 10) || 100, 1), 200)
+          : undefined;
+      const response = await fetch("/api/pan-resources/sync-kkpan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, limit }),
+      });
+      const result = await response.json();
+      if (result.code !== 200) {
+        throw new Error(result.message || "同步失败");
+      }
+      setSyncResult(result.data.stats);
+      onShowToast({
+        message: `同步完成：新入库 ${result.data.stats.imported} 条`,
+        type: "success",
+      });
+      loadSyncState();
+      loadRecent();
+    } catch (error) {
+      onShowToast({
+        message: error instanceof Error ? error.message : "同步失败",
+        type: "error",
+      });
+    } finally {
+      setSyncingMode(null);
+    }
+  };
 
   // 按片名搜索豆瓣
   const handleSearch = async () => {
@@ -189,6 +261,91 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
         <p className="text-sm text-gray-400">
           为影片录入夸克 / 百度 / 迅雷 / 光鸭 / UC 网盘分享链接。支持整段粘贴资源文本自动解析，
           也可直接到影片详情页点「管理」录入。录入后会在详情页「网盘资源」区块展示。
+        </p>
+      </div>
+
+      {/* kkpans 自动同步 */}
+      <div className="bg-[#181818] border border-[#333] rounded-lg p-6">
+        <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+          <RefreshCw size={18} className="text-[#E50914]" />
+          kkpans 自动同步
+        </h3>
+
+        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-4">
+          <span>
+            上次增量：{syncState?.last_incremental_at?.slice(0, 19).replace("T", " ") || "从未"}
+          </span>
+          <span>
+            上次补库：{syncState?.last_backfill_at?.slice(0, 19).replace("T", " ") || "从未"}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => handleSync("incremental")}
+            disabled={syncingMode !== null}
+            className="px-4 py-2 bg-[#E50914] hover:bg-[#f6121d] disabled:opacity-50 text-white text-sm rounded transition-colors flex items-center gap-2"
+          >
+            {syncingMode === "incremental" ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+            增量同步（最新转存）
+          </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleSync("backfill")}
+              disabled={syncingMode !== null}
+              className="px-4 py-2 bg-[#333] hover:bg-[#444] disabled:opacity-50 text-white text-sm rounded transition-colors flex items-center gap-2"
+            >
+              {syncingMode === "backfill" ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <DatabaseZap size={14} />
+              )}
+              批量补库（豆瓣热榜）
+            </button>
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={backfillLimit}
+              onChange={(e) => setBackfillLimit(e.target.value)}
+              className="w-20 bg-[#333] border border-[#444] rounded px-2 py-2 text-sm text-white focus:outline-none focus:border-[#E50914]"
+              title="补库影片数上限"
+            />
+            <span className="text-xs text-gray-500">部影片</span>
+          </div>
+        </div>
+
+        {/* 同步结果统计 */}
+        {syncResult && (
+          <div className="mt-4 bg-[#222] border border-[#333] rounded-lg p-4 text-sm text-gray-300">
+            <p className="text-white font-medium mb-2">
+              {syncResult.mode === "backfill" ? "批量补库" : "增量同步"}结果
+              <span className="text-gray-500 ml-2 text-xs">
+                耗时 {(syncResult.durationMs / 1000).toFixed(1)}s
+              </span>
+            </p>
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
+              <span>拉到资源 <b className="text-white">{syncResult.pulled}</b></span>
+              <span className="text-green-400">新入库 <b>{syncResult.imported}</b></span>
+              <span>已存在跳过 <b className="text-white">{syncResult.skippedExisting}</b></span>
+              <span>未匹配影片 <b className="text-white">{syncResult.unmatched}</b></span>
+              {syncResult.mode === "incremental" && (
+                <span className="text-amber-400">
+                  失效禁用 <b>{syncResult.disabled}</b>（检查 {syncResult.checkedTitles} 部）
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        <p className="mt-3 text-xs text-gray-600">
+          增量同步拉取 kkpans 最新转存成功的资源，自动匹配豆瓣影片入库，并对 kkpan 来源的旧资源做失效检测；
+          批量补库按豆瓣热门影片逐片搜索 kkpans 入库。仅转存成功的资源会被同步。
         </p>
       </div>
 
