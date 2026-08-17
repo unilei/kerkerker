@@ -85,8 +85,8 @@ export default function DoubanCard({ movie, onSelect, priority = false }: Douban
         {/* 详情按钮 */}
         <div className="mt-3 flex items-center space-x-2">
           <button className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg text-sm font-semibold hover:bg-opacity-90 hover:scale-105 transition-all duration-200 shadow-lg">
-            <ChevronRight className="w-4 h-4" />
             <span>查看详情</span>
+            <ChevronRight className="w-4 h-4" />
           </button>
         </div>
       </div>

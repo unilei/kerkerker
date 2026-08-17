@@ -127,8 +127,8 @@ function CalendarCard({
             {episodeInfo} · {entry.episode_name || '最新集'}
           </p>
           <button className="flex items-center justify-center gap-2 bg-white text-black px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-opacity-90 transition-all">
-            <ChevronRight className="w-3 h-3" />
             <span>查看详情</span>
+            <ChevronRight className="w-3 h-3" />
           </button>
         </div>
       </div>
