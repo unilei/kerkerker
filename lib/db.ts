@@ -122,7 +122,17 @@ async function initializeDatabase(db: Db) {
     await panResourcesCollection.createIndex({ douban_id: 1 });
     await panResourcesCollection.createIndex({ enabled: 1 });
     await panResourcesCollection.createIndex({ internal_id: 1 });
-    await panResourcesCollection.createIndex({ kkpan_id: 1 });
+    // kkpan_id 部分唯一索引：同一 kkpan 资源在库里只能有一条，避免并发同步
+    // 重复写入。仅对存在 kkpan_id 字段的文档生效（手工录入无此字段，可多条）。
+    // 注意：首次部署前若历史数据已有重复 kkpan_id，此索引创建会失败，需先跑
+    // 一次性维护脚本 `npx tsx scripts/pan-dedup.ts` 清理。
+    await panResourcesCollection.createIndex(
+      { kkpan_id: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { kkpan_id: { $exists: true } },
+      }
+    );
 
     // 创建 pan_sync_state 集合的索引
     const panSyncStateCollection = db.collection(COLLECTIONS.PAN_SYNC_STATE);

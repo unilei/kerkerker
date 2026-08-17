@@ -35,6 +35,9 @@ export interface PanSyncStateDoc {
   last_incremental_at?: string;
   last_backfill_at?: string;
   last_stats?: Record<string, unknown>;
+  // 增量同步水位游标：上次同步最后处理的 kkpan_id。下次同步翻页时一旦遇到
+  // 此 id 即停止（因为后续都是已处理过的旧资源），避免重复抓取。
+  last_kkpan_watermark?: number;
   updated_at: string;
 }
 
@@ -124,16 +127,21 @@ export async function getAllPanResources(
   return docs.map(docToPanResource);
 }
 
-// 新增网盘资源
+// 新增网盘资源。
+// 幂等保证：当 input.source === "kkpan" 且带 kkpan_id 时，依赖 pan_resources
+// 上 kkpan_id 的部分唯一索引保证同 kkpan_id 全局只有一条。并发同步撞到同一
+// kkpan_id 时，后到的一次 insertOne 会抛 duplicate key（错误码 11000），本函数
+// 捕获后回退为按 kkpan_id 查出现有文档返回，调用方通过 created=false 区分。
+// 手工录入（无 kkpan_id）走原 insertOne 路径，不受唯一索引约束。
 export async function createPanResourceInDB(
   input: Required<Pick<PanResourceInput, "douban_id" | "brand" | "title" | "url">> &
     PanResourceInput
-): Promise<PanResource> {
+): Promise<{ resource: PanResource; created: boolean }> {
   const db = await getDatabase();
   const collection = db.collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES);
   const now = new Date().toISOString();
 
-  const doc: PanResourceDoc = {
+  const doc: Omit<PanResourceDoc, "_id"> = {
     douban_id: input.douban_id,
     internal_id: input.internal_id,
     movie_title: input.movie_title,
@@ -151,8 +159,26 @@ export async function createPanResourceInDB(
     updated_at: now,
   };
 
-  const result = await collection.insertOne(doc);
-  return docToPanResource({ ...doc, _id: result.insertedId });
+  try {
+    const result = await collection.insertOne(doc);
+    return {
+      resource: docToPanResource({ ...doc, _id: result.insertedId }),
+      created: true,
+    };
+  } catch (err) {
+    // 仅对 kkpan 来源 + 带 kkpan_id 的资源做 duplicate key 兜底；
+    // 其它错误（如校验失败）继续抛。
+    const code = (err as { code?: number; codeName?: string })?.code;
+    const isDuplicate =
+      code === 11000 ||
+      (err as Error)?.message?.toLowerCase?.().includes("duplicate key");
+    if (!(doc.source === "kkpan" && doc.kkpan_id != null && isDuplicate)) {
+      throw err;
+    }
+    const existing = await collection.findOne({ kkpan_id: doc.kkpan_id });
+    if (!existing) throw err; // 不应该走到，保守重抛
+    return { resource: docToPanResource(existing), created: false };
+  }
 }
 
 // 按 id 更新网盘资源（仅更新传入的字段）
@@ -243,6 +269,18 @@ export async function getKkpanSourceResources(limit = 200): Promise<PanResource[
   return docs.map(docToPanResource);
 }
 
+// 取当前库里 kkpan_id 的最大值，用于增量同步水位游标。
+// 返回 undefined 表示库里还没有 kkpan 资源。
+export async function getMaxKkpanId(): Promise<number | undefined> {
+  const db = await getDatabase();
+  const collection = db.collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES);
+  const doc = await collection.findOne(
+    { kkpan_id: { $gt: 0 } },
+    { sort: { kkpan_id: -1 } }
+  );
+  return doc?.kkpan_id;
+}
+
 // ==================== 同步状态 ====================
 
 // 读取同步状态（无则返回 null）
@@ -257,6 +295,7 @@ export async function savePanSyncState(patch: {
   last_incremental_at?: string;
   last_backfill_at?: string;
   last_stats?: Record<string, unknown>;
+  last_kkpan_watermark?: number;
 }): Promise<void> {
   const db = await getDatabase();
   const collection = db.collection<PanSyncStateDoc>(COLLECTIONS.PAN_SYNC_STATE);

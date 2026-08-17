@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const resource = await createPanResourceInDB({
+    const { resource } = await createPanResourceInDB({
       ...body,
       douban_id,
       brand: brand as PanBrand,
