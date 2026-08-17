@@ -39,14 +39,16 @@ interface KkpanPublicRow {
   updated_at: string;
 }
 
-// 按关键词搜索公开目录（仅转存成功资源），失败抛错由调用方处理
+// 按关键词搜索公开目录（仅转存成功资源），失败抛错由调用方处理。
+// page 从 1 开始，limit 上限 50。
 export async function searchKkpanResources(
   keyword: string,
-  limit = 40
+  limit = 40,
+  page = 1
 ): Promise<KkpanResource[]> {
   const params = new URLSearchParams({
     search: keyword,
-    page: "1",
+    page: String(Math.max(page, 1)),
     limit: String(Math.min(Math.max(limit, 1), 50)),
   });
 
@@ -108,12 +110,17 @@ export function formatBytes(bytes?: number | null): string | undefined {
   return `${rounded}${units[unitIndex]}`;
 }
 
-// 拉取公开目录最新一页（按更新时间倒序），用于增量同步：
-// 接口无时间过滤参数，靠 kkpan_id/url 去重保证不重复入库
-export async function listKkpanRecent(limit = 50): Promise<KkpanResource[]> {
+// 拉取公开目录指定页（按更新时间倒序）。page 从 1 开始，limit 上限 50。
+// 显式带 sort=latest 避免接口默认走"精选"排序导致漏拉当天更新。
+// 接口无时间过滤参数，靠调用方做水位游标（kkpan_id 集合命中即停）保证增量。
+export async function listKkpanPage(
+  page = 1,
+  limit = 50
+): Promise<KkpanResource[]> {
   const params = new URLSearchParams({
-    page: "1",
+    page: String(Math.max(page, 1)),
     limit: String(Math.min(Math.max(limit, 1), 50)),
+    sort: "latest",
   });
   const response = await fetch(
     `${KKPAN_API_BASE}/api/resources/public?${params.toString()}`,
@@ -213,7 +220,13 @@ export function normalizeTitleForMatch(title: string): string {
     .replace(/[\s:：·・.,，。!！?？'"「」『』《》<>\[\]【】()（）\-_/\\|]+/g, "");
 }
 
-// 宽松匹配：归一化后一方包含另一方，且长度差不过分悬殊
+// 宽松匹配：归一化后一方包含另一方，且长度差不过分悬殊。
+// 收紧规则（修复"九门→老九门 / 人鱼→美人鱼 / 悬案→悬案解码"错绑）：
+//   1) 归一化后完全相等直接通过；
+//   2) 否则较短串需被较长串 includes，且较短串长度 ≥ 3（挡住 2 字短串误命中），
+//      同时较短串长度 ≥ ceil(较长串长度 × 0.5)（挡住一方明显是另一方片段的情形）。
+// 代价：2 字片名的扩展形态（如"悬崖"→"悬崖之上"）不会被宽松匹配命中，
+// 必须靠精确归一化等值或豆瓣搜索候选首项匹配。
 export function titlesLooselyMatch(a: string, b: string): boolean {
   const na = normalizeTitleForMatch(a);
   const nb = normalizeTitleForMatch(b);
@@ -221,5 +234,20 @@ export function titlesLooselyMatch(a: string, b: string): boolean {
   if (na === nb) return true;
   const shorter = na.length < nb.length ? na : nb;
   const longer = na.length < nb.length ? nb : na;
-  return longer.includes(shorter) && shorter.length >= 2;
+  return (
+    longer.includes(shorter) &&
+    shorter.length >= 3 &&
+    shorter.length >= Math.ceil(longer.length * 0.5)
+  );
+}
+
+// 严格匹配（补库模式用）：归一化等值优先；不等时再用收紧后的宽松匹配。
+// 豆瓣列表项当前不带 year，因此本函数不直接做年份容差；调用方若有 year 信息
+// 应在调用前自行校验，避免把不同年份的同名影片绑到一起。
+export function titlesStrictlyMatch(a: string, b: string): boolean {
+  const na = normalizeTitleForMatch(a);
+  const nb = normalizeTitleForMatch(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  return titlesLooselyMatch(a, b);
 }
