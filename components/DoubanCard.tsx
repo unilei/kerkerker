@@ -82,11 +82,11 @@ export default function DoubanCard({ movie, onSelect, priority = false }: Douban
           </p>
         )}
 
-        {/* 播放按钮 */}
+        {/* 详情按钮 */}
         <div className="mt-3 flex items-center space-x-2">
           <button className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg text-sm font-semibold hover:bg-opacity-90 hover:scale-105 transition-all duration-200 shadow-lg">
             <Play className="w-4 h-4 fill-current" />
-            <span>立即播放</span>
+            <span>查看详情</span>
           </button>
         </div>
       </div>

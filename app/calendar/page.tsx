@@ -128,7 +128,7 @@ function CalendarCard({
           </p>
           <button className="flex items-center justify-center gap-2 bg-white text-black px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-opacity-90 transition-all">
             <Play className="w-3 h-3 fill-current" />
-            <span>立即播放</span>
+            <span>查看详情</span>
           </button>
         </div>
       </div>

@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "壳儿 - 免费影视在线观看",
+  title: "壳儿 - 影视信息与网盘资源导航",
   description:
-    "壳儿 - 免费观看最新热门影视剧集，海量高清资源在线播放，支持多集连播",
+    "壳儿 - 聚合豆瓣影视资料与公开网盘资源信息，提供影片介绍、评分、上映信息检索与导航服务",
 };
 
 export default function RootLayout({
@@ -28,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* 移动端视频播放优化 - 防止浏览器接管视频 */}
+        {/* 移动端布局优化 - 适配刘海屏与沉浸式状态栏 */}
         <meta
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
