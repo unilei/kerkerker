@@ -40,6 +40,9 @@ export async function GET(request: NextRequest) {
         code: item.shareCode?.toUpperCase() || undefined,
         size: formatBytes(item.fileSize),
         format: item.fileName.match(FORMAT_RE)?.[1]?.toUpperCase(),
+        // 透传 kkpan_id 与 source，便于前端入库时回传，参与失效联动与 ID 对账
+        kkpan_id: item.id,
+        source: 'kkpan' as const,
         updatedAt: item.updatedAt?.slice(0, 10),
       }));
 

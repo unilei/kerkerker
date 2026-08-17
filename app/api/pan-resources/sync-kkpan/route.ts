@@ -45,15 +45,29 @@ export async function POST(request: NextRequest) {
   let mode = 'incremental';
   let limit: number | undefined;
 
+  // 区分空 body（合法，走默认参数）与非法 JSON（必须 400，否则会把
+  // 截断或格式错误的 POST 静默当成增量同步继续写库）
+  let rawBody = '';
   try {
-    const body = (await request.json()) as {
-      mode?: string;
-      limit?: number;
-    };
-    mode = body.mode || 'incremental';
-    limit = body.limit;
+    rawBody = await request.text();
   } catch {
-    // 无 body 时按默认增量执行
+    // 读取失败时按空 body 处理
+  }
+
+  if (rawBody.trim()) {
+    try {
+      const body = JSON.parse(rawBody) as {
+        mode?: string;
+        limit?: number;
+      };
+      mode = body.mode || 'incremental';
+      limit = body.limit;
+    } catch {
+      return NextResponse.json(
+        { code: 400, message: '请求体不是合法 JSON', data: null },
+        { status: 400 }
+      );
+    }
   }
 
   if (mode !== 'incremental' && mode !== 'backfill') {

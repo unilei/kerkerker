@@ -50,6 +50,10 @@ interface DraftRow {
   code: string;
   note: string;
   editingId?: string; // 有值时为编辑已有资源（PUT）
+  // 来自 kkpans 拉取的资源会带上 kkpan_id 与 source，提交时回传，
+  // 让其参与失效联动与 kkpan_id 对账（手工粘贴/手填不带这两个字段）
+  kkpan_id?: number;
+  source?: "manual" | "kkpan";
 }
 
 const inputClass =
@@ -63,6 +67,8 @@ interface KkpanItem {
   code?: string;
   size?: string;
   format?: string;
+  kkpan_id?: number;
+  source?: "manual" | "kkpan";
   updatedAt?: string;
 }
 
@@ -109,11 +115,14 @@ export function PanResourceManager({
   const [kkpanChecked, setKkpanChecked] = useState<Set<string>>(new Set());
   const [kkpanLoading, setKkpanLoading] = useState(false);
 
-  // 切换影片时重置拉取状态，关键词预填当前片名
+  // 切换影片时重置所有录入状态：拉取关键词、结果，以及未提交的草稿
+  // （草稿携带的是旧影片语境，切片后提交会错绑到新影片的 douban_id）
   useEffect(() => {
     setKkpanKeyword(movie.title);
     setKkpanResults([]);
     setKkpanChecked(new Set());
+    setPasteText("");
+    setDrafts([]);
   }, [movie.douban_id, movie.title]);
 
   // 加载该片全部资源（含禁用，需管理员会话）
@@ -265,6 +274,8 @@ export function PanResourceManager({
       format: item.format || "",
       code: item.code || "",
       note: "",
+      kkpan_id: item.kkpan_id,
+      source: item.kkpan_id != null ? "kkpan" : undefined,
     }));
     setDrafts((prev) => [...prev, ...rows]);
     setKkpanResults([]);
@@ -315,6 +326,9 @@ export function PanResourceManager({
           format: row.format.trim() || undefined,
           code: row.code.trim() || undefined,
           note: row.note.trim() || undefined,
+          // 来自 kkpans 的资源透传 kkpan_id 与 source，参与失效联动与对账
+          kkpan_id: row.kkpan_id,
+          source: row.source,
         };
         try {
           const response = await fetch("/api/pan-resources", {
