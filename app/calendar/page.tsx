@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Calendar, ChevronLeft, ChevronRight, Globe, Info, Star } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Globe, Star } from 'lucide-react';
 import { getCalendar, type CalendarDay, type CalendarEntry, type CalendarResponse } from '@/lib/douban-service';
 import { Toast } from '@/components/Toast';
 import { getImageUrl } from '@/lib/utils/image-utils';
@@ -127,7 +127,7 @@ function CalendarCard({
             {episodeInfo} · {entry.episode_name || '最新集'}
           </p>
           <button className="flex items-center justify-center gap-2 bg-white text-black px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-opacity-90 transition-all">
-            <Info className="w-3 h-3" />
+            <ChevronRight className="w-3 h-3" />
             <span>查看详情</span>
           </button>
         </div>

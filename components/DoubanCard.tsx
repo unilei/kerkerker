@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Info, Star } from 'lucide-react';
+import { ChevronRight, Star } from 'lucide-react';
 import { DoubanMovie } from '@/types/douban';
 import { getImageUrl } from '@/lib/utils/image-utils';
 
@@ -85,7 +85,7 @@ export default function DoubanCard({ movie, onSelect, priority = false }: Douban
         {/* 详情按钮 */}
         <div className="mt-3 flex items-center space-x-2">
           <button className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg text-sm font-semibold hover:bg-opacity-90 hover:scale-105 transition-all duration-200 shadow-lg">
-            <Info className="w-4 h-4" />
+            <ChevronRight className="w-4 h-4" />
             <span>查看详情</span>
           </button>
         </div>
