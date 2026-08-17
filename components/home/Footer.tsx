@@ -46,7 +46,7 @@ export function Footer() {
         {/* 底部信息 */}
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-gray-500">
           <div className="flex items-center gap-2">
-            <span>© 2026 壳儿</span>
+            <span>© 2026 爱盼</span>
             <span className="text-gray-700">|</span>
             <span>仅供学习交流使用</span>
           </div>

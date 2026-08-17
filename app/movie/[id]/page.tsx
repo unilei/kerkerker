@@ -183,7 +183,7 @@ export default function MovieDetailPage() {
               className="text-xl font-bold tracking-tight cursor-pointer hidden sm:block"
               onClick={goBack}
             >
-              <span className="text-red-600">壳儿</span>
+              <span className="text-red-600">爱盼</span>
               <span className="text-white ml-1">详情</span>
             </h1>
           </div>

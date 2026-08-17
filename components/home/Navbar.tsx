@@ -77,7 +77,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                 alt="logo"
               />
               <span className="text-red-600 text-xl md:text-2xl lg:text-3xl font-bold tracking-tight hover:text-red-500 transition-colors">
-                壳儿
+                爱盼
               </span>
             </Link>
 
@@ -147,7 +147,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
             <div className="flex items-center gap-2">
               <img className="w-10 h-10" src="/logo.png" alt="logo" />
               <h2 className="text-red-600 text-2xl font-bold tracking-tight">
-                壳儿
+                爱盼
               </h2>
             </div>
           </div>
@@ -174,7 +174,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
           {/* 侧边栏底部 */}
           <div className="absolute bottom-0 left-0 right-0 p-6 border-t border-gray-800">
             <p className="text-xs text-gray-500 text-center">
-              © 2026 壳儿 · 这就是个壳儿
+              © 2026 爱盼 · 影视信息聚合与导航
             </p>
           </div>
         </div>

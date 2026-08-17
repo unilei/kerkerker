@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "壳儿 - 影视信息与网盘资源导航",
+  title: "爱盼 - 影视信息与网盘资源导航",
   description:
-    "壳儿 - 聚合豆瓣影视资料与公开网盘资源信息，提供影片介绍、评分、上映信息检索与导航服务",
+    "爱盼 - 聚合豆瓣影视资料与公开网盘资源信息，提供影片介绍、评分、上映信息检索与导航服务",
 };
 
 export default function RootLayout({
