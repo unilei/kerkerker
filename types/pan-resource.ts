@@ -104,6 +104,8 @@ export interface PanResourceInput {
   format?: string;
   url?: string;
   code?: string;
+  /** 管理端/同步内部使用：清除已有提取码，而不是写入空字符串。 */
+  clear_code?: boolean;
   note?: string;
   source?: PanResourceSource;
   kkpan_id?: number;

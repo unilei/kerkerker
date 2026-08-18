@@ -39,6 +39,70 @@ interface KkpanPublicRow {
   updated_at: string;
 }
 
+export interface KkpanPageResult {
+  items: KkpanResource[];
+  total?: number;
+  rawCount: number;
+  // 未经过 share_link 过滤的原始 ID 与页指纹，用于检测 offset 分页扫描期间的漂移。
+  rawIds: number[];
+  fingerprint: string;
+}
+
+function mapPublicRows(rows: KkpanPublicRow[]): KkpanResource[] {
+  return rows
+    .filter(
+      (row) => row.share_link && /^https?:\/\//.test(row.share_link as string)
+    )
+    .map((row) => ({
+      id: row.id,
+      fileName: row.file_name || "未命名资源",
+      description: row.description,
+      fileSize: row.file_size,
+      shareLink: row.share_link as string,
+      shareCode: row.share_code,
+      targetPlatform: (row.target_platform || "other") as KkpanPlatform,
+      updatedAt: row.updated_at,
+    }));
+}
+
+function pageTotal(payload: { total?: unknown }): number | undefined {
+  return typeof payload.total === "number" &&
+    Number.isSafeInteger(payload.total) &&
+    payload.total >= 0
+    ? payload.total
+    : undefined;
+}
+
+function toPageResult(payload: {
+  data?: unknown;
+  total?: unknown;
+}): KkpanPageResult {
+  if (!Array.isArray(payload.data)) {
+    throw new Error("kkpans 接口响应格式错误：data 必须是数组");
+  }
+  const rows = payload.data as KkpanPublicRow[];
+  if (rows.some((row) => !Number.isSafeInteger(row?.id) || row.id <= 0)) {
+    throw new Error("kkpans 接口响应格式错误：资源 id 必须是正安全整数");
+  }
+  return {
+    items: mapPublicRows(rows),
+    total: pageTotal(payload),
+    rawCount: rows.length,
+    rawIds: rows.map((row) => row.id),
+    fingerprint: JSON.stringify(
+      rows.map((row) => [
+        row.id,
+        row.file_name,
+        row.updated_at,
+        row.share_link,
+        row.share_code,
+        row.file_size,
+        row.target_platform,
+      ])
+    ),
+  };
+}
+
 // 按关键词搜索公开目录（仅转存成功资源），失败抛错由调用方处理。
 // page 从 1 开始，limit 上限 50。
 export async function searchKkpanResources(
@@ -46,6 +110,14 @@ export async function searchKkpanResources(
   limit = 40,
   page = 1
 ): Promise<KkpanResource[]> {
+  return (await searchKkpanResourcesWithMeta(keyword, limit, page)).items;
+}
+
+export async function searchKkpanResourcesWithMeta(
+  keyword: string,
+  limit = 40,
+  page = 1
+): Promise<KkpanPageResult> {
   const params = new URLSearchParams({
     search: keyword,
     page: String(Math.max(page, 1)),
@@ -65,23 +137,11 @@ export async function searchKkpanResources(
     throw new Error(`kkpans 接口请求失败：HTTP ${response.status}`);
   }
 
-  const payload = (await response.json()) as { data?: KkpanPublicRow[] };
-  const rows = payload.data || [];
-
-  return rows
-    .filter(
-      (row) => row.share_link && /^https?:\/\//.test(row.share_link as string)
-    )
-    .map((row) => ({
-      id: row.id,
-      fileName: row.file_name || "未命名资源",
-      description: row.description,
-      fileSize: row.file_size,
-      shareLink: row.share_link as string,
-      shareCode: row.share_code,
-      targetPlatform: (row.target_platform || "other") as KkpanPlatform,
-      updatedAt: row.updated_at,
-    }));
+  const payload = (await response.json()) as {
+    data?: unknown;
+    total?: unknown;
+  };
+  return toPageResult(payload);
 }
 
 // 清洗 kkpan 资源标题里的装饰符号：✅━━[片名][2021][4K]━━✅ → 片名 [2021][4K]
@@ -112,11 +172,18 @@ export function formatBytes(bytes?: number | null): string | undefined {
 
 // 拉取公开目录指定页（按更新时间倒序）。page 从 1 开始，limit 上限 50。
 // 显式带 sort=latest 避免接口默认走"精选"排序导致漏拉当天更新。
-// 接口无时间过滤参数，靠调用方做水位游标（kkpan_id 集合命中即停）保证增量。
+// 接口无时间过滤参数，调用方会完整扫描当前目录后按更新时间水位分批消费。
 export async function listKkpanPage(
   page = 1,
   limit = 50
 ): Promise<KkpanResource[]> {
+  return (await listKkpanPageWithMeta(page, limit)).items;
+}
+
+export async function listKkpanPageWithMeta(
+  page = 1,
+  limit = 50
+): Promise<KkpanPageResult> {
   const params = new URLSearchParams({
     page: String(Math.max(page, 1)),
     limit: String(Math.min(Math.max(limit, 1), 50)),
@@ -133,78 +200,209 @@ export async function listKkpanPage(
   if (!response.ok) {
     throw new Error(`kkpans 接口请求失败：HTTP ${response.status}`);
   }
-  const payload = (await response.json()) as { data?: KkpanPublicRow[] };
-  const rows = payload.data || [];
-  return rows
-    .filter(
-      (row) => row.share_link && /^https?:\/\//.test(row.share_link as string)
-    )
-    .map((row) => ({
-      id: row.id,
-      fileName: row.file_name || "未命名资源",
-      description: row.description,
-      fileSize: row.file_size,
-      shareLink: row.share_link as string,
-      shareCode: row.share_code,
-      targetPlatform: (row.target_platform || "other") as KkpanPlatform,
-      updatedAt: row.updated_at,
-    }));
+  const payload = (await response.json()) as {
+    data?: unknown;
+    total?: unknown;
+  };
+  return toPageResult(payload);
 }
 
-// 元数据截断标记：规格/音轨/字幕/集数/年份括号/中括号等。
-// 真实 kkpan 资源名基本是「片名+季 (年份) 规格…」结构，片名在最前面。
+// 规格/音轨/字幕/集数/状态等元数据通常出现在片名之后，或以独立括号段出现在片名之前。
+// 这些标记只用于截断候选，不参与标题匹配。
 const META_CUT_RE = new RegExp(
   [
-    "\\[|【",
-    "（(?:19|20)\\d{2}）|\\((?:19|20)\\d{2}\\)", // 年份括号
-    "\\b(?:4K|8K|2K|1080[Pp]?|2160[Pp]?|720[Pp]?|60FPS|120FPS|10bit|HDR10?|DV|REMUX|DTS|H26[45]|WEB-?DL|BluRay)\\b",
-    "内封|内嵌|官中|简中|简体|中字|双语|国语|粤语|蓝光|高清|全集|完结|更至|更新至|全\\d+集|S\\d{1,2}E\\d{1,2}|附第|超分|高码|双版本|特效字幕|\\d+集",
+    "(?:^|\\s)(?:4K|8K|2K|1080[Pp]?|2160[Pp]?|720[Pp]?|60FPS|120FPS|10bit|HDR10?|DV|REMUX|DTS|H26[45]|WEB-?DL|BluRay)(?=\\b|\\s|$)",
+    "(?:^|\\s)(?:内封|内嵌|官中|简中|简体|中字|双语|国语|粤语|蓝光|高清|原盘|无水印|纯净版|典藏版|未删减|高码(?:率)?|双版本|特效字幕|流媒体)",
+    "(?:^|\\s)(?:更新至|更至|更\\s*\\d|附第)",
+    "(?:^|\\s)(?:全\\s*[一二三四五六七八九十百两\\d]+\\s*(?:集|季|部)|第?\\s*[一二三四五六七八九十百两\\d]+\\s*季)",
+    "(?:^|\\s)(?:S\\d{1,2}(?:[-_]S?\\d{1,2})?(?:E\\d{1,3})?|\\d+\\s*集)",
+    "(?:^|\\s)(?:类型|主演|剧情|动作|喜剧|爱情|悬疑|科幻|犯罪|战争|青春|校园|冒险|历史)[:：]",
   ].join("|"),
   "i"
 );
 
-// 前导装饰字符（emoji、符号块等；保留中文/英文/数字/书名号/方头括号）
-const LEADING_NOISE_RE = /^[^\u4e00-\u9fa5A-Za-z0-9《【[]+/;
+const BRACKET_PAIRS: Record<string, string> = {
+  "【": "】",
+  "[": "]",
+  "［": "］",
+  "《": "》",
+  "「": "」",
+  "『": "』",
+  "(": ")",
+  "（": "）",
+};
 
-// 括号段是否为纯元数据（更新进度/规格/网盘名/年份等）
+// 前导装饰字符（emoji、符号块等；保留中英文、数字和标题括号）。
+const LEADING_NOISE_RE = /^[^\u4e00-\u9fa5A-Za-z0-9《》【】「」『』()[\]［］]+/u;
+
+const GENERIC_METADATA_RE =
+  /^(?:电视剧|电影|剧版|美剧|日剧|韩剧|国产剧|港剧|台剧|学习资料|经典(?:儿童)?动画故事?|系列全收集|全收集|资源合集|合集|网盘)$/i;
+
+// 从开头读取一个成对括号段。支持「《片名》」这类嵌套标题括号，避免用单个正则
+// 把“【全 29 集】「片名」”错误地截成集数。
+function readLeadingBracket(text: string):
+  | { inner: string; rest: string; open: string; close: string }
+  | null {
+  const open = text[0];
+  const close = BRACKET_PAIRS[open];
+  if (!close) return null;
+
+  let depth = 0;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (char === open) depth++;
+    else if (char === close) {
+      depth--;
+      if (depth === 0) {
+        return {
+          inner: text.slice(1, index),
+          rest: text.slice(index + 1),
+          open,
+          close,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function stripSeparators(text: string): string {
+  return text.replace(/^[\s|｜/_\\:：,，。·•~～—–-]+/u, "").trim();
+}
+
+// 括号段是否是独立元数据（更新进度/规格/网盘名/年份等）。若片名在段首，
+// 例如“蝙蝠侠（全 9 部）”，不要把整段丢弃，后续清洗会只移除尾部元数据。
 function isMetadataBracketSegment(inner: string): boolean {
-  return (
-    /更新|更至|全集|完结|夸克|网盘|百度|迅雷|光鸭|UC|无水印|中字|字幕|双语|国语|粤语|内封|内嵌/.test(
-      inner
-    ) ||
-    /\b(4K|8K|2K|1080|2160|HDR|DV|REMUX|DTS)\b/i.test(inner) ||
-    /^((19|20)\d{2})$/.test(inner) ||
-    /^[\d\s~～\-至集季部]+$/.test(inner)
+  const value = inner.trim();
+  const compact = value.replace(/[\s　]+/gu, "").toLowerCase();
+  if (!compact) return true;
+  if (/^(?:19|20)\d{2}$/.test(compact)) return true;
+  if (
+    /^(?:全(?:[一二三四五六七八九十百两\d]+)?(?:集|季|部)|[一二三四五六七八九十百两\d]+集全|第?[一二三四五六七八九十百两\d]+季(?:更至|更新至)?|s\d{1,2}(?:[-_]s?\d{1,2})?(?:e\d{1,3})?)$/i.test(
+      compact
+    )
+  ) {
+    return true;
+  }
+  if (GENERIC_METADATA_RE.test(value)) return true;
+  return /^(?:已完结|完结|超前完结|更新至|更至|更\d|系列全收集|全收集|第二季更至|第三季更至|不易和谐|原盘未删减|夸克网盘|百度网盘|迅雷云盘|光鸭网盘|UC网盘|无水印|中字|字幕|双语|国语|粤语|内封|内嵌|类型[:：]|主演[:：]|剧情[:：]|国剧\s*\d{4}|美剧\s*\d{4}|美国\s*\d{4}|4k|8k|hdr|dv|remux|dts)/i.test(
+    compact
   );
 }
 
-// 从 kkpan 资源名提取影片名候选：
-// 剥前导装饰 → 剥纯元数据括号段 → 在第一个元数据标记处截断取前缀
-export function extractTitleCandidate(fileName: string): string {
-  let text = cleanKkpanTitle(fileName)
-    .replace(/^标题[:：]\s*/, "")
-    .replace(LEADING_NOISE_RE, "")
-    .trim();
-
-  // 以纯元数据括号段开头（如【更新至02集】）时逐段剥离，遇内容括号（标题）停止
-  while (/^[【[]/.test(text)) {
-    const match = text.match(/^[【[]([^】\]]*)[】\]]/);
-    if (!match || !isMetadataBracketSegment(match[1].trim())) break;
-    text = text.slice(match[0].length).replace(LEADING_NOISE_RE, "").trim();
+function unwrapWholeBracket(text: string): string {
+  let value = text.trim();
+  for (let count = 0; count < 4; count++) {
+    const segment = readLeadingBracket(value);
+    if (!segment || segment.rest.trim()) break;
+    value = segment.inner.trim();
   }
-  // 标题本身包在括号里的场景（【足球教练 第四季（2026）】【4K】…）：解开开括号
-  text = text.replace(/^[【[]/, "").trim();
+  return value;
+}
 
-  const cutIndex = text.search(META_CUT_RE);
-  const title = (
-    cutIndex > 0 ? text.slice(0, cutIndex) : text
-  )
-    .replace(/^(美剧|日剧|韩剧|国产剧|港剧|台剧|剧版|电影)[:：]?/, "")
-    .replace(/^[《【[]|[】\]》][^】\]》]*$/g, "")
-    .replace(/[《》:：\s·]+$/g, "")
+function cleanTitleSegment(segment: string): string {
+  let title = unwrapWholeBracket(segment)
+    .replace(/^标题[:：]\s*/u, "")
+    .replace(/^\d{1,4}[.、]\s*/u, "")
+    .replace(/^(?:电视剧|电影|剧版|美剧|日剧|韩剧|国产剧|港剧|台剧)[:：]\s*/iu, "")
     .trim();
 
-  return title.slice(0, 60) || cleanKkpanTitle(fileName).slice(0, 60);
+  // 年份和“全 N 集/季/部”是最常见的尾部元数据，先处理括号形式，再处理普通标记。
+  title = title
+    .replace(/[（(\[]\s*(?:19|20)\d{2}\s*[）)\]]/gu, "")
+    .replace(
+      /[（(]\s*(?:全\s*)?[一二三四五六七八九十百两\d]+\s*(?:集|季|部)[^）)]*[）)]/giu,
+      ""
+    );
+
+  const cutIndex = title.search(META_CUT_RE);
+  if (cutIndex >= 0) title = title.slice(0, cutIndex);
+
+  // “1-5 季全集”/“全集”这类合集后缀不是片名的一部分；保留片名本身，
+  // 仍允许 titlesLooselyMatch 将“爱情公寓系列”与“爱情公寓”关联。
+  title = title
+    .replace(/\s+\d+\s*[-至]\s*\d+\s*季(?:全集)?$/iu, "")
+    .replace(/\s+(?:全集|全收集)$/iu, "");
+
+  // 去掉尾部仍残留的元数据括号段（例如“暗杀教室（全 2 季+剧场版）”）。
+  for (let count = 0; count < 4; count++) {
+    const match = title.match(/[【［\[(（]([^】］\]）)]+)[】］\]）)]\s*$/u);
+    if (!match || !isMetadataBracketSegment(match[1])) break;
+    title = title.slice(0, match.index).trim();
+  }
+
+  return title
+    .replace(/^[《「『【［\[(（]+/u, "")
+    .replace(/[》」』】］\]）)]+$/u, "")
+    .replace(/[《》「」『』:：\s·]+$/gu, "")
+    .trim();
+}
+
+function isPlausibleTitle(title: string): boolean {
+  const value = title.trim();
+  if (!value || GENERIC_METADATA_RE.test(value)) return false;
+  if (/^(?:全|第)?[一二三四五六七八九十百两\d]+(?:集|季|部)$/u.test(value)) return false;
+  return /[\u4e00-\u9fa5A-Za-z0-9]/u.test(value);
+}
+
+function isGenericPlainPrefix(prefix: string): boolean {
+  const value = prefix.trim().replace(/[\s　]+/gu, "");
+  return (
+    GENERIC_METADATA_RE.test(prefix.trim()) ||
+    /^(?:经典(?:儿童)?动画故事?|学习资料|资源合集|系列全收集|全收集)$/iu.test(value)
+  );
+}
+
+function nextOpeningIndex(text: string): number {
+  const indexes = Object.keys(BRACKET_PAIRS)
+    .map((open) => text.indexOf(open))
+    .filter((index) => index >= 0);
+  return indexes.length > 0 ? Math.min(...indexes) : -1;
+}
+
+// 从 kkpan 资源名提取影片名候选：
+// 剥前导装饰 → 跳过独立集数/状态/平台括号 → 读取标题括号或普通前缀 → 清理年份/画质后缀。
+export function extractTitleCandidate(fileName: string): string {
+  let remaining = stripSeparators(
+    cleanKkpanTitle(fileName)
+      .replace(/^标题[:：]\s*/u, "")
+      .replace(LEADING_NOISE_RE, "")
+      .trim()
+  );
+
+  for (let attempt = 0; attempt < 12 && remaining; attempt++) {
+    remaining = stripSeparators(remaining);
+    const bracket = readLeadingBracket(remaining);
+    if (bracket) {
+      const inner = cleanTitleSegment(bracket.inner);
+      if (!isMetadataBracketSegment(bracket.inner) && isPlausibleTitle(inner)) {
+        return inner.slice(0, 60);
+      }
+      remaining = bracket.rest;
+      continue;
+    }
+
+    const openIndex = nextOpeningIndex(remaining);
+    const prefix = openIndex >= 0 ? remaining.slice(0, openIndex) : remaining;
+    const candidate = cleanTitleSegment(prefix);
+    if (isPlausibleTitle(candidate)) {
+      // “经典儿童动画故事《小马宝莉…》”这类描述性前缀不是片名，继续读取后面的显式标题括号。
+      if (!(openIndex >= 0 && isGenericPlainPrefix(prefix))) {
+        return candidate.slice(0, 60);
+      }
+    }
+    if (openIndex >= 0) {
+      remaining = remaining.slice(openIndex);
+    } else {
+      break;
+    }
+  }
+
+  const fallback = cleanTitleSegment(cleanKkpanTitle(fileName));
+  return (isPlausibleTitle(fallback) ? fallback : cleanKkpanTitle(fileName)).slice(
+    0,
+    60
+  );
 }
 
 // 提取年份（[2021] / 2021 之类）

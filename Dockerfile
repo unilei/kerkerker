@@ -16,6 +16,11 @@ RUN npm ci && \
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# NEXT_PUBLIC_* 变量会在 Next 构建阶段被静态替换；部署工作流通过
+# build-args 注入实际服务地址，服务端运行时仍会从 Compose 环境读取配置。
+ARG NEXT_PUBLIC_DOUBAN_API_URL
+ENV NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
+
 # 复制依赖
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

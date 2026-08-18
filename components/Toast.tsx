@@ -12,7 +12,10 @@ interface ToastProps {
 export function Toast({ message, type = 'info', onClose, duration = 3000 }: ToastProps) {
   // Use ref to avoid dependency issues with onClose callback
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     const timer = setTimeout(() => {

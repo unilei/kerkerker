@@ -23,6 +23,10 @@ function isValidPanUrl(url: string): boolean {
   }
 }
 
+function isValidKkpanId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
 // GET - 获取网盘资源
 // 公开：?douban_id=xxx 返回该片启用的资源（前台详情页使用）
 // 管理：?all=true（需登录）返回全部资源，支持 keyword 模糊搜索 / douban_id 过滤 / limit
@@ -90,7 +94,19 @@ export async function POST(request: NextRequest) {
       return unauthorizedResponse;
     }
 
-    const body = (await request.json()) as PanResourceInput;
+    let body: PanResourceInput;
+    try {
+      const parsed = (await request.json()) as unknown;
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('body must be an object');
+      }
+      body = parsed as PanResourceInput;
+    } catch {
+      return NextResponse.json(
+        { code: 400, message: '请求体必须是合法 JSON 对象', data: null },
+        { status: 400 }
+      );
+    }
     const { douban_id, brand, title, url } = body;
 
     if (!douban_id || !brand || !title || !url) {
@@ -111,9 +127,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (body.source !== undefined && body.source !== 'manual' && body.source !== 'kkpan') {
+      return NextResponse.json(
+        { code: 400, message: 'source 仅支持 manual / kkpan', data: null },
+        { status: 400 }
+      );
+    }
+
     if (!isValidPanUrl(url)) {
       return NextResponse.json(
         { code: 400, message: '分享链接格式错误（需以 http/https 开头）', data: null },
+        { status: 400 }
+      );
+    }
+
+    if (
+      (body.kkpan_id !== undefined && !isValidKkpanId(body.kkpan_id)) ||
+      (body.source === 'kkpan' && !isValidKkpanId(body.kkpan_id))
+    ) {
+      return NextResponse.json(
+        { code: 400, message: 'kkpan_id 必须是正安全整数', data: null },
         { status: 400 }
       );
     }
@@ -152,7 +185,19 @@ export async function PUT(request: NextRequest) {
       return unauthorizedResponse;
     }
 
-    const body = (await request.json()) as PanResourceInput & { id?: string };
+    let body: PanResourceInput & { id?: string };
+    try {
+      const parsed = (await request.json()) as unknown;
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('body must be an object');
+      }
+      body = parsed as PanResourceInput & { id?: string };
+    } catch {
+      return NextResponse.json(
+        { code: 400, message: '请求体必须是合法 JSON 对象', data: null },
+        { status: 400 }
+      );
+    }
     const { id, ...updates } = body;
 
     if (!id) {
@@ -169,9 +214,28 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    if (
+      updates.source !== undefined &&
+      updates.source !== 'manual' &&
+      updates.source !== 'kkpan'
+    ) {
+      return NextResponse.json(
+        { code: 400, message: 'source 仅支持 manual / kkpan', data: null },
+        { status: 400 }
+      );
+    }
+
     if (updates.url && !isValidPanUrl(updates.url)) {
       return NextResponse.json(
         { code: 400, message: '分享链接格式错误（需以 http/https 开头）', data: null },
+        { status: 400 }
+      );
+    }
+
+
+    if (updates.kkpan_id !== undefined && !isValidKkpanId(updates.kkpan_id)) {
+      return NextResponse.json(
+        { code: 400, message: 'kkpan_id 必须是正安全整数', data: null },
         { status: 400 }
       );
     }

@@ -14,6 +14,7 @@ import {
 } from "@/types/pan-resource";
 import { BrandBadge } from "@/components/pan/BrandBadge";
 import { PanResourceManager } from "@/components/pan/PanResourceManager";
+import { PanCatalogSyncPanel } from "./PanCatalogSyncPanel";
 import type { PanResourcesTabProps } from "./types";
 
 // 搜索结果统一结构
@@ -46,8 +47,14 @@ interface SyncStatsView {
   skippedExisting: number;
   unmatched: number;
   disabled: number;
+  refreshed?: number;
   checkedTitles: number;
   durationMs: number;
+  categoryErrors?: number;
+  searchErrors?: number;
+  doubanErrors?: number;
+  sourceErrors?: number;
+  failed?: boolean;
 }
 
 const inputClass =
@@ -197,6 +204,22 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
     }
   }, []);
 
+  const handleSelectCatalogMovie = useCallback(
+    (movie: {
+      douban_id: string;
+      title: string;
+      cover?: string;
+      year?: string;
+    }) => {
+      setSelectedMovie(movie);
+      setSearchResults([]);
+      setHasSearched(false);
+      setSearchQuery("");
+      enrichMovie(movie.douban_id);
+    },
+    [enrichMovie]
+  );
+
   // 选中影片（搜索结果点击）
   const handleSelectMovie = (item: SearchResultItem) => {
     setSelectedMovie({
@@ -263,6 +286,11 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
           也可直接到影片详情页点「管理」录入。录入后会在详情页「网盘资源」区块展示。
         </p>
       </div>
+
+      <PanCatalogSyncPanel
+        onShowToast={onShowToast}
+        onSelectMovie={handleSelectCatalogMovie}
+      />
 
       {/* kkpans 自动同步 */}
       <div className="bg-[#181818] border border-[#333] rounded-lg p-6">
@@ -336,7 +364,21 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
               <span>未匹配影片 <b className="text-white">{syncResult.unmatched}</b></span>
               {syncResult.mode === "incremental" && (
                 <span className="text-amber-400">
-                  失效禁用 <b>{syncResult.disabled}</b>（检查 {syncResult.checkedTitles} 部）
+                  失效禁用 <b>{syncResult.disabled}</b>，换新 <b>{syncResult.refreshed ?? 0}</b>（检查 {syncResult.checkedTitles} 部）
+                </span>
+              )}
+              {(syncResult.categoryErrors ||
+                syncResult.searchErrors ||
+                syncResult.doubanErrors ||
+                syncResult.sourceErrors) && (
+                <span className="text-red-400">
+                  上游错误{" "}
+                  {(
+                    (syncResult.categoryErrors || 0) +
+                    (syncResult.searchErrors || 0) +
+                    (syncResult.doubanErrors || 0) +
+                    (syncResult.sourceErrors || 0)
+                  )}
                 </span>
               )}
             </div>

@@ -85,3 +85,71 @@ test("extractTitleCandidate: 从装饰名提取片名候选", () => {
     `期望候选包含"老九门"，实际：${candidate}`
   );
 });
+
+test("extractTitleCandidate: 跳过线上常见的前置集数与状态括号", () => {
+  const samples: Array<[string, string]> = [
+    ["🚩🚩🚩 【全 29 集】「炽夏」【国剧 2026】【剧情 爱情】【4K】", "炽夏"],
+    ["🚩🚩🚩 【全20集】【星月征途 (2026)】【4K高码】【国语中字】", "星月征途"],
+    ["🚩🚩🚩 【已完结】【全10集】【幻世 (2026)】【4K/超清】", "幻世"],
+    ["✅━━━━━【S01-S22季全集】【未删减】【恶搞之家】【1080P】", "恶搞之家"],
+    ["🚩🚩 【全两季】《问心》1-2季【4K高码】", "问心"],
+    ["🚩🚩🚩 【系列全收集】 【暗杀教室（全 2 季+剧场版）】【1080P】", "暗杀教室"],
+    ["爱情公寓系列 1-5 季全集 4K 2160P 无水印", "爱情公寓系列"],
+  ];
+
+  for (const [fileName, expected] of samples) {
+    assert.equal(extractTitleCandidate(fileName), expected, fileName);
+  }
+});
+
+test("extractTitleCandidate: 优先显式片名而不是描述性标签", () => {
+  assert.equal(
+    extractTitleCandidate(
+      "《学习资料》经典儿童动画故事《小马宝莉1-9季》中英文版 [夸克网盘]"
+    ),
+    "小马宝莉1-9季"
+  );
+  assert.equal(
+    extractTitleCandidate("【电视剧】杉杉来了 Boss & Me 蓝光高清/完整版/1080P"),
+    "杉杉来了 Boss & Me"
+  );
+});
+
+test("补库匹配：先剥离年份、集数和规格后缀", () => {
+  const samples: Array<[string, string]> = [
+    ["【老九门(2016)】【48集全】【4K】【夸克网盘】", "老九门"],
+    ["🌈 九门 (2026)［全 30 集］［4K 超高清］", "九门"],
+    ["✅《人鱼（2026）》【超前完结 22 集】【4K.SDR】", "人鱼"],
+    ["警察荣誉 (2022) 4K WEB-DL H265 AAC 2.0", "警察荣誉"],
+  ];
+
+  for (const [fileName, title] of samples) {
+    const candidate = extractTitleCandidate(fileName);
+    assert.equal(
+      candidate,
+      title,
+      `${fileName} 应提取为 ${title}，实际候选：${candidate}`
+    );
+    assert.equal(
+      titlesStrictlyMatch(candidate, title),
+      true,
+      `${fileName} 应提取为可匹配片名，实际候选：${candidate}`
+    );
+  }
+});
+
+test("补库匹配：提取候选后仍拦截短标题误绑", () => {
+  const samples: Array<[string, string]> = [
+    ["🌈 九门 (2026)［全 30 集］［4K］", "老九门"],
+    ["✅《人鱼（2026）》【4K.SDR】", "美人鱼"],
+    ["【悬案】【2025】【4K】", "悬案解码"],
+  ];
+
+  for (const [fileName, title] of samples) {
+    assert.equal(
+      titlesStrictlyMatch(extractTitleCandidate(fileName), title),
+      false,
+      `${fileName} 不应匹配 ${title}`
+    );
+  }
+});

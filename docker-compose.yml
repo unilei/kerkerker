@@ -10,6 +10,8 @@ services:
     environment:
       - NODE_ENV=production
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - KKPAN_SYNC_CRON_SECRET=${KKPAN_SYNC_CRON_SECRET}
+      - CRON_SECRET=${CRON_SECRET}
       - MONGODB_URI=mongodb://mongodb:27017/kerkerker
       - NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
     depends_on:

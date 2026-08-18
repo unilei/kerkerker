@@ -27,6 +27,7 @@
 - 📱 **响应式设计** - 完美支持移动端和桌面端
 - 🎨 **现代化 UI** - Netflix 风格界面设计
 - 🔐 **后台管理** - 视频源配置、频道管理 (`/login`)
+- ☁️ **影片网盘同步中心** - 按站内目录批量发现、同步、重试和每日更新网盘资源
 - 🚀 **多种部署** - 支持 Vercel、Docker、VPS 一键部署
 
 ## 📸 界面预览
@@ -171,6 +172,8 @@ cd ~/kerkerker
 | ----------------------------- | -------------- | ------------------------------------ |
 | `ADMIN_PASSWORD`              | 后台管理密码   | `admin123`                           |
 | `MONGODB_DB_NAME`             | 数据库名称     | `kerkerker`                          |
+| `KKPAN_SYNC_CRON_SECRET`      | kkpans 定时同步 Bearer 密钥 | -                         |
+| `CRON_SECRET`                 | 兼容部署平台的定时任务 Bearer 密钥（优先使用 `KKPAN_SYNC_CRON_SECRET`） | - |
 | `NEXT_PUBLIC_DANMU_API_URL`   | 弹幕 API 地址  | `https://danmuapi1-eight.vercel.app` |
 | `NEXT_PUBLIC_DANMU_API_TOKEN` | 弹幕 API Token | -                                    |
 
@@ -186,6 +189,63 @@ MONGODB_URI=mongodb://localhost:27017/kerkerker
 # MongoDB Atlas（云端）
 MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/kerkerker
 ```
+
+配置 `KKPAN_SYNC_CRON_SECRET` 后，定时任务可用
+`Authorization: Bearer <secret>` 调用
+`POST /api/pan-resources/sync-kkpan`，无需依赖 7 天有效的管理员 cookie。
+具体执行频率由部署环境的 cron、Vercel Cron 或其它调度器配置。
+
+### 影片网盘同步中心
+
+登录 `/admin` 的“网盘资源”页后，使用“影片网盘同步中心”可以：
+
+1. **发现影片**：收集站内分类分页、电影/电视剧分类、最新页、首页推荐、日历和 Top250 中已经展示的条目，并补入历史上已经录入过网盘资源的影片，按豆瓣 ID 建立同步台账。
+2. **一键同步未处理**：后台按小批次逐片搜索 kkpans，自动入库匹配资源；页面会轮询进度，不需要逐片点击。
+3. **状态筛选和重试**：`未同步`、`同步中`、`已同步`、`已检查无资源`、`失败` 分开统计；每一行都可以再次同步。
+
+台账的范围是站内展示目录与已有网盘资源的并集，不会把整个豆瓣库当作同步目标。每日任务会重新发现目录、把超过 24 小时未检查的影片放回队列，并处理一批到期影片。可在服务器 cron 中使用同一个 Bearer 密钥：
+
+```bash
+# 每天执行一批影片级更新（limit 可按服务器能力调整到 1-20）
+curl -fsS -X POST https://your-domain.example/api/pan-resources/catalog-sync \
+  -H "Authorization: Bearer ${KKPAN_SYNC_CRON_SECRET}" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"daily","limit":20}'
+
+# 继续执行原有 kkpans 全局增量同步
+curl -fsS -X POST https://your-domain.example/api/pan-resources/sync-kkpan \
+  -H "Authorization: Bearer ${KKPAN_SYNC_CRON_SECRET}" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"incremental","limit":50}'
+```
+
+两个任务共用同步租约；如果都启用，请串行执行或错开触发时间，避免同一时刻返回 `409`。
+
+首次部署或数据库为空时，建议先在后台点击一次“一键同步未处理”，确认目录发现和资源写入正常，再启用 cron。
+
+已有数据库升级到当前版本前，请先在应用目录执行一次
+`npx tsx scripts/pan-dedup.ts`，清理历史重复/空的 `kkpan_id` 并创建部分唯一索引，
+再重启应用。
+
+### 当前分支 Docker 自动部署
+
+`cn-compliance` 分支包含独立的 GitHub Actions 部署流程：push 到该分支后，流程会先执行
+Lint、TypeScript 检查和测试，再构建 `linux/amd64` 镜像推送到 GHCR，最后通过 SSH 更新 VPS 上的
+Docker Compose 服务。不会触发 `master` 分支的部署。
+
+仓库需要配置以下 Actions Secrets：
+
+| Secret | 作用 |
+| --- | --- |
+| `DEPLOY_HOST` / `DEPLOY_USER` | VPS 地址和 SSH 用户 |
+| `DEPLOY_SSH_KEY` / `DEPLOY_KNOWN_HOSTS` | 部署私钥和固定主机指纹 |
+| `DEPLOY_ADMIN_PASSWORD` / `DEPLOY_ADMIN_SESSION_SECRET` | 后台登录与会话密钥 |
+| `DEPLOY_DOUBAN_API_URL` | 服务器上的豆瓣服务地址 |
+| `DEPLOY_KKPAN_SYNC_CRON_SECRET` | 网盘同步接口 Bearer 密钥 |
+
+可选的仓库 Variables：`DEPLOY_PATH`（默认 `/www/wwwroot/kerkerker`）、
+`DEPLOY_PORT`（默认 `3003`）和 `DEPLOY_BIND`（默认 `0.0.0.0`）。默认端口是为了避开服务器上已有的
+3000 端口服务；变更端口后，反向代理配置也要同步调整。部署过程会保留上一份 `.env`，健康检查失败时自动恢复旧容器配置。
 
 ---
 

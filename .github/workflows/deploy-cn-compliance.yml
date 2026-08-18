@@ -1,0 +1,306 @@
+name: Deploy Kerkerker (cn-compliance)
+
+on:
+  push:
+    branches:
+      - cn-compliance
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional image tag (defaults to the commit SHA)"
+        required: false
+        type: string
+
+concurrency:
+  group: kerkerker-cn-compliance-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/kerkerker
+  DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/www/wwwroot/kerkerker' }}
+  DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '3003' }}
+  DEPLOY_BIND: ${{ vars.DEPLOY_BIND || '0.0.0.0' }}
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Run focused tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test_file in \
+            tests/auth.test.ts \
+            tests/url-security.test.ts \
+            tests/cn-compliance.test.ts \
+            tests/pan-sync.test.ts \
+            tests/pan-sync-behavior.test.ts \
+            tests/admin-routes.test.ts; do
+            npx tsx "$test_file"
+          done
+
+  publish:
+    name: Build and publish Docker image
+    needs: verify
+    outputs:
+      image_tag: ${{ steps.image.outputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Resolve image tag
+        id: image
+        env:
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${INPUT_IMAGE_TAG:-${GITHUB_SHA}}"
+          if [[ ! "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid image tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_DOUBAN_API_URL=${{ secrets.DEPLOY_DOUBAN_API_URL || 'http://host.docker.internal:8081' }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:cn-compliance-latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy:
+    name: Deploy to Docker VPS
+    needs: publish
+    if: github.repository == 'unilei/kerkerker'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_ADMIN_PASSWORD: ${{ secrets.DEPLOY_ADMIN_PASSWORD }}
+          DEPLOY_DOUBAN_API_URL: ${{ secrets.DEPLOY_DOUBAN_API_URL }}
+          DEPLOY_ADMIN_SESSION_SECRET: ${{ secrets.DEPLOY_ADMIN_SESSION_SECRET }}
+          DEPLOY_KKPAN_SYNC_CRON_SECRET: ${{ secrets.DEPLOY_KKPAN_SYNC_CRON_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_ADMIN_PASSWORD DEPLOY_DOUBAN_API_URL DEPLOY_ADMIN_SESSION_SECRET DEPLOY_KKPAN_SYNC_CRON_SECRET; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required repository secret: $name" >&2
+              exit 1
+            fi
+          done
+          [[ "$DEPLOY_HOST" != *$'\n'* ]] || { echo "DEPLOY_HOST contains a newline" >&2; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]] || { echo "Invalid DEPLOY_USER" >&2; exit 1; }
+          [[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]] || { echo "Invalid DEPLOY_PATH" >&2; exit 1; }
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && (( DEPLOY_PORT >= 1 && DEPLOY_PORT <= 65535 )) || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
+          [[ "$DEPLOY_BIND" =~ ^[A-Za-z0-9_.:-]+$ ]] || { echo "Invalid DEPLOY_BIND" >&2; exit 1; }
+
+      - name: Prepare SSH
+        id: ssh
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          key_file="$RUNNER_TEMP/kerkerker_deploy_key"
+          known_hosts="$RUNNER_TEMP/kerkerker_known_hosts"
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key_file"
+          if [[ -n "$DEPLOY_KNOWN_HOSTS" ]]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts"
+          else
+            ssh-keyscan -H -T 10 "$DEPLOY_HOST" > "$known_hosts" 2>/dev/null
+          fi
+          test -s "$known_hosts"
+          echo "key_file=$key_file" >> "$GITHUB_OUTPUT"
+          echo "known_hosts=$known_hosts" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Compose file
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "mkdir -p '$DEPLOY_PATH'"
+          scp -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            docker-compose.server.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.server.yml.new"
+
+      - name: Upload environment file
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ env.DEPLOY_PORT }}
+          DEPLOY_BIND: ${{ env.DEPLOY_BIND }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.publish.outputs.image_tag }}
+          ADMIN_PASSWORD: ${{ secrets.DEPLOY_ADMIN_PASSWORD }}
+          ADMIN_SESSION_SECRET: ${{ secrets.DEPLOY_ADMIN_SESSION_SECRET }}
+          KKPAN_SYNC_CRON_SECRET: ${{ secrets.DEPLOY_KKPAN_SYNC_CRON_SECRET }}
+          DOUBAN_API_URL: ${{ secrets.DEPLOY_DOUBAN_API_URL }}
+          MONGODB_DB_NAME: ${{ secrets.DEPLOY_MONGODB_DB_NAME || 'kerkerker' }}
+          KKPAN_API_BASE: ${{ secrets.DEPLOY_KKPAN_API_BASE || 'https://www.kkpans.com' }}
+          DANMU_API_URL: ${{ secrets.DEPLOY_DANMU_API_URL }}
+          DANMU_API_TOKEN: ${{ secrets.DEPLOY_DANMU_API_TOKEN }}
+          KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file="$RUNNER_TEMP/kerkerker.env"
+          umask 077
+          {
+            printf 'IMAGE_NAME=%s\n' "$IMAGE_NAME"
+            printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG"
+            printf 'APP_PORT=%s\n' "$DEPLOY_PORT"
+            printf 'APP_BIND=%s\n' "$DEPLOY_BIND"
+            printf 'ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
+            printf 'ADMIN_SESSION_SECRET=%s\n' "$ADMIN_SESSION_SECRET"
+            printf 'KKPAN_SYNC_CRON_SECRET=%s\n' "$KKPAN_SYNC_CRON_SECRET"
+            printf 'CRON_SECRET=%s\n' "$KKPAN_SYNC_CRON_SECRET"
+            printf 'MONGODB_DB_NAME=%s\n' "$MONGODB_DB_NAME"
+            printf 'NEXT_PUBLIC_DOUBAN_API_URL=%s\n' "$DOUBAN_API_URL"
+            printf 'KKPAN_API_BASE=%s\n' "$KKPAN_API_BASE"
+            printf 'NEXT_PUBLIC_DANMU_API_URL=%s\n' "$DANMU_API_URL"
+            printf 'NEXT_PUBLIC_DANMU_API_TOKEN=%s\n' "$DANMU_API_TOKEN"
+          } > "$env_file"
+          scp -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            "$env_file" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env.new"
+          rm -f "$env_file"
+
+      - name: Log in to GHCR on VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+          KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | ssh -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+
+      - name: Write environment and roll out
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ env.DEPLOY_PORT }}
+          DEPLOY_BIND: ${{ env.DEPLOY_BIND }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.publish.outputs.image_tag }}
+          KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' APP_PORT='$DEPLOY_PORT' bash -s" <<'REMOTE'
+          set -euo pipefail
+          mkdir -p "$DEPLOY_PATH"
+          cd "$DEPLOY_PATH"
+          if [ -f .env ]; then
+            cp .env ".env.backup.$(date -u +%Y%m%d%H%M%S)"
+          fi
+          if [ -f docker-compose.server.yml ]; then
+            cp docker-compose.server.yml docker-compose.server.yml.previous
+          fi
+          mv .env.new .env
+          mv docker-compose.server.yml.new docker-compose.server.yml
+          chmod 600 .env
+
+          project=(docker compose --project-name kerkerker -f docker-compose.server.yml)
+          previous_tag="$(for backup in .env.backup.*; do [ -f "$backup" ] || continue; awk -F= '$1 == "IMAGE_TAG" {print $2; exit}' "$backup"; done | tail -1 || true)"
+          rollback() {
+            echo "Deployment failed; restoring previous environment and image" >&2
+            latest_backup="$(ls -1t .env.backup.* 2>/dev/null | head -1 || true)"
+            if [ -n "$latest_backup" ]; then cp "$latest_backup" .env; fi
+            if [ -f docker-compose.server.yml.previous ]; then mv docker-compose.server.yml.previous docker-compose.server.yml; fi
+            "${project[@]}" up -d --remove-orphans || true
+          }
+          trap rollback ERR
+
+          "${project[@]}" pull app
+          "${project[@]}" up -d mongodb
+          for attempt in $(seq 1 30); do
+            health="$(docker inspect -f '{{.State.Health.Status}}' kerkerker-mongodb 2>/dev/null || true)"
+            [ "$health" = healthy ] && break
+            [ "$attempt" -eq 30 ] && { echo "MongoDB did not become healthy" >&2; exit 1; }
+            sleep 2
+          done
+          "${project[@]}" up -d --remove-orphans app
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:${APP_PORT}/api/health" >/dev/null; then
+              trap - ERR
+              echo "Kerkerker deployment healthy on port ${APP_PORT}"
+              exit 0
+            fi
+            [ "$attempt" -eq 30 ] && { echo "Kerkerker health check failed" >&2; exit 1; }
+            sleep 3
+          done
+          REMOTE
+
+      - name: Deployment summary
+        run: |
+          echo "Deployed ${IMAGE_NAME}:${IMAGE_TAG} from ${GITHUB_REF_NAME}"
+          echo "Server path: ${DEPLOY_PATH}"
+          echo "Server port: ${DEPLOY_PORT}"

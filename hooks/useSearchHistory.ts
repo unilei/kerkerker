@@ -27,7 +27,8 @@ export function useSearchHistory() {
 
   // 初始加载
   useEffect(() => {
-    loadHistory();
+    const timer = window.setTimeout(loadHistory, 0);
+    return () => window.clearTimeout(timer);
   }, [loadHistory]);
 
   // 添加搜索记录

@@ -419,6 +419,10 @@ NODE_ENV=production
 # 管理员密码（访问 /login 页面时使用）
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
+# 影片网盘同步定时任务 Bearer 密钥（可选；与 CRON_SECRET 二选一）
+KKPAN_SYNC_CRON_SECRET=
+CRON_SECRET=
+
 # ==================== 豆瓣 API 微服务配置 ====================
 # 独立的豆瓣 API 服务地址 (kerkerker-douban-service)
 # Docker 环境: http://host.docker.internal:8081
@@ -444,6 +448,8 @@ services:
     environment:
       - NODE_ENV=production
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - KKPAN_SYNC_CRON_SECRET=${KKPAN_SYNC_CRON_SECRET}
+      - CRON_SECRET=${CRON_SECRET}
       - MONGODB_URI=mongodb://mongodb:27017/kerkerker
       - NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
     depends_on:
