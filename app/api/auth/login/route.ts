@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSession, validatePassword } from '@/lib/auth';
+import { createSession, isSecureRequest, validatePassword } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 创建会话
-    await createSession();
+    await createSession({ secure: isSecureRequest(request) });
 
     return NextResponse.json({ success: true });
   } catch (error) {

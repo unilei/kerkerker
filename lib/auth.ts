@@ -42,6 +42,31 @@ function getSessionCookieSecureFlag(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
+/**
+ * Determine whether the browser-facing request is HTTPS. The app may sit
+ * behind a TLS-terminating reverse proxy, so prefer its first forwarded
+ * protocol when present and fall back to the URL Next.js received.
+ */
+export function isSecureRequest(
+  request: Pick<NextRequest, 'headers' | 'nextUrl'>
+): boolean {
+  const forwardedProto = request.headers
+    .get('x-forwarded-proto')
+    ?.split(',')[0]
+    ?.trim()
+    .toLowerCase();
+
+  if (forwardedProto === 'https') {
+    return true;
+  }
+
+  if (forwardedProto === 'http') {
+    return false;
+  }
+
+  return request.nextUrl.protocol === 'https:';
+}
+
 export function createSessionToken(options: SessionTokenOptions = {}): string {
   const now = options.now ?? Date.now();
   const maxAge = options.maxAge ?? SESSION_MAX_AGE_SECONDS;
@@ -91,12 +116,12 @@ export function validateRequestSession(
 }
 
 // 创建会话
-export async function createSession(): Promise<void> {
+export async function createSession(options: { secure?: boolean } = {}): Promise<void> {
   const cookieStore = await cookies();
   // 设置session cookie，有效期7天
   cookieStore.set(SESSION_COOKIE_NAME, createSessionToken(), {
     httpOnly: true,
-    secure: getSessionCookieSecureFlag(),
+    secure: options.secure ?? getSessionCookieSecureFlag(),
     sameSite: 'lax',
     maxAge: SESSION_MAX_AGE_SECONDS,
     path: '/'

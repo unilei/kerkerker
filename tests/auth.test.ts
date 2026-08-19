@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   createSessionToken,
+  isSecureRequest,
   validateSessionToken,
   SESSION_COOKIE_NAME,
 } from "@/lib/auth";
+import { NextRequest } from "next/server";
 
 test("session cookie name stays stable for admin flows", () => {
   assert.equal(SESSION_COOKIE_NAME, "admin_session");
@@ -53,4 +55,19 @@ test("validateSessionToken rejects expired tokens", () => {
     }),
     false
   );
+});
+
+test("isSecureRequest follows the browser-facing protocol", () => {
+  assert.equal(isSecureRequest(new NextRequest("http://example.com/login")), false);
+  assert.equal(isSecureRequest(new NextRequest("https://example.com/login")), true);
+
+  const proxiedHttpsRequest = new NextRequest("http://example.com/login", {
+    headers: { "x-forwarded-proto": "https, http" },
+  });
+  assert.equal(isSecureRequest(proxiedHttpsRequest), true);
+
+  const proxiedHttpRequest = new NextRequest("https://example.com/login", {
+    headers: { "x-forwarded-proto": "http" },
+  });
+  assert.equal(isSecureRequest(proxiedHttpRequest), false);
 });
