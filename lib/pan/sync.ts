@@ -59,7 +59,10 @@ export interface SyncStats {
   sourceErrors?: number; // kkpans 目录/失效检测失败次数
   // 整体是否认定为失败（上游全故障 / 无任何有效数据时为 true）
   failed?: boolean;
+  cancelled?: boolean;
 }
+
+type SyncContinuation = () => boolean | Promise<boolean>;
 
 function brandOf(item: KkpanResource): PanBrand | null {
   return (PAN_BRANDS as string[]).includes(item.targetPlatform)
@@ -259,8 +262,10 @@ interface StablePageScan {
 export async function scanStablePages(
   fetchPage: (page: number) => Promise<KkpanPageResult>,
   pageSize: number,
-  maxPages: number
+  maxPages: number,
+  shouldContinue?: SyncContinuation
 ): Promise<StablePageScan> {
+  if (shouldContinue && !(await shouldContinue())) throw new Error("同步任务已停止");
   const first = await fetchPage(1);
   const scannedPages: KkpanPageResult[] = [first];
   const rawIds = new Set<number>();
@@ -288,6 +293,7 @@ export async function scanStablePages(
   if (first.rawCount < pageSize) complete = true;
 
   for (let page = 2; !complete && page <= maxPages; page++) {
+    if (shouldContinue && !(await shouldContinue())) throw new Error("同步任务已停止");
     const result = await fetchPage(page);
     scannedPages.push(result);
     collect(result);
@@ -302,6 +308,7 @@ export async function scanStablePages(
   // 访问过的所有页，并逐页比较原始 ID、数量、指纹和 total；否则“第 2 页
   // 替换一条、总数不变”的情况仍会漏项并把有效资源误判为失效。
   for (let page = 1; page <= scannedPages.length; page++) {
+    if (shouldContinue && !(await shouldContinue())) throw new Error("同步任务已停止");
     const confirmation = await fetchPage(page);
     const original = scannedPages[page - 1];
     const idsStable =
@@ -368,7 +375,8 @@ export function selectIncrementalCandidates(
 // 上游分页并非严格按 updated_at 排序，因此不能在遇到旧条目时提前 break。
 export async function runIncrementalSync(
   limit = 200,
-  withAvailabilityCheck = true
+  withAvailabilityCheck = true,
+  shouldContinue?: SyncContinuation
 ): Promise<SyncStats> {
   const startedAt = Date.now();
   const stats: SyncStats = {
@@ -391,12 +399,23 @@ export async function runIncrementalSync(
   const boundedLimit = normalizeSyncLimit(limit, 200);
   let catalog: StablePageScan;
   try {
+    if (shouldContinue && !(await shouldContinue())) {
+      stats.cancelled = true;
+      stats.durationMs = Date.now() - startedAt;
+      return stats;
+    }
     catalog = await scanStablePages(
       (page) => listKkpanPageWithMeta(page, INCREMENTAL_PAGE_SIZE),
       INCREMENTAL_PAGE_SIZE,
-      INCREMENTAL_MAX_PAGES
+      INCREMENTAL_MAX_PAGES,
+      shouldContinue
     );
   } catch {
+    if (shouldContinue && !(await shouldContinue())) {
+      stats.cancelled = true;
+      stats.durationMs = Date.now() - startedAt;
+      return stats;
+    }
     stats.sourceErrors = 1;
     stats.failed = true;
     stats.durationMs = Date.now() - startedAt;
@@ -424,6 +443,11 @@ export async function runIncrementalSync(
   let matchAttempts = 0;
   const pendingIds: number[] = [];
   for (const item of candidates) {
+    if (shouldContinue && !(await shouldContinue())) {
+      stats.cancelled = true;
+      stats.durationMs = Date.now() - startedAt;
+      return stats;
+    }
     const brand = brandOf(item);
     if (!brand) continue;
     stats.pulled++;
@@ -449,6 +473,11 @@ export async function runIncrementalSync(
         extractYear(item.fileName)
       );
     } catch {
+      if (shouldContinue && !(await shouldContinue())) {
+        stats.cancelled = true;
+        stats.durationMs = Date.now() - startedAt;
+        return stats;
+      }
       stats.doubanErrors = (stats.doubanErrors || 0) + 1;
       stats.failed = true;
       break;
@@ -500,8 +529,14 @@ export async function runIncrementalSync(
   if (withAvailabilityCheck) {
     const availability = await runAvailabilityPass(
       30,
-      prevState?.last_availability_cursor
+      prevState?.last_availability_cursor,
+      shouldContinue
     );
+    if (availability.cancelled) {
+      stats.cancelled = true;
+      stats.durationMs = Date.now() - startedAt;
+      return stats;
+    }
     stats.disabled = availability.disabled;
     stats.refreshed = availability.refreshed;
     stats.checkedTitles = availability.checkedTitles;
@@ -514,6 +549,12 @@ export async function runIncrementalSync(
       stats.durationMs = Date.now() - startedAt;
       return stats;
     }
+  }
+
+  if (shouldContinue && !(await shouldContinue())) {
+    stats.cancelled = true;
+    stats.durationMs = Date.now() - startedAt;
+    return stats;
   }
 
   stats.durationMs = Date.now() - startedAt;
@@ -669,13 +710,15 @@ export async function runBackfillSync(limit = 100): Promise<SyncStats> {
 // 这样修复"换新 URL 被误禁 + 新 URL 不入库"和"前 50 名之外的链接被误禁"。
 async function runAvailabilityPass(
   maxTitles = 30,
-  cursor?: string
+  cursor?: string,
+  shouldContinue?: SyncContinuation
 ): Promise<{
   disabled: number;
   refreshed: number;
   checkedTitles: number;
   errors: number;
   nextCursor?: string;
+  cancelled?: boolean;
 }> {
   // 读取全部 kkpan 资源，片名分组后用持久化游标轮转；固定取最近 300 条会让
   // 旧片名永久得不到检查。已禁用资源也必须参与，源恢复时才能重新启用。
@@ -719,6 +762,7 @@ async function runAvailabilityPass(
   const maxPages = 200; // 无 total 元数据时的保守上限
 
   for (const [title, group] of boundedGroups) {
+    if (shouldContinue && !(await shouldContinue())) return { disabled, refreshed, checkedTitles, errors, nextCursor, cancelled: true };
     // 分页拉取该片 live 资源。扫描前后快照不一致时终止本轮，不能禁用资源或
     // 把游标推进到这个片名之后。
     const liveById = new Map<number, KkpanResource>();
@@ -727,7 +771,8 @@ async function runAvailabilityPass(
       const scan = await scanStablePages(
         (page) => searchKkpanResourcesWithMeta(title, pageSize, page),
         pageSize,
-        maxPages
+        maxPages,
+        shouldContinue
       );
       const matchingItems = scan.items.filter((item) =>
         titlesStrictlyMatch(extractTitleCandidate(item.fileName), title)
@@ -741,6 +786,9 @@ async function runAvailabilityPass(
       }
       hadAny = matchingItems.length > 0 || liveById.size > 0;
     } catch {
+      if (shouldContinue && !(await shouldContinue())) {
+        return { disabled, refreshed, checkedTitles, errors, nextCursor, cancelled: true };
+      }
       errors++;
       break;
     }
@@ -751,6 +799,7 @@ async function runAvailabilityPass(
     checkedTitles++;
 
     for (const resource of group) {
+      if (shouldContinue && !(await shouldContinue())) return { disabled, refreshed, checkedTitles, errors, nextCursor, cancelled: true };
       const kkpanId = resource.kkpan_id as number;
       const live = liveById.get(kkpanId);
       if (live) {

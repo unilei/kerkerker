@@ -11,6 +11,12 @@ export const COLLECTIONS = {
   PAN_SYNC_STATE: 'pan_sync_state',
   /** 站内影片网盘同步台账 */
   PAN_SYNC_TARGETS: 'pan_sync_targets',
+  /** 影片网盘同步调度配置（单例） */
+  PAN_SYNC_SCHEDULE: 'pan_sync_schedule',
+  /** 影片网盘同步运行记录 */
+  PAN_SYNC_RUNS: 'pan_sync_runs',
+  /** 影片网盘同步运行事件/日志 */
+  PAN_SYNC_RUN_EVENTS: 'pan_sync_run_events',
 } as const;
 
 /** 集合名称类型 */

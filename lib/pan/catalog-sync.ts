@@ -607,10 +607,36 @@ export interface PanSyncTargetBatchResult {
   stats: PanSyncTargetStats;
 }
 
+export interface PanSyncTargetBatchHooks {
+  shouldContinue?: () => boolean | Promise<boolean>;
+  onTargetStart?: (target: PanSyncTarget) => void | Promise<void>;
+  onTargetComplete?: (
+    target: PanSyncTarget,
+    result: {
+      status: "synced" | "empty" | "failed";
+      imported: number;
+      refreshed: number;
+      disabled: number;
+      error?: string;
+    }
+  ) => void | Promise<void>;
+}
+
+async function runBatchHook(work: (() => void | Promise<void>) | undefined) {
+  if (!work) return;
+  try {
+    await work();
+  } catch (error) {
+    // 运行日志/进度属于旁路可观测性，写入失败不能把影片本身标为同步失败。
+    console.error("记录影片同步进度失败:", error);
+  }
+}
+
 export async function runPanSyncTargetBatch(
   limit = 5,
   owner = `catalog-${Date.now()}`,
-  doubanId?: string
+  doubanId?: string,
+  hooks: PanSyncTargetBatchHooks = {}
 ): Promise<PanSyncTargetBatchResult> {
   const bounded = Math.min(Math.max(Math.floor(limit || 1), 1), 20);
   let processed = 0;
@@ -622,9 +648,11 @@ export async function runPanSyncTargetBatch(
   let disabled = 0;
 
   for (let index = 0; index < bounded; index++) {
+    if (hooks.shouldContinue && !(await hooks.shouldContinue())) break;
     const target = await claimPanSyncTarget(owner, doubanId);
     if (!target) break;
     processed++;
+    await runBatchHook(() => hooks.onTargetStart?.(target));
     try {
       const result = await syncPanResourcesForMovie({
         doubanId: target.douban_id,
@@ -639,12 +667,30 @@ export async function runPanSyncTargetBatch(
       });
       if (result.resourcesCount > 0) synced++;
       else empty++;
+      await runBatchHook(() =>
+        hooks.onTargetComplete?.(target, {
+          status: result.resourcesCount > 0 ? "synced" : "empty",
+          imported: result.imported,
+          refreshed: result.refreshed ?? 0,
+          disabled: result.disabled ?? 0,
+        })
+      );
     } catch (error) {
       failed++;
+      const message = error instanceof Error ? error.message : "同步失败";
       await finishPanSyncTarget(target.douban_id, owner, {
         resourcesCount: 0,
-        error: error instanceof Error ? error.message : "同步失败",
+        error: message,
       });
+      await runBatchHook(() =>
+        hooks.onTargetComplete?.(target, {
+          status: "failed",
+          imported: 0,
+          refreshed: 0,
+          disabled: 0,
+          error: message,
+        })
+      );
     }
     if (doubanId) break;
   }

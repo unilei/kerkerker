@@ -227,6 +227,35 @@ async function initializeDatabase(db: Db) {
     await panSyncTargetsCollection.createIndex({ status: 1, updated_at: -1 });
     await panSyncTargetsCollection.createIndex({ next_attempt_at: 1 });
 
+    // 应用内影片同步调度器：两类任务各有独立配置，运行记录和事件按时间查询。
+    const panSyncScheduleCollection = db.collection(
+      COLLECTIONS.PAN_SYNC_SCHEDULE
+    );
+    await panSyncScheduleCollection.createIndex({ task: 1 }, { unique: true });
+
+    const panSyncRunsCollection = db.collection(COLLECTIONS.PAN_SYNC_RUNS);
+    await panSyncRunsCollection.createIndex({ run_id: 1 }, { unique: true });
+    await panSyncRunsCollection.createIndex(
+      { task: 1, schedule_slot: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { schedule_slot: { $type: "string" } },
+      }
+    );
+    await panSyncRunsCollection.createIndex({ task: 1, created_at: -1 });
+    await panSyncRunsCollection.createIndex({ status: 1, updated_at: -1 });
+    await panSyncRunsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
+
+    const panSyncRunEventsCollection = db.collection(
+      COLLECTIONS.PAN_SYNC_RUN_EVENTS
+    );
+    await panSyncRunEventsCollection.createIndex(
+      { run_id: 1, seq: 1 },
+      { unique: true }
+    );
+    await panSyncRunEventsCollection.createIndex({ run_id: 1, created_at: 1 });
+    await panSyncRunEventsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
+
     globalForMongo.initialized = true;
     console.log('✅ MongoDB 数据库初始化完成');
   } catch (error) {

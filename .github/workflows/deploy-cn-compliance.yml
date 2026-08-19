@@ -58,6 +58,7 @@ jobs:
             tests/cn-compliance.test.ts \
             tests/pan-sync.test.ts \
             tests/pan-sync-behavior.test.ts \
+            tests/pan-scheduler.test.ts \
             tests/admin-routes.test.ts; do
             npx tsx "$test_file"
           done
@@ -199,6 +200,8 @@ jobs:
           KKPAN_API_BASE: ${{ secrets.DEPLOY_KKPAN_API_BASE || 'https://www.kkpans.com' }}
           DANMU_API_URL: ${{ secrets.DEPLOY_DANMU_API_URL }}
           DANMU_API_TOKEN: ${{ secrets.DEPLOY_DANMU_API_TOKEN }}
+          SCHEDULER_DISABLED: ${{ vars.PAN_SYNC_SCHEDULER_DISABLED || 'false' }}
+          SCHEDULER_POLL_MS: ${{ vars.PAN_SYNC_SCHEDULER_POLL_MS || '30000' }}
           KEY_FILE: ${{ steps.ssh.outputs.key_file }}
           KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
         shell: bash
@@ -220,6 +223,8 @@ jobs:
             printf 'KKPAN_API_BASE=%s\n' "$KKPAN_API_BASE"
             printf 'NEXT_PUBLIC_DANMU_API_URL=%s\n' "$DANMU_API_URL"
             printf 'NEXT_PUBLIC_DANMU_API_TOKEN=%s\n' "$DANMU_API_TOKEN"
+            printf 'PAN_SYNC_SCHEDULER_DISABLED=%s\n' "$SCHEDULER_DISABLED"
+            printf 'PAN_SYNC_SCHEDULER_POLL_MS=%s\n' "$SCHEDULER_POLL_MS"
           } > "$env_file"
           scp -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
             "$env_file" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env.new"

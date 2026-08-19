@@ -15,6 +15,7 @@ import {
 import { BrandBadge } from "@/components/pan/BrandBadge";
 import { PanResourceManager } from "@/components/pan/PanResourceManager";
 import { PanCatalogSyncPanel } from "./PanCatalogSyncPanel";
+import { PanSyncSchedulerPanel } from "./PanSyncSchedulerPanel";
 import type { PanResourcesTabProps } from "./types";
 
 // 搜索结果统一结构
@@ -291,6 +292,8 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
         onShowToast={onShowToast}
         onSelectMovie={handleSelectCatalogMovie}
       />
+
+      <PanSyncSchedulerPanel onShowToast={onShowToast} />
 
       {/* kkpans 自动同步 */}
       <div className="bg-[#181818] border border-[#333] rounded-lg p-6">
