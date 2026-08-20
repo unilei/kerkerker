@@ -7,11 +7,36 @@ import {
   type PanResource,
   type PanResourceInput,
 } from "@/types/pan-resource";
+import { resolveContentIdentity } from "@/lib/content-identity-db";
+import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
+
+const CONTENT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PROVIDER_ID_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$/;
+
+function validateProviderRef(providerId?: string, providerResourceId?: string): void {
+  if (Boolean(providerId) !== Boolean(providerResourceId)) {
+    throw new RangeError("provider_id 和 provider_resource_id 必须同时提供");
+  }
+  if (!providerId) return;
+  if (!PROVIDER_ID_PATTERN.test(providerId)) {
+    throw new RangeError("provider_id 格式无效");
+  }
+  if (
+    !providerResourceId ||
+    providerResourceId.length > 500 ||
+    /[\u0000-\u001f]/.test(providerResourceId)
+  ) {
+    throw new RangeError("provider_resource_id 格式无效");
+  }
+}
 
 // 数据库文档类型（蛇形字段，与 collection 存储一致）
 export interface PanResourceDoc {
   _id?: ObjectId;
   douban_id: string;
+  content_id?: string;
   internal_id?: number;
   movie_title?: string;
   brand: PanBrand;
@@ -22,6 +47,8 @@ export interface PanResourceDoc {
   code?: string;
   note?: string;
   source?: "manual" | "kkpan";
+  provider_id?: string;
+  provider_resource_id?: string;
   kkpan_id?: number;
   enabled: boolean;
   created_at: string; // ISO 字符串格式
@@ -62,6 +89,7 @@ function docToPanResource(doc: PanResourceDoc): PanResource {
   return {
     id: (doc._id as ObjectId).toString(),
     douban_id: doc.douban_id,
+    content_id: doc.content_id,
     internal_id: doc.internal_id,
     movie_title: doc.movie_title,
     brand: doc.brand,
@@ -72,6 +100,8 @@ function docToPanResource(doc: PanResourceDoc): PanResource {
     code: doc.code,
     note: doc.note,
     source: doc.source,
+    provider_id: doc.provider_id,
+    provider_resource_id: doc.provider_resource_id,
     kkpan_id: doc.kkpan_id,
     enabled: doc.enabled,
     created_at: doc.created_at,
@@ -91,15 +121,45 @@ export async function getPanResourcesByDoubanId(
     .sort({ updated_at: -1 })
     .toArray();
 
-  return docs
-    .map(docToPanResource)
-    .sort((a, b) => {
-      const diff =
-        (BRAND_ORDER[a.brand] ?? BRAND_ORDER.length) -
-        (BRAND_ORDER[b.brand] ?? BRAND_ORDER.length);
-      if (diff !== 0) return diff;
-      return b.updated_at.localeCompare(a.updated_at);
-    });
+  return sortPanResources(docs.map(docToPanResource));
+}
+
+/** Preferred host-identity read path. Douban ID remains a compatibility fallback. */
+export async function getPanResourcesByContentId(
+  contentId: string
+): Promise<PanResource[]> {
+  const db = await getDatabase();
+  const collection = db.collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES);
+  const docs = await collection
+    .find({ content_id: contentId, enabled: true })
+    .sort({ updated_at: -1 })
+    .toArray();
+  return sortPanResources(docs.map(docToPanResource));
+}
+
+function sortPanResources(resources: PanResource[]): PanResource[] {
+  return resources.sort((a, b) => {
+    const diff =
+      (BRAND_ORDER[a.brand] ?? BRAND_ORDER.length) -
+      (BRAND_ORDER[b.brand] ?? BRAND_ORDER.length);
+    if (diff !== 0) return diff;
+    return b.updated_at.localeCompare(a.updated_at);
+  });
+}
+
+/** Read one resource for admin mutations and migration-aware validation. */
+export async function getPanResourceById(id: string): Promise<PanResource | null> {
+  let objectId: ObjectId;
+  try {
+    objectId = new ObjectId(id);
+  } catch {
+    return null;
+  }
+  const db = await getDatabase();
+  const doc = await db
+    .collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES)
+    .findOne({ _id: objectId });
+  return doc ? docToPanResource(doc) : null;
 }
 
 export async function countPanResourcesByDoubanId(
@@ -121,6 +181,7 @@ export async function countEnabledPanResourcesByDoubanId(
 // 查询参数
 export interface PanResourceQueryOptions {
   doubanId?: string;
+  contentId?: string;
   keyword?: string; // 按片名 / 资源名模糊搜索，或精确匹配豆瓣 ID
   limit?: number;
 }
@@ -135,6 +196,9 @@ export async function getAllPanResources(
   const filter: Filter<PanResourceDoc> = {};
   if (options.doubanId) {
     filter.douban_id = options.doubanId;
+  }
+  if (options.contentId) {
+    filter.content_id = options.contentId;
   }
   if (options.keyword) {
     filter.$or = [
@@ -194,23 +258,42 @@ export async function createPanResourceInDB(
   input: Required<Pick<PanResourceInput, "douban_id" | "brand" | "title" | "url">> &
     PanResourceInput
 ): Promise<{ resource: PanResource; created: boolean }> {
-  const db = await getDatabase();
-  const collection = db.collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES);
+  if (
+    typeof input.douban_id !== "string" ||
+    !/^\d{1,20}$/.test(input.douban_id)
+  ) {
+    throw new RangeError("douban_id 格式无效");
+  }
   const now = new Date().toISOString();
   const hasKkpanId =
     typeof input.kkpan_id === "number" &&
     Number.isSafeInteger(input.kkpan_id) &&
     input.kkpan_id > 0;
+  const providerId = input.provider_id?.trim();
+  const providerResourceId = input.provider_resource_id?.trim();
+  const hasProviderRef = Boolean(providerId && providerResourceId);
+  validateProviderRef(providerId, providerResourceId);
   if (input.kkpan_id !== undefined && !hasKkpanId) {
     throw new RangeError("kkpan_id 必须是正安全整数");
+  }
+  if (input.content_id !== undefined && !CONTENT_ID_PATTERN.test(input.content_id)) {
+    throw new RangeError("content_id 必须是有效 UUID");
   }
   if (input.source === "kkpan" && !hasKkpanId) {
     throw new RangeError("kkpan 来源资源必须提供有效 kkpan_id");
   }
 
+  const identity = await resolveContentIdentity([
+    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: input.douban_id },
+  ]);
+  if (input.content_id && input.content_id !== identity.contentId) {
+    throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
+  }
+
   // 手工录入时省略 kkpan_id 字段，避免 undefined→null 触发唯一索引语义歧义
   const doc: Omit<PanResourceDoc, "_id"> = {
     douban_id: input.douban_id,
+    content_id: identity.contentId,
     internal_id: input.internal_id,
     movie_title: input.movie_title,
     brand: input.brand,
@@ -222,6 +305,9 @@ export async function createPanResourceInDB(
     note: input.note,
     // 带 kkpan_id 的资源始终归为 kkpan 来源，避免调用方误传 manual 后绕过失效联动。
     source: hasKkpanId ? "kkpan" : input.source,
+    ...(hasProviderRef
+      ? { provider_id: providerId, provider_resource_id: providerResourceId }
+      : {}),
     enabled: input.enabled ?? true,
     created_at: now,
     updated_at: now,
@@ -229,6 +315,8 @@ export async function createPanResourceInDB(
       ? { kkpan_id: input.kkpan_id }
       : {}),
   };
+  const db = await getDatabase();
+  const collection = db.collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES);
 
   try {
     const result = await collection.insertOne(doc);
@@ -237,16 +325,68 @@ export async function createPanResourceInDB(
       created: true,
     };
   } catch (err) {
-    // 仅对带数字 kkpan_id 的资源做 duplicate key 兜底；其它错误（如校验失败）继续抛。
+    // 对兼容 kkpan_id 或统一 provider 引用做 duplicate key 幂等兜底。
     const code = (err as { code?: number; codeName?: string })?.code;
     const isDuplicate =
       code === 11000 ||
       (err as Error)?.message?.toLowerCase?.().includes("duplicate key");
-    if (!(hasKkpanId && isDuplicate)) {
+    if (!((hasKkpanId || hasProviderRef) && isDuplicate)) {
       throw err;
     }
-    const existing = await collection.findOne({ kkpan_id: input.kkpan_id });
+    const [kkpanExisting, providerExisting] = await Promise.all([
+      hasKkpanId
+        ? collection.findOne({ kkpan_id: input.kkpan_id })
+        : Promise.resolve(null),
+      hasProviderRef
+        ? collection.findOne({
+            provider_id: providerId,
+            provider_resource_id: providerResourceId,
+          })
+        : Promise.resolve(null),
+    ]);
+    if (
+      kkpanExisting &&
+      providerExisting &&
+      String(kkpanExisting._id) !== String(providerExisting._id)
+    ) {
+      throw new Error("kkpan_id 与 provider 引用分别关联到不同资源，需要人工处理");
+    }
+    const existing = kkpanExisting || providerExisting;
     if (!existing) throw err; // 不应该走到，保守重抛
+    if (existing.douban_id !== input.douban_id) {
+      throw new Error("同一 kkpan_id 已关联到其他影片，需要人工处理");
+    }
+    if (
+      input.content_id &&
+      existing.content_id &&
+      existing.content_id !== input.content_id
+    ) {
+      throw new Error("同一 kkpan_id 已关联到其他 content_id，需要人工处理");
+    }
+    if (
+      hasProviderRef &&
+      existing.provider_id &&
+      (existing.provider_id !== providerId ||
+        existing.provider_resource_id !== providerResourceId)
+    ) {
+      throw new Error("同一资源已经关联到其他 provider 引用，需要人工处理");
+    }
+    const compatibilityBackfill: Partial<PanResourceDoc> = {};
+    if (input.content_id && !existing.content_id) {
+      compatibilityBackfill.content_id = input.content_id;
+    }
+    if (hasProviderRef && !existing.provider_id) {
+      compatibilityBackfill.provider_id = providerId;
+      compatibilityBackfill.provider_resource_id = providerResourceId;
+    }
+    if (Object.keys(compatibilityBackfill).length > 0) {
+      const updated = await collection.findOneAndUpdate(
+        { _id: existing._id },
+        { $set: { ...compatibilityBackfill, updated_at: now } },
+        { returnDocument: "after" }
+      );
+      if (updated) return { resource: docToPanResource(updated), created: false };
+    }
     return { resource: docToPanResource(existing), created: false };
   }
 }
@@ -263,6 +403,12 @@ export async function updatePanResourceInDB(
   const setDoc: Partial<PanResourceDoc> = { updated_at: now };
   const unsetDoc: Record<string, ""> = {};
   if (updates.douban_id !== undefined) setDoc.douban_id = updates.douban_id;
+  if (updates.content_id !== undefined) {
+    if (!CONTENT_ID_PATTERN.test(updates.content_id)) {
+      throw new RangeError("content_id 必须是有效 UUID");
+    }
+    setDoc.content_id = updates.content_id;
+  }
   if (updates.internal_id !== undefined)
     setDoc.internal_id = updates.internal_id;
   if (updates.movie_title !== undefined)
@@ -276,6 +422,16 @@ export async function updatePanResourceInDB(
   else if (updates.code !== undefined) setDoc.code = updates.code;
   if (updates.note !== undefined) setDoc.note = updates.note;
   if (updates.source !== undefined) setDoc.source = updates.source;
+  if (
+    updates.provider_id !== undefined ||
+    updates.provider_resource_id !== undefined
+  ) {
+    const providerId = updates.provider_id?.trim();
+    const providerResourceId = updates.provider_resource_id?.trim();
+    validateProviderRef(providerId, providerResourceId);
+    setDoc.provider_id = providerId;
+    setDoc.provider_resource_id = providerResourceId;
+  }
   if (updates.kkpan_id !== undefined) {
     if (!Number.isSafeInteger(updates.kkpan_id) || updates.kkpan_id <= 0) {
       throw new RangeError("kkpan_id 必须是正安全整数");
@@ -294,17 +450,39 @@ export async function updatePanResourceInDB(
     return null;
   }
 
+  const existingDoc = await collection.findOne({ _id: objectId });
+  if (!existingDoc) return null;
+  const targetDoubanId = updates.douban_id ?? existingDoc.douban_id;
+  if (
+    typeof targetDoubanId !== "string" ||
+    !/^\d{1,20}$/.test(targetDoubanId)
+  ) {
+    throw new RangeError("douban_id 格式无效");
+  }
+  const identity = await resolveContentIdentity([
+    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: targetDoubanId },
+  ]);
+  if (updates.content_id !== undefined && updates.content_id !== identity.contentId) {
+    throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
+  }
+  setDoc.content_id = identity.contentId;
+
   const update: {
     $set: Partial<PanResourceDoc>;
     $unset?: Record<string, "">;
   } = { $set: setDoc };
   if (Object.keys(unsetDoc).length > 0) update.$unset = unsetDoc;
 
-  const result = await collection.findOneAndUpdate({ _id: objectId }, update, {
-    returnDocument: "after",
-  });
-
-  return result ? docToPanResource(result) : null;
+  try {
+    const result = await collection.findOneAndUpdate({ _id: objectId }, update, {
+      returnDocument: "after",
+    });
+    return result ? docToPanResource(result) : null;
+  } catch (error) {
+    const code = (error as { code?: number })?.code;
+    if (code !== 11000) throw error;
+    throw new Error("来源资源身份已被其他资源占用，需要人工处理");
+  }
 }
 
 // 删除网盘资源

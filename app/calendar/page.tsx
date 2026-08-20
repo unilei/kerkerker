@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Calendar, ChevronLeft, ChevronRight, Globe, Star } from 'lucide-react';
-import { getCalendar, type CalendarDay, type CalendarEntry, type CalendarResponse } from '@/lib/douban-service';
+import type { CalendarDay, CalendarEntry, CalendarResponse } from '@/types/content-calendar';
 import { Toast } from '@/components/Toast';
 import { getImageUrl } from '@/lib/utils/image-utils';
 
@@ -180,7 +180,7 @@ function CalendarDaySection({
       <div className="relative group">
         <div className="flex overflow-x-auto space-x-3 md:space-x-4 pb-4 scrollbar-hide scroll-smooth">
           {day.entries.map((entry, index) => (
-            <div key={`${entry.show_id}-${entry.episode_number}-${index}`} className="shrink-0 w-36 sm:w-44 md:w-52">
+            <div key={`${entry.event_id || entry.show_id}-${entry.episode_number}-${index}`} className="shrink-0 w-36 sm:w-44 md:w-52">
               <CalendarCard
                 entry={entry}
                 onClick={() => onEntryClick(entry)}
@@ -230,7 +230,7 @@ export default function CalendarPage() {
   const router = useRouter();
   const [showSearch, setShowSearch] = useState(false);
   const scrolled = useScrollState(50);
-  const { handleMovieClick, toast, setToast } = useMovieMatch();
+  const { toast, setToast } = useMovieMatch();
 
   const [calendarData, setCalendarData] = useState<CalendarResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -259,12 +259,19 @@ export default function CalendarPage() {
       setLoading(true);
       setError(null);
       try {
-        const data = await getCalendar({
+        const params = new URLSearchParams({
           start_date: dateRange.start,
           end_date: dateRange.end,
           region,
         });
-        setCalendarData(data);
+        const response = await fetch(`/api/content/calendar?${params.toString()}`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) throw new Error(`calendar request failed: ${response.status}`);
+        const payload = (await response.json()) as { data?: CalendarResponse };
+        if (!payload.data) throw new Error('calendar response missing data');
+        setCalendarData(payload.data);
       } catch (err) {
         console.error('Failed to fetch calendar:', err);
         setError('获取日历数据失败，请稍后重试');
@@ -284,14 +291,13 @@ export default function CalendarPage() {
 
   // 处理剧集点击
   const handleEntryClick = (entry: CalendarEntry) => {
-    if (entry.douban_id) {
-      router.push(`/movie/${entry.douban_id}`);
+    const externalId = entry.external_id || entry.douban_id;
+    if (externalId) {
+      router.push(`/movie/${externalId}`);
     } else {
       router.push(`/search?q=${encodeURIComponent(entry.show_name_cn || entry.show_name)}`);
     }
   };
-
-  const currentRegion = REGIONS.find(r => r.code === region);
 
   return (
     <div className="min-h-screen bg-black">

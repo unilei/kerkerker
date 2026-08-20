@@ -54,6 +54,9 @@ interface DraftRow {
   // 让其参与失效联动与 kkpan_id 对账（手工粘贴/手填不带这两个字段）
   kkpan_id?: number;
   source?: "manual" | "kkpan";
+  content_id?: string;
+  provider_id?: string;
+  provider_resource_id?: string;
 }
 
 const inputClass =
@@ -69,6 +72,9 @@ interface KkpanItem {
   format?: string;
   kkpan_id?: number;
   source?: "manual" | "kkpan";
+  content_id?: string;
+  provider_id?: string;
+  provider_resource_id?: string;
   updatedAt?: string;
 }
 
@@ -276,6 +282,9 @@ export function PanResourceManager({
       note: "",
       kkpan_id: item.kkpan_id,
       source: item.kkpan_id != null ? "kkpan" : undefined,
+      content_id: item.content_id,
+      provider_id: item.provider_id,
+      provider_resource_id: item.provider_resource_id,
     }));
     setDrafts((prev) => [...prev, ...rows]);
     setKkpanResults([]);
@@ -329,6 +338,9 @@ export function PanResourceManager({
           // 来自 kkpans 的资源透传 kkpan_id 与 source，参与失效联动与对账
           kkpan_id: row.kkpan_id,
           source: row.source,
+          content_id: row.content_id,
+          provider_id: row.provider_id,
+          provider_resource_id: row.provider_resource_id,
         };
         try {
           const response = await fetch("/api/pan-resources", {
@@ -381,6 +393,11 @@ export function PanResourceManager({
         format: resource.format || "",
         code: resource.code || "",
         note: resource.note || "",
+        kkpan_id: resource.kkpan_id,
+        source: resource.source,
+        content_id: resource.content_id,
+        provider_id: resource.provider_id,
+        provider_resource_id: resource.provider_resource_id,
         editingId: resource.id,
       },
     ]);

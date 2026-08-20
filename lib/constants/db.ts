@@ -5,8 +5,14 @@
  */
 
 export const COLLECTIONS = {
+  /** 宿主内容身份与外部来源 ID 映射 */
+  CONTENT_IDENTITIES: 'content_identities',
   /** 网盘资源 */
   PAN_RESOURCES: 'pan_resources',
+  /** 网盘资源来源身份迁移的可回滚备份 */
+  PAN_RESOURCE_DEDUP_BACKUPS: 'pan_resource_dedup_backups',
+  /** 网盘资源来源身份迁移的运行与索引快照 */
+  PAN_RESOURCE_DEDUP_RUNS: 'pan_resource_dedup_runs',
   /** 网盘资源 kkpans 同步状态（单例） */
   PAN_SYNC_STATE: 'pan_sync_state',
   /** 站内影片网盘同步台账 */

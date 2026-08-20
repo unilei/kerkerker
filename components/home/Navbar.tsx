@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { Menu, X, Home, Film, Tv, Clock, Github, Calendar } from "lucide-react";
 
@@ -11,7 +10,6 @@ interface NavbarProps {
 }
 
 export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
-  const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // 防止移动端菜单打开时页面滚动

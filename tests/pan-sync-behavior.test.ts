@@ -23,6 +23,8 @@ import {
 } from "@/lib/kkpan";
 import {
   runBackfillSync,
+  getLegacyDoubanCandidate,
+  matchContentForTitle,
   scanStablePages,
   selectIncrementalCandidates,
 } from "@/lib/pan/sync";
@@ -84,6 +86,59 @@ test("stable page scan: 第 2 页漂移时拒绝整轮并避免误禁用", async
     /目录发生变化，请稍后重试/
   );
   assert.equal(calls, 5, "发现第 2 页漂移后应立即停止确认，不再继续读取");
+});
+
+test("内容插件资源匹配保持 suggestion 顺序，不被 advanced 结果改写", async () => {
+  globalThis.fetch = (async () =>
+    jsonResponse({
+      code: 200,
+      data: {
+        advanced: [
+          {
+            id: "999",
+            title: "老九门",
+            rate: "9.9",
+            cover: "https://image.example/advanced.jpg",
+            url: "https://movie.douban.com/subject/999/",
+          },
+        ],
+        suggest: [
+          {
+            id: "123",
+            title: "老九门",
+            img: "https://image.example/suggest.jpg",
+            url: "https://movie.douban.com/subject/123/",
+            type: "tv",
+            year: "2016",
+          },
+        ],
+      },
+    })) as unknown as typeof fetch;
+
+  try {
+    assert.deepEqual(await matchContentForTitle("老九门", "2016"), {
+      doubanId: "123",
+      title: "老九门",
+    });
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("资源匹配拒绝把非 Douban 插件 ID 写进兼容字段", async () => {
+  assert.equal(
+    getLegacyDoubanCandidate({
+      type: "movie",
+      externalRefs: [{ providerId: "kerkerker.tmdb-content", externalId: "550" }],
+      titles: [{ locale: "zh-CN", value: "搏击俱乐部" }],
+      provenance: {
+        source: { providerId: "kerkerker.tmdb-content" },
+        pluginVersion: "1.0.0",
+        fetchedAt: "2026-08-20T00:00:00.000Z",
+      },
+    }),
+    null
+  );
 });
 
 test("P2-D: 所有豆瓣分类请求失败时 runBackfillSync 返回 failed:true 并跳过 DB 写入", async () => {

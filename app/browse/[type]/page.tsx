@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
+import useSWR from "swr";
+import useSWRInfinite from "swr/infinite";
 import {
   Film,
   Tv,
@@ -23,18 +25,19 @@ import { DoubanMovie } from "@/types/douban";
 import { useMovieMatch } from "@/hooks/useMovieMatch";
 import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import { Toast } from "@/components/Toast";
-import {
-  getMoviesCategories,
-  getTVCategories,
-  getNewContent,
-} from "@/lib/douban-service";
-import type { CategoryData as ServiceCategoryData } from "@/lib/douban-service";
+import type {
+  CatalogFilters,
+  CatalogItem,
+  CatalogResponse,
+  CatalogView,
+} from "@/types/content-catalog";
 
 // ============ 页面配置 ============
 interface PageConfig {
   title: string;
   emoji: string;
-  api: string;
+  catalogView: Extract<CatalogView, "sections" | "latest">;
+  catalogKey?: "movies" | "series";
   gradient: string;
   bgColor1: string;
   bgColor2: string;
@@ -46,7 +49,8 @@ const PAGE_CONFIG: Record<string, PageConfig> = {
   movies: {
     title: "电影",
     emoji: "🎬",
-    api: "movies",
+    catalogView: "sections",
+    catalogKey: "movies",
     gradient: "from-red-500/5 via-transparent to-purple-500/5",
     bgColor1: "bg-red-500/10",
     bgColor2: "bg-purple-500/10",
@@ -56,7 +60,8 @@ const PAGE_CONFIG: Record<string, PageConfig> = {
   tv: {
     title: "电视剧",
     emoji: "📺",
-    api: "tv",
+    catalogView: "sections",
+    catalogKey: "series",
     gradient: "from-blue-500/5 via-transparent to-purple-500/5",
     bgColor1: "bg-blue-500/10",
     bgColor2: "bg-purple-500/10",
@@ -66,7 +71,7 @@ const PAGE_CONFIG: Record<string, PageConfig> = {
   latest: {
     title: "最新",
     emoji: "🆕",
-    api: "latest",
+    catalogView: "latest",
     gradient: "from-green-500/5 via-transparent to-blue-500/5",
     bgColor1: "bg-green-500/10",
     bgColor2: "bg-blue-500/10",
@@ -185,18 +190,9 @@ const CATEGORY_ICONS: Record<string, React.JSX.Element> = {
 };
 
 // ============ 类型定义 ============
-interface NewApiMovie {
-  id: string;
-  title: string;
-  rate: string;
-  cover: string;
-  url: string;
-  [key: string]: unknown;
-}
-
 interface CategoryData {
   name: string;
-  data: NewApiMovie[];
+  data: CatalogItem[];
 }
 
 interface Filters {
@@ -204,6 +200,49 @@ interface Filters {
   year: string;
   region: string;
   sort: string;
+}
+
+const SORT_INTENT: Record<string, NonNullable<CatalogFilters["sort"]>> = {
+  热门: "recommended",
+  时间: "release-date",
+  评分: "rating",
+};
+const ITEMS_PER_PAGE = 30;
+
+function catalogUrl(
+  config: PageConfig,
+  filters: Filters,
+  page: number,
+  limit: number
+): string {
+  const params = new URLSearchParams({
+    view: config.catalogView,
+    page: String(page),
+    limit: String(limit),
+  });
+  if (config.catalogKey) params.set("key", config.catalogKey);
+  if (config.catalogView === "latest") {
+    if (filters.genre) params.set("genre", filters.genre);
+    if (filters.year) params.set("year", filters.year);
+    if (filters.region) params.set("region", filters.region);
+    if (filters.sort) params.set("sort", SORT_INTENT[filters.sort]);
+  }
+  return `/api/content/catalog?${params.toString()}`;
+}
+
+async function fetchCatalog(url: string): Promise<CatalogResponse> {
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = (await response.json()) as {
+    data?: CatalogResponse;
+    message?: string;
+  };
+  if (!response.ok || !payload.data) {
+    throw new Error(payload.message || `内容目录请求失败（HTTP ${response.status}）`);
+  }
+  return payload.data;
 }
 
 // ============ 筛选行组件 ============
@@ -256,34 +295,108 @@ export default function BrowsePage() {
   // 使用影片点击 hook（与首页一致，点击后跳转详情页）
   const { handleMovieClick, toast, setToast } = useMovieMatch();
 
-  // 数据状态
-  const [categories, setCategories] = useState<CategoryData[]>([]);
-  const [allMovies, setAllMovies] = useState<NewApiMovie[]>([]); // 全部数据
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // 滚动位置恢复（等待加载完成后恢复）
-  useScrollRestoration(`browse-${pageType}`, { delay: 100, enabled: !loading });
-
-  // 分页状态
+  // 筛选与客户端分页状态
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [useServerPagination, setUseServerPagination] = useState(false); // 是否使用服务端分页
-  const ITEMS_PER_PAGE = 30;
-
-  // 客户端分页：根据当前页显示的电影
-  const movies = useServerPagination
-    ? allMovies
-    : allMovies.slice(0, page * ITEMS_PER_PAGE);
-
-  // 筛选状态
-  const [filters, setFilters] = useState<Filters>({
+  const [filters, setFilters] = useState<Filters>(() => ({
     genre: "",
     year: "",
     region: "",
     sort: "",
+  }));
+  const hasActiveFilters = Boolean(
+    filters.genre || filters.year || filters.region || filters.sort
+  );
+  const useServerPagination = config.catalogView === "latest" && hasActiveFilters;
+
+  const baseCatalogKey = useServerPagination
+    ? null
+    : catalogUrl(config, filters, 1, ITEMS_PER_PAGE);
+  const {
+    data: baseData,
+    error: baseError,
+    isLoading: baseLoading,
+    mutate: mutateBase,
+  } = useSWR<CatalogResponse>(baseCatalogKey, fetchCatalog, {
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
   });
+
+  const getPageKey = useCallback(
+    (pageIndex: number, previousPageData: CatalogResponse | null) => {
+      if (!useServerPagination) return null;
+      if (previousPageData && !previousPageData.pagination.hasMore) return null;
+      return catalogUrl(config, filters, pageIndex + 1, ITEMS_PER_PAGE);
+    },
+    [config, filters, useServerPagination]
+  );
+  const {
+    data: pagedData,
+    error: pagedError,
+    size,
+    setSize,
+    isLoading: pagedLoading,
+    isValidating: pagedValidating,
+    mutate: mutatePaged,
+  } = useSWRInfinite<CatalogResponse>(getPageKey, fetchCatalog, {
+    revalidateFirstPage: false,
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+  });
+
+  const categories = useMemo<CategoryData[]>(
+    () =>
+      (baseData?.sections || []).map((section) => ({
+        name: section.title,
+        data: section.items,
+      })),
+    [baseData]
+  );
+
+  const allMovies = useMemo(() => {
+    const pages = useServerPagination ? pagedData || [] : baseData ? [baseData] : [];
+    const items: CatalogItem[] = [];
+    const seenIds = new Set<string>();
+    for (const catalogPage of pages) {
+      for (const item of catalogPage.items) {
+        if (seenIds.has(item.id)) continue;
+        seenIds.add(item.id);
+        items.push(item);
+      }
+    }
+    return items;
+  }, [baseData, pagedData, useServerPagination]);
+
+  // 未筛选时由浏览器分页；筛选结果遵循插件返回的服务端游标。
+  const movies = useServerPagination
+    ? allMovies
+    : allMovies.slice(0, page * ITEMS_PER_PAGE);
+  const loading = useServerPagination
+    ? pagedLoading && !pagedData
+    : baseLoading && !baseData;
+  const loadingMore = useServerPagination && pagedValidating && Boolean(pagedData);
+  const requestError = useServerPagination ? pagedError : baseError;
+  const error = requestError instanceof Error ? requestError.message : null;
+  const hasMore = useMemo(() => {
+    if (!useServerPagination) {
+      return allMovies.length > page * ITEMS_PER_PAGE;
+    }
+    if (!pagedData || pagedData.length === 0) return true;
+    const lastPage = pagedData[pagedData.length - 1];
+    if (!lastPage.pagination.hasMore) return false;
+    if (pagedData.length === 1) return true;
+
+    // Some legacy providers may return the cached first page for a later cursor.
+    // Stop rather than offering an endless "load more" loop with duplicate cards.
+    const previousIds = new Set(
+      pagedData.slice(0, -1).flatMap((catalogPage) =>
+        catalogPage.items.map((item) => item.id)
+      )
+    );
+    return lastPage.items.some((item) => !previousIds.has(item.id));
+  }, [allMovies.length, page, pagedData, useServerPagination]);
+
+  // 滚动位置恢复（等待加载完成后恢复）
+  useScrollRestoration(`browse-${pageType}`, { delay: 100, enabled: !loading });
 
   // 获取分类图标
   const getCategoryIcon = (name: string): React.JSX.Element => {
@@ -291,144 +404,37 @@ export default function BrowsePage() {
   };
 
   // 转换数据格式
-  const convertToDoubanMovie = (item: NewApiMovie): DoubanMovie => ({
+  const convertToDoubanMovie = (item: CatalogItem): DoubanMovie => ({
     id: item.id,
     title: item.title,
-    cover: item.cover || "",
-    url: item.url || "",
-    rate: item.rate || "",
-    episode_info: (item.episode_info as string) || "",
-    cover_x: (item.cover_x as number) || 0,
-    cover_y: (item.cover_y as number) || 0,
-    playable: (item.playable as boolean) || false,
-    is_new: (item.is_new as boolean) || false,
+    cover: item.posterUrl || "",
+    url: item.canonicalUrl || "",
+    rate: item.rating || "",
+    episode_info: item.episodeInfo || "",
+    cover_x: 0,
+    cover_y: 0,
+    playable: false,
+    is_new: false,
   });
 
-  // 获取数据（只负责网络请求，不处理客户端分页逻辑）
-  const fetchData = useCallback(
-    async (pageNum: number = 1, append: boolean = false) => {
-      const hasActiveFilters =
-        filters.genre || filters.year || filters.region || filters.sort;
-
-      if (append) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
-        setAllMovies([]);
-      }
-      setError(null);
-
-      try {
-        let data: ServiceCategoryData[] = [];
-
-        // 根据页面类型调用对应的服务函数
-        if (config.api === "movies") {
-          data = await getMoviesCategories();
-        } else if (config.api === "tv") {
-          data = await getTVCategories();
-        } else if (config.api === "latest") {
-          // latest 页面使用 getNewContent，支持筛选
-          const filterParams: Record<string, string | number | undefined> = {};
-          if (hasActiveFilters) {
-            setUseServerPagination(true);
-            if (filters.genre) filterParams.genre = filters.genre;
-            if (filters.year) filterParams.year = filters.year;
-            if (filters.region) filterParams.region = filters.region;
-            if (filters.sort) {
-              const sortMap: Record<string, string> = {
-                热门: "recommend",
-                时间: "time",
-                评分: "rank",
-              };
-              filterParams.sort = sortMap[filters.sort] || "recommend";
-            }
-            filterParams.page = pageNum;
-            filterParams.pageSize = ITEMS_PER_PAGE;
-          } else {
-            setUseServerPagination(false);
-          }
-          data = await getNewContent(filterParams);
-        }
-
-        if (config.hasCategories) {
-          // 电影/电视剧页面：分类展示
-          setCategories(
-            data.map((cat) => ({
-              name: cat.name,
-              data: cat.data.map((item) => ({
-                id: item.id,
-                title: item.title,
-                rate: item.rate,
-                cover: item.cover,
-                url: item.url,
-                episode_info: item.episode_info,
-              })),
-            }))
-          );
-        } else {
-          // latest 页面：平铺展示
-          const fetchedMovies = data.flatMap((cat) =>
-            cat.data.map((item) => ({
-              id: item.id,
-              title: item.title,
-              rate: item.rate,
-              cover: item.cover,
-              url: item.url,
-              episode_info: item.episode_info,
-            }))
-          );
-
-          if (append && hasActiveFilters) {
-            // 服务端分页：追加新数据
-            setAllMovies((prev: NewApiMovie[]) => {
-              const existingIds = new Set(prev.map((m: NewApiMovie) => m.id));
-              const newMovies = fetchedMovies.filter(
-                (m) => !existingIds.has(m.id)
-              );
-              return [...prev, ...newMovies];
-            });
-          } else {
-            // 首次加载或重置
-            setAllMovies(fetchedMovies);
-          }
-
-          // 更新分页状态 - 客户端分页
-          setHasMore(fetchedMovies.length > ITEMS_PER_PAGE);
-        }
-      } catch (err) {
-        console.error("加载数据失败:", err);
-        setError(
-          err instanceof Error ? err.message : "数据加载失败，请稍后重试"
-        );
-      } finally {
-        setLoading(false);
-        setLoadingMore(false);
-      }
-    },
-    [config.api, config.hasCategories, config.hasFilters, filters]
-  );
-
-  // 筛选条件变化时重置并重新加载
-  useEffect(() => {
-    setPage(1);
-    fetchData(1, false);
-  }, [fetchData]);
-
   // 加载更多
-  const loadMore = () => {
+  const loadMore = useCallback(() => {
     if (!loadingMore && hasMore) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-
-      // 客户端分页时直接更新 hasMore 状态
-      if (!useServerPagination) {
-        const nextDisplayCount = nextPage * ITEMS_PER_PAGE;
-        setHasMore(nextDisplayCount < allMovies.length);
+      if (useServerPagination) {
+        void setSize(size + 1);
       } else {
-        fetchData(nextPage, true);
+        setPage((currentPage) => currentPage + 1);
       }
     }
-  };
+  }, [hasMore, loadingMore, setSize, size, useServerPagination]);
+
+  const refetch = useCallback(async () => {
+    if (useServerPagination) {
+      await mutatePaged();
+    } else {
+      await mutateBase();
+    }
+  }, [mutateBase, mutatePaged, useServerPagination]);
 
   const goBack = () => {
     router.push("/");
@@ -436,7 +442,13 @@ export default function BrowsePage() {
 
   // 更新筛选器
   const updateFilter = (key: keyof Filters, value: string) => {
+    setPage(1);
     setFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const resetFilters = () => {
+    setPage(1);
+    setFilters({ genre: "", year: "", region: "", sort: "" });
   };
 
   // 获取统计文字
@@ -554,7 +566,7 @@ export default function BrowsePage() {
             <div className="text-center">
               <p className="text-red-500 mb-4">{error}</p>
               <button
-                onClick={() => fetchData(1, false)}
+                onClick={() => void refetch()}
                 className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-lg shadow-red-600/20 flex items-center gap-2 mx-auto"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -607,9 +619,7 @@ export default function BrowsePage() {
                 没有找到符合筛选条件的影视作品
               </p>
               <button
-                onClick={() =>
-                  setFilters({ genre: "", year: "", region: "", sort: "" })
-                }
+                onClick={resetFilters}
                 className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
               >
                 重置筛选条件

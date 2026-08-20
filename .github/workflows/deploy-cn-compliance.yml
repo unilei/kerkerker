@@ -20,7 +20,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/kerkerker
+  IMAGE_NAME: ${{ vars.IMAGE_NAME || format('ghcr.io/{0}/kerkerker', github.repository_owner) }}
   DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/www/wwwroot/kerkerker' }}
   DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '3003' }}
   DEPLOY_BIND: ${{ vars.DEPLOY_BIND || '0.0.0.0' }}
@@ -42,24 +42,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - name: Lint
         run: npm run lint
 
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Run focused tests
+      - name: Run tests
         shell: bash
         run: |
           set -euo pipefail
-          for test_file in \
-            tests/auth.test.ts \
-            tests/url-security.test.ts \
-            tests/cn-compliance.test.ts \
-            tests/pan-sync.test.ts \
-            tests/pan-sync-behavior.test.ts \
-            tests/pan-scheduler.test.ts \
-            tests/admin-routes.test.ts; do
+          shopt -s nullglob
+          test_files=(tests/*.test.ts)
+          if (( ${#test_files[@]} == 0 )); then
+            echo "No test files found" >&2
+            exit 1
+          fi
+          for test_file in "${test_files[@]}"; do
             npx tsx "$test_file"
           done
 
@@ -116,7 +118,7 @@ jobs:
   deploy:
     name: Deploy to Docker VPS
     needs: publish
-    if: github.repository == 'unilei/kerkerker'
+    if: github.repository_owner == 'unilei'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout deployment files
@@ -127,6 +129,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           DEPLOY_ADMIN_PASSWORD: ${{ secrets.DEPLOY_ADMIN_PASSWORD }}
           DEPLOY_DOUBAN_API_URL: ${{ secrets.DEPLOY_DOUBAN_API_URL }}
           DEPLOY_ADMIN_SESSION_SECRET: ${{ secrets.DEPLOY_ADMIN_SESSION_SECRET }}
@@ -134,7 +137,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_ADMIN_PASSWORD DEPLOY_DOUBAN_API_URL DEPLOY_ADMIN_SESSION_SECRET DEPLOY_KKPAN_SYNC_CRON_SECRET; do
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DEPLOY_ADMIN_PASSWORD DEPLOY_DOUBAN_API_URL DEPLOY_ADMIN_SESSION_SECRET DEPLOY_KKPAN_SYNC_CRON_SECRET; do
             if [[ -z "${!name}" ]]; then
               echo "Missing required repository secret: $name" >&2
               exit 1
@@ -159,11 +162,7 @@ jobs:
           known_hosts="$RUNNER_TEMP/kerkerker_known_hosts"
           umask 077
           printf '%s\n' "$DEPLOY_SSH_KEY" > "$key_file"
-          if [[ -n "$DEPLOY_KNOWN_HOSTS" ]]; then
-            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts"
-          else
-            ssh-keyscan -H -T 10 "$DEPLOY_HOST" > "$known_hosts" 2>/dev/null
-          fi
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts"
           test -s "$known_hosts"
           echo "key_file=$key_file" >> "$GITHUB_OUTPUT"
           echo "known_hosts=$known_hosts" >> "$GITHUB_OUTPUT"
@@ -202,6 +201,7 @@ jobs:
           DANMU_API_TOKEN: ${{ secrets.DEPLOY_DANMU_API_TOKEN }}
           SCHEDULER_DISABLED: ${{ vars.PAN_SYNC_SCHEDULER_DISABLED || 'false' }}
           SCHEDULER_POLL_MS: ${{ vars.PAN_SYNC_SCHEDULER_POLL_MS || '30000' }}
+          PLUGIN_PROFILE: ${{ vars.KERKERKER_PLUGIN_PROFILE || 'cn-default' }}
           KEY_FILE: ${{ steps.ssh.outputs.key_file }}
           KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
         shell: bash
@@ -209,23 +209,39 @@ jobs:
           set -euo pipefail
           env_file="$RUNNER_TEMP/kerkerker.env"
           umask 077
-          {
-            printf 'IMAGE_NAME=%s\n' "$IMAGE_NAME"
-            printf 'IMAGE_TAG=%s\n' "$IMAGE_TAG"
-            printf 'APP_PORT=%s\n' "$DEPLOY_PORT"
-            printf 'APP_BIND=%s\n' "$DEPLOY_BIND"
-            printf 'ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD"
-            printf 'ADMIN_SESSION_SECRET=%s\n' "$ADMIN_SESSION_SECRET"
-            printf 'KKPAN_SYNC_CRON_SECRET=%s\n' "$KKPAN_SYNC_CRON_SECRET"
-            printf 'CRON_SECRET=%s\n' "$KKPAN_SYNC_CRON_SECRET"
-            printf 'MONGODB_DB_NAME=%s\n' "$MONGODB_DB_NAME"
-            printf 'NEXT_PUBLIC_DOUBAN_API_URL=%s\n' "$DOUBAN_API_URL"
-            printf 'KKPAN_API_BASE=%s\n' "$KKPAN_API_BASE"
-            printf 'NEXT_PUBLIC_DANMU_API_URL=%s\n' "$DANMU_API_URL"
-            printf 'NEXT_PUBLIC_DANMU_API_TOKEN=%s\n' "$DANMU_API_TOKEN"
-            printf 'PAN_SYNC_SCHEDULER_DISABLED=%s\n' "$SCHEDULER_DISABLED"
-            printf 'PAN_SYNC_SCHEDULER_POLL_MS=%s\n' "$SCHEDULER_POLL_MS"
-          } > "$env_file"
+          python3 - "$env_file" <<'PY'
+          import os
+          import sys
+
+          pairs = (
+              ("IMAGE_NAME", "IMAGE_NAME"),
+              ("IMAGE_TAG", "IMAGE_TAG"),
+              ("APP_PORT", "DEPLOY_PORT"),
+              ("APP_BIND", "DEPLOY_BIND"),
+              ("ADMIN_PASSWORD", "ADMIN_PASSWORD"),
+              ("ADMIN_SESSION_SECRET", "ADMIN_SESSION_SECRET"),
+              ("KKPAN_SYNC_CRON_SECRET", "KKPAN_SYNC_CRON_SECRET"),
+              ("CRON_SECRET", "KKPAN_SYNC_CRON_SECRET"),
+              ("MONGODB_DB_NAME", "MONGODB_DB_NAME"),
+              ("NEXT_PUBLIC_DOUBAN_API_URL", "DOUBAN_API_URL"),
+              ("KKPAN_API_BASE", "KKPAN_API_BASE"),
+              ("NEXT_PUBLIC_DANMU_API_URL", "DANMU_API_URL"),
+              ("NEXT_PUBLIC_DANMU_API_TOKEN", "DANMU_API_TOKEN"),
+              ("PAN_SYNC_SCHEDULER_DISABLED", "SCHEDULER_DISABLED"),
+              ("PAN_SYNC_SCHEDULER_POLL_MS", "SCHEDULER_POLL_MS"),
+              ("KERKERKER_PLUGIN_PROFILE", "PLUGIN_PROFILE"),
+          )
+
+          def quote(value: str) -> str:
+              if "\x00" in value or "\n" in value or "\r" in value:
+                  raise ValueError("deployment environment values must be single-line")
+              return "'" + value.replace("'", "\\'") + "'"
+
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              for output_name, environment_name in pairs:
+                  handle.write(f"{output_name}={quote(os.environ.get(environment_name, ''))}\n")
+          PY
+          chmod 600 "$env_file"
           scp -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
             "$env_file" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env.new"
           rm -f "$env_file"
@@ -292,6 +308,31 @@ jobs:
             [ "$attempt" -eq 30 ] && { echo "MongoDB did not become healthy" >&2; exit 1; }
             sleep 2
           done
+
+          runtime=("${project[@]}" run --rm --no-deps app node)
+          "${runtime[@]}" -e '
+            (async () => {
+              const base = String(process.env.NEXT_PUBLIC_DOUBAN_API_URL || "").replace(/\/$/, "");
+              if (!base) throw new Error("NEXT_PUBLIC_DOUBAN_API_URL is empty");
+              const response = await fetch(`${base}/api/v1/250`, { signal: AbortSignal.timeout(30000) });
+              if (!response.ok) throw new Error(`Douban Top 250 returned HTTP ${response.status}`);
+              const body = await response.json();
+              if (!Array.isArray(body?.data?.subjects) || body.data.subjects.length !== 250) {
+                throw new Error("Douban Top 250 response does not contain exactly 250 subjects");
+              }
+              console.log("Douban Top 250 capability is ready");
+            })().catch((error) => { console.error(error); process.exit(1); });
+          '
+
+          "${runtime[@]}" /app/migrations/pan-dedup.cjs
+          "${runtime[@]}" /app/migrations/content-identity-backfill.cjs
+
+          # Apply requires an exclusive writer window. Preview first to avoid
+          # downtime when known data conflicts would block the migration.
+          "${project[@]}" stop app >/dev/null 2>&1 || true
+          "${runtime[@]}" /app/migrations/pan-dedup.cjs --apply --maintenance
+          "${runtime[@]}" /app/migrations/content-identity-backfill.cjs --apply --maintenance
+
           "${project[@]}" up -d --remove-orphans app
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:${APP_PORT}/api/health" >/dev/null; then

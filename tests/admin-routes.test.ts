@@ -110,6 +110,23 @@ test("authenticated pan resource writes reject malformed JSON with 400", async (
   }
 });
 
+test("pan resource updates reject an empty compatibility movie ID before database access", async () => {
+  const previousSecret = process.env.ADMIN_SESSION_SECRET;
+  try {
+    const response = await updatePanResource(
+      authenticatedRawRequest(
+        "http://localhost/api/pan-resources",
+        "PUT",
+        JSON.stringify({ id: "507f1f77bcf86cd799439011", douban_id: "" })
+      )
+    );
+    assert.equal(response.status, 400);
+  } finally {
+    if (previousSecret === undefined) delete process.env.ADMIN_SESSION_SECRET;
+    else process.env.ADMIN_SESSION_SECRET = previousSecret;
+  }
+});
+
 test("pan resource deletion requires an authenticated admin session", async () => {
   const response = await deletePanResource(
     new NextRequest(

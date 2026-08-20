@@ -22,11 +22,11 @@ import {
   type KkpanResource,
 } from "@/lib/kkpan";
 import {
-  searchDouban,
-  getCategoryData,
-  type Subject,
-  type CategoryResponse,
-} from "@/lib/douban-service";
+  getContentCatalog,
+  searchContent,
+  type ContentHostExecutionOptions,
+} from "@/lib/plugins/content-host";
+import type { ContentCandidate } from "@/lib/plugins/types";
 import {
   createPanResourceInDB,
   countEnabledPanResourcesByDoubanId,
@@ -39,6 +39,9 @@ import {
   savePanSyncState,
 } from "@/lib/pan-resources-db";
 import { PAN_BRANDS, type PanBrand } from "@/types/pan-resource";
+import { KKPAN_PLUGIN_ID } from "@/lib/plugins/adapters/kkpan-cloud-drive";
+import { resolveContentIdentity } from "@/lib/content-identity-db";
+import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
 
 const FORMAT_RE = /\b(MP4|MKV|AVI|MOV|RMVB|WMV|FLV|WEBM|ISO|TS)\b/i;
 
@@ -75,10 +78,18 @@ function brandOf(item: KkpanResource): PanBrand | null {
 async function importKkpanItem(
   item: KkpanResource,
   doubanId: string,
-  movieTitle: string
+  movieTitle: string,
+  contentId?: string
 ): Promise<boolean> {
+  const identity = await resolveContentIdentity([
+    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: doubanId },
+  ]);
+  if (contentId && contentId !== identity.contentId) {
+    throw new Error("同步资源 content_id 与影片身份冲突，需要人工处理");
+  }
   const { created } = await createPanResourceInDB({
     douban_id: doubanId,
+    content_id: identity.contentId,
     movie_title: movieTitle,
     brand: brandOf(item) as PanBrand,
     title: cleanKkpanTitle(item.fileName),
@@ -87,6 +98,8 @@ async function importKkpanItem(
     size: formatBytes(item.fileSize),
     format: item.fileName.match(FORMAT_RE)?.[1]?.toUpperCase(),
     source: "kkpan",
+    provider_id: KKPAN_PLUGIN_ID,
+    provider_resource_id: String(item.id),
     kkpan_id: item.id,
   });
   return created;
@@ -107,9 +120,17 @@ export interface MoviePanSyncResult {
  */
 export async function syncPanResourcesForMovie(input: {
   doubanId: string;
+  contentId?: string;
   title: string;
   year?: string;
 }): Promise<MoviePanSyncResult> {
+  const identity = await resolveContentIdentity([
+    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: input.doubanId },
+  ]);
+  if (input.contentId && input.contentId !== identity.contentId) {
+    throw new Error("同步资源 content_id 与影片身份冲突，需要人工处理");
+  }
+  const contentId = identity.contentId;
   const catalog = await scanStablePages(
     (page) => searchKkpanResourcesWithMeta(input.title, 50, page),
     50,
@@ -143,6 +164,12 @@ export async function syncPanResourcesForMovie(input: {
     // 已经绑定到本片的 kkpan_id 是可靠关联，即使源文件改名后候选片名
     // 不再匹配，也要用于恢复/刷新；新资源仍必须通过严格片名匹配。
     if (!titleMatches && !linkedResource) continue;
+    if (
+      linkedResource?.content_id &&
+      linkedResource.content_id !== contentId
+    ) {
+      throw new Error("网盘资源 content_id 与影片身份冲突，需要人工处理");
+    }
     const itemYear = extractYear(item.fileName);
     if (titleMatches && !linkedResource && input.year && itemYear) {
       const diff = Math.abs(Number(input.year) - Number(itemYear));
@@ -158,6 +185,9 @@ export async function syncPanResourcesForMovie(input: {
         url?: string;
         code?: string;
         clear_code?: boolean;
+        content_id?: string;
+        provider_id?: string;
+        provider_resource_id?: string;
         enabled: boolean;
       } = { enabled: true };
       if (item.shareLink !== linkedResource.url && item.shareLink) {
@@ -168,11 +198,23 @@ export async function syncPanResourcesForMovie(input: {
         else update.clear_code = true;
       }
       if (
+        linkedResource.provider_id !== KKPAN_PLUGIN_ID ||
+        linkedResource.provider_resource_id !== String(item.id)
+      ) {
+        update.provider_id = KKPAN_PLUGIN_ID;
+        update.provider_resource_id = String(item.id);
+      }
+      if (
         update.url !== undefined ||
         update.code !== undefined ||
         update.clear_code ||
-        !linkedResource.enabled
+        !linkedResource.enabled ||
+        update.provider_id !== undefined ||
+        linkedResource.content_id !== contentId
       ) {
+        if (linkedResource.content_id !== contentId) {
+          update.content_id = contentId;
+        }
         if (await updatePanResourceInDB(linkedResource.id, update)) {
           refreshed++;
         }
@@ -184,7 +226,12 @@ export async function syncPanResourcesForMovie(input: {
       skippedExisting++;
       continue;
     }
-    const created = await importKkpanItem(item, input.doubanId, input.title);
+    const created = await importKkpanItem(
+      item,
+      input.doubanId,
+      input.title,
+      contentId
+    );
     existing.kkpanIds.add(item.id);
     existing.urls.add(item.shareLink);
     if (created) imported++;
@@ -214,20 +261,53 @@ export async function syncPanResourcesForMovie(input: {
   };
 }
 
-// 资源名 → 豆瓣影片匹配（宽松包含 + 年份容差 ±1，取前 5 个候选）
-async function matchDoubanForTitle(
+export function getLegacyDoubanCandidate(
+  candidate: ContentCandidate
+): { doubanId: string; title: string; year?: string } | null {
+  const reference = candidate.externalRefs.find(
+    (item) => item.providerId === DOUBAN_CONTENT_PLUGIN_ID
+  );
+  const doubanId = reference?.externalId.trim() || "";
+  const title = candidate.titles[0]?.value?.trim() || "";
+  if (!/^\d{1,20}$/.test(doubanId) || !title) return null;
+  return {
+    doubanId,
+    title,
+    year: candidate.releaseDate?.match(/\b(?:19|20)\d{2}\b/)?.[0],
+  };
+}
+
+// 资源名 → 当前内容插件影片匹配（严格片名 + 年份容差 ±1，取前 5 个候选）。
+// 持久层迁移期只接受精确的 Douban 外部引用，避免把 TMDB ID 写进 douban_id。
+export async function matchContentForTitle(
   rawTitle: string,
-  year?: string
+  year?: string,
+  execution: ContentHostExecutionOptions = {}
 ): Promise<{ doubanId: string; title: string } | null> {
-  const result = await searchDouban(rawTitle);
-  const candidates = (result.suggest || []).slice(0, 5);
-  for (const candidate of candidates) {
+  const result = await searchContent(
+    {
+      query: rawTitle,
+      intent: "resource-match",
+      limit: 5,
+    },
+    execution
+  );
+  let incompatible = false;
+  for (const item of result.items.slice(0, 5)) {
+    const candidate = getLegacyDoubanCandidate(item);
+    if (!candidate) {
+      if (item.externalRefs.length > 0) incompatible = true;
+      continue;
+    }
     if (!titlesStrictlyMatch(candidate.title, rawTitle)) continue;
     if (year && candidate.year) {
       const diff = Math.abs(Number(candidate.year) - Number(year));
       if (Number.isFinite(diff) && diff > 1) continue;
     }
-    return { doubanId: candidate.id, title: candidate.title };
+    return { doubanId: candidate.doubanId, title: candidate.title };
+  }
+  if (incompatible) {
+    throw new Error("当前同步存储仍只兼容 Douban 外部引用，不能写入其他内容源 ID");
   }
   return null;
 }
@@ -376,7 +456,8 @@ export function selectIncrementalCandidates(
 export async function runIncrementalSync(
   limit = 200,
   withAvailabilityCheck = true,
-  shouldContinue?: SyncContinuation
+  shouldContinue?: SyncContinuation,
+  contentExecution: ContentHostExecutionOptions = {}
 ): Promise<SyncStats> {
   const startedAt = Date.now();
   const stats: SyncStats = {
@@ -468,9 +549,10 @@ export async function runIncrementalSync(
     const titleCandidate = extractTitleCandidate(item.fileName);
     let matched: { doubanId: string; title: string } | null;
     try {
-      matched = await matchDoubanForTitle(
+      matched = await matchContentForTitle(
         titleCandidate,
-        extractYear(item.fileName)
+        extractYear(item.fileName),
+        contentExecution
       );
     } catch {
       if (shouldContinue && !(await shouldContinue())) {
@@ -571,7 +653,10 @@ export async function runIncrementalSync(
 }
 
 // 批量补库：豆瓣热榜影片逐片搜索 kkpans，严格片名匹配入库
-export async function runBackfillSync(limit = 100): Promise<SyncStats> {
+export async function runBackfillSync(
+  limit = 100,
+  contentExecution: ContentHostExecutionOptions = {}
+): Promise<SyncStats> {
   const startedAt = Date.now();
   const stats: SyncStats = {
     mode: "backfill",
@@ -590,28 +675,45 @@ export async function runBackfillSync(limit = 100): Promise<SyncStats> {
     ? Math.min(Math.max(Math.floor(limit), 1), 200)
     : 100;
   const seen = new Set<string>();
-  const subjects: Subject[] = [];
+  const subjects: Array<{ id: string; title: string }> = [];
   const categories: Array<"hot_movies" | "hot_tv"> = ["hot_movies", "hot_tv"];
   const categoryPageLimit = 20;
   let categoryErrors = 0;
 
   for (const category of categories) {
     if (subjects.length >= boundedLimit) break;
-    let page = 1;
+    let cursor: string | undefined;
     let emptyRounds = 0;
+    const cursors = new Set<string>();
+    let page = 1;
     while (
       subjects.length < boundedLimit &&
       page <= 10 && // 单分类最多翻 10 页（200 条），避免无限拉取
       emptyRounds < 1
     ) {
-      let resp: CategoryResponse | null = null;
+      let resp;
       try {
-        resp = await getCategoryData(category, page, categoryPageLimit);
+        resp = await getContentCatalog(
+          {
+            view: "category",
+            key: category,
+            cursor,
+            limit: categoryPageLimit,
+          },
+          contentExecution
+        );
       } catch {
         categoryErrors++;
         break; // 分类接口失败跳过本分类（记入错误统计）
       }
-      const subs = resp.subjects || [];
+      const mapped = resp.items.map(getLegacyDoubanCandidate);
+      const incompatible = resp.items.some(
+        (item, index) => !mapped[index] && item.externalRefs.length > 0
+      );
+      if (incompatible) categoryErrors++;
+      const subs = mapped
+        .filter((value): value is NonNullable<typeof value> => value !== null)
+        .map((value) => ({ id: value.doubanId, title: value.title }));
       if (subs.length === 0) {
         emptyRounds++;
         break;
@@ -624,8 +726,15 @@ export async function runBackfillSync(limit = 100): Promise<SyncStats> {
         added++;
         if (subjects.length >= boundedLimit) break;
       }
-      page++;
       if (added === 0) break; // 整页都是已见过的，停止翻页
+      if (!resp.hasMore) break;
+      if (!resp.nextCursor || cursors.has(resp.nextCursor)) {
+        categoryErrors++;
+        break;
+      }
+      cursors.add(resp.nextCursor);
+      cursor = resp.nextCursor;
+      page++;
     }
   }
 

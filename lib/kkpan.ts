@@ -8,6 +8,24 @@
 
 const KKPAN_API_BASE = process.env.KKPAN_API_BASE || "https://www.kkpans.com";
 
+export interface KkpanRequestOptions {
+  baseUrl?: string;
+  signal?: AbortSignal;
+}
+
+function requestBaseUrl(configured?: string): string {
+  const url = new URL(configured || KKPAN_API_BASE);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("kkpans baseUrl 必须是 HTTP(S) URL");
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(15000);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 export type KkpanPlatform =
   | "quark"
   | "baidu"
@@ -108,15 +126,17 @@ function toPageResult(payload: {
 export async function searchKkpanResources(
   keyword: string,
   limit = 40,
-  page = 1
+  page = 1,
+  options: KkpanRequestOptions = {}
 ): Promise<KkpanResource[]> {
-  return (await searchKkpanResourcesWithMeta(keyword, limit, page)).items;
+  return (await searchKkpanResourcesWithMeta(keyword, limit, page, options)).items;
 }
 
 export async function searchKkpanResourcesWithMeta(
   keyword: string,
   limit = 40,
-  page = 1
+  page = 1,
+  options: KkpanRequestOptions = {}
 ): Promise<KkpanPageResult> {
   const params = new URLSearchParams({
     search: keyword,
@@ -125,10 +145,10 @@ export async function searchKkpanResourcesWithMeta(
   });
 
   const response = await fetch(
-    `${KKPAN_API_BASE}/api/resources/public?${params.toString()}`,
+    `${requestBaseUrl(options.baseUrl)}/api/resources/public?${params.toString()}`,
     {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(15000),
+      signal: requestSignal(options.signal),
       cache: "no-store",
     }
   );
@@ -175,14 +195,16 @@ export function formatBytes(bytes?: number | null): string | undefined {
 // 接口无时间过滤参数，调用方会完整扫描当前目录后按更新时间水位分批消费。
 export async function listKkpanPage(
   page = 1,
-  limit = 50
+  limit = 50,
+  options: KkpanRequestOptions = {}
 ): Promise<KkpanResource[]> {
-  return (await listKkpanPageWithMeta(page, limit)).items;
+  return (await listKkpanPageWithMeta(page, limit, options)).items;
 }
 
 export async function listKkpanPageWithMeta(
   page = 1,
-  limit = 50
+  limit = 50,
+  options: KkpanRequestOptions = {}
 ): Promise<KkpanPageResult> {
   const params = new URLSearchParams({
     page: String(Math.max(page, 1)),
@@ -190,10 +212,10 @@ export async function listKkpanPageWithMeta(
     sort: "latest",
   });
   const response = await fetch(
-    `${KKPAN_API_BASE}/api/resources/public?${params.toString()}`,
+    `${requestBaseUrl(options.baseUrl)}/api/resources/public?${params.toString()}`,
     {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(15000),
+      signal: requestSignal(options.signal),
       cache: "no-store",
     }
   );

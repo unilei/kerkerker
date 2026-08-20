@@ -1,12 +1,25 @@
 import useSWR from 'swr';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { DoubanMovie } from '@/types/douban';
 import type { CategoryData, HeroData, HeroMovie } from '@/types/home';
-import { getHeroMovies, getNewContent } from '@/lib/douban-service';
+import type { CatalogResponse } from '@/types/content-catalog';
 
 // SWR 缓存键
-const SWR_KEY_HERO = 'home-hero';
-const SWR_KEY_CATEGORIES = 'home-categories';
+const SWR_KEY_HERO = '/api/content/catalog?view=featured';
+const SWR_KEY_CATEGORIES = '/api/content/catalog?view=new-releases';
+
+async function fetchCatalog(url: string): Promise<CatalogResponse> {
+  const response = await fetch(url, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    throw new Error(`内容目录请求失败（HTTP ${response.status}）`);
+  }
+  const payload = (await response.json()) as { data?: CatalogResponse };
+  if (!payload.data) throw new Error('内容目录响应缺少数据');
+  return payload.data;
+}
 
 interface UseHomeDataReturn {
   categories: CategoryData[];
@@ -28,40 +41,39 @@ export function useHomeData(): UseHomeDataReturn {
     error: heroError,
     isLoading: heroLoading,
     mutate: mutateHero,
-  } = useSWR(SWR_KEY_HERO, getHeroMovies);
+  } = useSWR<CatalogResponse>(SWR_KEY_HERO, fetchCatalog);
 
   // 分类数据
   const {
     data: categoryData,
     error: categoryError,
-    isLoading: categoryLoading,
     mutate: mutateCategories,
-  } = useSWR(SWR_KEY_CATEGORIES, getNewContent);
+  } = useSWR<CatalogResponse>(SWR_KEY_CATEGORIES, fetchCatalog);
 
   // 转换 Hero 数据格式
   const { heroMovies, heroDataList } = useMemo(() => {
-    if (!heroData || !Array.isArray(heroData)) {
+    if (!heroData || !Array.isArray(heroData.items)) {
       return { heroMovies: [], heroDataList: [] };
     }
 
-    const heroMoviesList: HeroMovie[] = heroData.map((hero) => ({
-      id: hero.id,
-      title: hero.title,
-      cover: hero.cover || '',
-      url: hero.url || '',
-      rate: hero.rate || '',
-      episode_info: hero.episode_info || '',
+    const heroMoviesList: HeroMovie[] = heroData.items.map((item) => ({
+      id: item.id,
+      title: item.title,
+      cover: item.posterUrl || '',
+      url: item.canonicalUrl || '',
+      rate: item.rating || '',
+      episode_info: item.episodeInfo || '',
       cover_x: 0,
       cover_y: 0,
       playable: false,
       is_new: false,
     }));
 
-    const heroDataArray: HeroData[] = heroData.map((hero) => ({
-      poster_horizontal: hero.poster_horizontal,
-      poster_vertical: hero.poster_vertical,
-      description: hero.description,
-      genres: hero.genres,
+    const heroDataArray: HeroData[] = heroData.items.map((item) => ({
+      poster_horizontal: item.backdropUrl || item.posterUrl,
+      poster_vertical: item.posterUrl,
+      description: item.description,
+      genres: item.genres,
     }));
 
     return { heroMovies: heroMoviesList, heroDataList: heroDataArray };
@@ -69,27 +81,27 @@ export function useHomeData(): UseHomeDataReturn {
 
   // 转换分类数据格式
   const categories = useMemo(() => {
-    if (!categoryData || !Array.isArray(categoryData)) {
+    if (!categoryData || !Array.isArray(categoryData.sections)) {
       return [];
     }
 
-    return categoryData.map((cat) => ({
-      name: cat.name,
-      data: cat.data.map((item) => ({
+    return categoryData.sections.map((section) => ({
+      name: section.title,
+      data: section.items.map((item) => ({
         id: item.id,
         title: item.title,
-        rate: item.rate,
-        cover: item.cover,
-        url: item.url,
-        episode_info: item.episode_info,
+        rate: item.rating,
+        cover: item.posterUrl,
+        url: item.canonicalUrl,
+        episode_info: item.episodeInfo,
       })),
     }));
   }, [categoryData]);
 
   // 刷新所有数据
-  const refetch = async () => {
+  const refetch = useCallback(async () => {
     await Promise.all([mutateHero(), mutateCategories()]);
-  };
+  }, [mutateHero, mutateCategories]);
 
   // 合并错误信息
   const error = heroError?.message || categoryError?.message || null;

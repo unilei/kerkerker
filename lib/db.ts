@@ -154,9 +154,29 @@ async function initializeDatabase(db: Db) {
   if (globalForMongo.initialized) return;
 
   try {
+    // 宿主内容身份：content_id 与每个 provider/external ID 组合都必须唯一。
+    const contentIdentitiesCollection = db.collection(COLLECTIONS.CONTENT_IDENTITIES);
+    await contentIdentitiesCollection.createIndex({ content_id: 1 }, { unique: true });
+    await contentIdentitiesCollection.createIndex(
+      { "external_refs.provider_id": 1, "external_refs.external_id": 1 },
+      { unique: true }
+    );
+    await contentIdentitiesCollection.createIndex({ updated_at: -1 });
+
     // 创建 pan_resources 集合的索引
     const panResourcesCollection = db.collection(COLLECTIONS.PAN_RESOURCES);
     await panResourcesCollection.createIndex({ douban_id: 1 });
+    await panResourcesCollection.createIndex({ content_id: 1 });
+    await panResourcesCollection.createIndex(
+      { provider_id: 1, provider_resource_id: 1 },
+      {
+        unique: true,
+        partialFilterExpression: {
+          provider_id: { $type: "string" },
+          provider_resource_id: { $type: "string" },
+        },
+      }
+    );
     await panResourcesCollection.createIndex({ enabled: 1 });
     await panResourcesCollection.createIndex({ internal_id: 1 });
     // kkpan_id 部分唯一索引：同一 kkpan 资源在库里只能有一条，避免并发同步重复写入。
@@ -224,6 +244,7 @@ async function initializeDatabase(db: Db) {
       { douban_id: 1 },
       { unique: true }
     );
+    await panSyncTargetsCollection.createIndex({ content_id: 1 });
     await panSyncTargetsCollection.createIndex({ status: 1, updated_at: -1 });
     await panSyncTargetsCollection.createIndex({ next_attempt_at: 1 });
 

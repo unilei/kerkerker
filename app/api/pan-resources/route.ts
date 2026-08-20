@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminRequest } from '@/lib/admin-route';
 import {
   getPanResourcesByDoubanId,
+  getPanResourcesByContentId,
+  getPanResourceById,
   getAllPanResources,
   createPanResourceInDB,
   updatePanResourceInDB,
@@ -12,6 +14,9 @@ import {
   type PanBrand,
   type PanResourceInput,
 } from '@/types/pan-resource';
+import { isValidContentId, resolveContentIdentity } from '@/lib/content-identity-db';
+import { DOUBAN_CONTENT_PLUGIN_ID } from '@/lib/plugins/adapters/douban-content';
+import { KKPAN_PLUGIN_ID } from '@/lib/plugins/adapters/kkpan-cloud-drive';
 
 // 校验分享链接格式（仅允许 http/https，链接仅作存储与跳转，不发起服务端请求）
 function isValidPanUrl(url: string): boolean {
@@ -27,6 +32,56 @@ function isValidKkpanId(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
+function getKkpanIdentityIssue(input: PanResourceInput): string | null {
+  const hasKkpanId = isValidKkpanId(input.kkpan_id);
+  const hasProviderField =
+    input.provider_id !== undefined || input.provider_resource_id !== undefined;
+  if (!hasKkpanId) {
+    return hasProviderField
+      ? '来源插件身份只能通过受支持的插件导入'
+      : null;
+  }
+  if (input.source !== undefined && input.source !== 'kkpan') {
+    return '带 kkpan_id 的资源必须使用 kkpan 来源';
+  }
+  if (input.provider_id !== undefined && input.provider_id !== KKPAN_PLUGIN_ID) {
+    return 'provider_id 与 kkpan 来源不一致';
+  }
+  if (
+    input.provider_resource_id !== undefined &&
+    input.provider_resource_id !== String(input.kkpan_id)
+  ) {
+    return 'provider_resource_id 与 kkpan_id 不一致';
+  }
+  return null;
+}
+
+async function withHostIdentity(
+  input: PanResourceInput & { douban_id: string },
+  options: { assignManualSource?: boolean } = {}
+) {
+  const identity = await resolveContentIdentity([
+    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: input.douban_id },
+  ]);
+  if (input.content_id && input.content_id !== identity.contentId) {
+    throw new RangeError('content_id 与 douban_id 的宿主身份不一致');
+  }
+  const hasKkpanId = isValidKkpanId(input.kkpan_id);
+  return {
+    ...input,
+    content_id: identity.contentId,
+    ...(options.assignManualSource && !hasKkpanId
+      ? { source: input.source || ('manual' as const) }
+      : {}),
+    ...(hasKkpanId
+      ? {
+          provider_id: KKPAN_PLUGIN_ID,
+          provider_resource_id: String(input.kkpan_id),
+        }
+      : {}),
+  };
+}
+
 // GET - 获取网盘资源
 // 公开：?douban_id=xxx 返回该片启用的资源（前台详情页使用）
 // 管理：?all=true（需登录）返回全部资源，支持 keyword 模糊搜索 / douban_id 过滤 / limit
@@ -34,6 +89,14 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
     const doubanId = searchParams.get('douban_id') || '';
+    const contentId = searchParams.get('content_id') || '';
+
+    if (contentId && !isValidContentId(contentId)) {
+      return NextResponse.json(
+        { code: 400, message: 'content_id 格式无效', data: null },
+        { status: 400 }
+      );
+    }
 
     if (searchParams.get('all') === 'true') {
       const unauthorizedResponse = requireAdminRequest(request);
@@ -49,6 +112,7 @@ export async function GET(request: NextRequest) {
 
       const resources = await getAllPanResources({
         doubanId: doubanId || undefined,
+        contentId: contentId || undefined,
         keyword: keyword || undefined,
         limit,
       });
@@ -60,14 +124,16 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if (!doubanId) {
+    if (!doubanId && !contentId) {
       return NextResponse.json(
         { code: 400, message: '缺少 douban_id 参数', data: null },
         { status: 400 }
       );
     }
 
-    const resources = await getPanResourcesByDoubanId(doubanId);
+    const resources = contentId
+      ? await getPanResourcesByContentId(contentId)
+      : await getPanResourcesByDoubanId(doubanId);
     return NextResponse.json({
       code: 200,
       message: '获取成功',
@@ -119,6 +185,12 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (!/^\d{1,20}$/.test(douban_id)) {
+      return NextResponse.json(
+        { code: 400, message: 'douban_id 格式无效', data: null },
+        { status: 400 }
+      );
+    }
 
     if (!PAN_BRANDS.includes(brand as PanBrand)) {
       return NextResponse.json(
@@ -151,8 +223,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const identityIssue = getKkpanIdentityIssue(body);
+    if (identityIssue) {
+      return NextResponse.json(
+        { code: 400, message: identityIssue, data: null },
+        { status: 400 }
+      );
+    }
+
+    const authoritativeBody = await withHostIdentity(
+      { ...body, douban_id },
+      { assignManualSource: true }
+    );
+
     const { resource } = await createPanResourceInDB({
-      ...body,
+      ...authoritativeBody,
       douban_id,
       brand: brand as PanBrand,
       title,
@@ -166,13 +251,14 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('添加网盘资源失败:', error);
+    const status = error instanceof RangeError ? 400 : 500;
     return NextResponse.json(
       {
-        code: 500,
+        code: status,
         message: error instanceof Error ? error.message : '添加网盘资源失败',
         data: null,
       },
-      { status: 500 }
+      { status }
     );
   }
 }
@@ -207,7 +293,10 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    if (updates.brand && !PAN_BRANDS.includes(updates.brand)) {
+    if (
+      updates.brand !== undefined &&
+      (typeof updates.brand !== 'string' || !PAN_BRANDS.includes(updates.brand as PanBrand))
+    ) {
       return NextResponse.json(
         { code: 400, message: `不支持的品牌：${updates.brand}`, data: null },
         { status: 400 }
@@ -225,7 +314,10 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    if (updates.url && !isValidPanUrl(updates.url)) {
+    if (
+      updates.url !== undefined &&
+      (typeof updates.url !== 'string' || !isValidPanUrl(updates.url))
+    ) {
       return NextResponse.json(
         { code: 400, message: '分享链接格式错误（需以 http/https 开头）', data: null },
         { status: 400 }
@@ -240,13 +332,111 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const resource = await updatePanResourceInDB(id, updates);
-    if (!resource) {
+    if (
+      updates.provider_id !== undefined &&
+      typeof updates.provider_id !== 'string'
+    ) {
+      return NextResponse.json(
+        { code: 400, message: 'provider_id 格式无效', data: null },
+        { status: 400 }
+      );
+    }
+    if (
+      updates.provider_resource_id !== undefined &&
+      typeof updates.provider_resource_id !== 'string'
+    ) {
+      return NextResponse.json(
+        { code: 400, message: 'provider_resource_id 格式无效', data: null },
+        { status: 400 }
+      );
+    }
+
+    if (
+      updates.douban_id !== undefined &&
+      (typeof updates.douban_id !== 'string' || !/^\d{1,20}$/.test(updates.douban_id))
+    ) {
+      return NextResponse.json(
+        { code: 400, message: 'douban_id 格式无效', data: null },
+        { status: 400 }
+      );
+    }
+    const existingResource = await getPanResourceById(id);
+    if (!existingResource) {
       return NextResponse.json(
         { code: 404, message: '资源不存在', data: null },
         { status: 404 }
       );
     }
+    if (
+      existingResource.kkpan_id !== undefined &&
+      updates.douban_id !== undefined &&
+      updates.douban_id !== existingResource.douban_id
+    ) {
+      return NextResponse.json(
+        { code: 400, message: 'KKPAN 资源不能改关联影片', data: null },
+        { status: 400 }
+      );
+    }
+
+    const identityInput = {
+      ...existingResource,
+      ...updates,
+      douban_id: updates.douban_id ?? existingResource.douban_id,
+    };
+
+    // Provider/resource IDs are immutable source identities. Ordinary editing may
+    // change presentation fields, but re-binding an upstream ID needs a separate
+    // audited migration flow so later syncs cannot resurrect the old resource.
+    if (
+      existingResource.kkpan_id !== undefined &&
+      identityInput.kkpan_id !== existingResource.kkpan_id
+    ) {
+      return NextResponse.json(
+        { code: 400, message: '来源资源 ID 不可修改，请通过重新导入或迁移流程处理', data: null },
+        { status: 400 }
+      );
+    }
+    if (
+      (existingResource.provider_id !== undefined ||
+        existingResource.provider_resource_id !== undefined) &&
+      (identityInput.provider_id !== existingResource.provider_id ||
+        identityInput.provider_resource_id !== existingResource.provider_resource_id)
+    ) {
+      return NextResponse.json(
+        { code: 400, message: '来源插件引用不可修改，请通过重新导入或迁移流程处理', data: null },
+        { status: 400 }
+      );
+    }
+    const identityIssue = getKkpanIdentityIssue(identityInput);
+    if (identityIssue) {
+      return NextResponse.json(
+        { code: 400, message: identityIssue, data: null },
+        { status: 400 }
+      );
+    }
+    const authoritative = await withHostIdentity(identityInput, {
+      assignManualSource: true,
+    });
+    const authoritativeUpdates: PanResourceInput = {
+      ...updates,
+      content_id: authoritative.content_id,
+      ...(authoritative.source ? { source: authoritative.source } : {}),
+      ...(authoritative.provider_id
+        ? {
+            provider_id: authoritative.provider_id,
+            provider_resource_id: authoritative.provider_resource_id,
+          }
+        : {}),
+      ...(authoritative.kkpan_id
+        ? { kkpan_id: authoritative.kkpan_id }
+        : {}),
+    };
+
+    const resource = await updatePanResourceInDB(id, authoritativeUpdates);
+    if (!resource) return NextResponse.json(
+      { code: 404, message: '资源不存在', data: null },
+      { status: 404 }
+    );
 
     return NextResponse.json({
       code: 200,
@@ -255,13 +445,14 @@ export async function PUT(request: NextRequest) {
     });
   } catch (error) {
     console.error('更新网盘资源失败:', error);
+    const status = error instanceof RangeError ? 400 : 500;
     return NextResponse.json(
       {
-        code: 500,
+        code: status,
         message: error instanceof Error ? error.message : '更新网盘资源失败',
         data: null,
       },
-      { status: 500 }
+      { status }
     );
   }
 }

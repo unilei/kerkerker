@@ -1,12 +1,12 @@
 import useSWRInfinite from 'swr/infinite';
 import { useMemo, useCallback } from 'react';
-import { getCategoryData, getTop250, Subject, CategoryResponse, Top250Response } from '@/lib/douban-service';
 import type { DoubanMovie } from '@/types/douban';
+import type { CatalogResponse, CatalogSubject } from '@/types/content-catalog';
 
 const ITEMS_PER_PAGE = 20;
 
 // 转换数据格式 - Subject 转 DoubanMovie
-function convertToDoubanMovie(item: Subject): DoubanMovie {
+function convertToDoubanMovie(item: CatalogSubject): DoubanMovie {
   return {
     id: item.id,
     title: item.title,
@@ -40,7 +40,7 @@ export function useCategoryData(categoryType: string): UseCategoryDataReturn {
 
   // 生成 SWR key
   const getKey = useCallback(
-    (pageIndex: number, previousPageData: { subjects?: Subject[]; pagination?: { hasMore?: boolean } } | null) => {
+    (pageIndex: number, previousPageData: CatalogResponse | null) => {
       // Top250 只需要一页
       if (isTop250 && pageIndex > 0) return null;
       // 如果上一页没有更多数据，停止
@@ -53,14 +53,22 @@ export function useCategoryData(categoryType: string): UseCategoryDataReturn {
 
   // 数据获取函数
   const fetcher = useCallback(
-    async (key: string): Promise<CategoryResponse | Top250Response> => {
+    async (key: string): Promise<CatalogResponse> => {
       const pageMatch = key.match(/page-(\d+)$/);
       const page = pageMatch ? parseInt(pageMatch[1], 10) : 1;
-
-      if (isTop250) {
-        return getTop250();
-      }
-      return getCategoryData(categoryType, page, ITEMS_PER_PAGE);
+      const params = new URLSearchParams({
+        category: isTop250 ? 'top250' : categoryType,
+        page: String(page),
+        limit: String(ITEMS_PER_PAGE),
+      });
+      const response = await fetch(`/api/content/catalog?${params.toString()}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`catalog request failed: ${response.status}`);
+      const payload = (await response.json()) as { data?: CatalogResponse };
+      if (!payload.data) throw new Error('catalog response missing data');
+      return payload.data;
     },
     [categoryType, isTop250]
   );
@@ -82,7 +90,7 @@ export function useCategoryData(categoryType: string): UseCategoryDataReturn {
   // 合并所有页的数据
   const movies = useMemo(() => {
     if (!data) return [];
-    const allSubjects: Subject[] = [];
+    const allSubjects: CatalogSubject[] = [];
     const seenIds = new Set<string>();
     
     for (const page of data) {

@@ -74,6 +74,8 @@ export const PAN_BRAND_CONFIGS: Record<PanBrand, PanBrandConfig> = {
 export interface PanResource {
   id: string;
   douban_id: string;
+  /** Host identity introduced by the plugin migration; douban_id remains a compatibility key. */
+  content_id?: string;
   internal_id?: number;
   movie_title?: string;
   brand: PanBrand;
@@ -84,6 +86,8 @@ export interface PanResource {
   code?: string; // 提取码（如 4 位字母数字）
   note?: string;
   source?: PanResourceSource; // 录入来源
+  provider_id?: string; // 统一插件来源 ID
+  provider_resource_id?: string; // 来源插件内稳定资源 ID
   kkpan_id?: number; // kkpans 资源 ID（同步去重 / 对账用）
   enabled: boolean;
   created_at: string; // ISO 字符串
@@ -96,6 +100,7 @@ export type PanResourceSource = "manual" | "kkpan";
 // 新增/更新网盘资源的入参
 export interface PanResourceInput {
   douban_id?: string;
+  content_id?: string;
   internal_id?: number;
   movie_title?: string;
   brand?: PanBrand;
@@ -108,6 +113,8 @@ export interface PanResourceInput {
   clear_code?: boolean;
   note?: string;
   source?: PanResourceSource;
+  provider_id?: string;
+  provider_resource_id?: string;
   kkpan_id?: number;
   enabled?: boolean;
 }

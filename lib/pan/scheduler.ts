@@ -715,7 +715,10 @@ async function executeCatalogRun(
   if (!run) return { status: "failed", error: "运行记录不存在" };
   if (!(await shouldContinue())) return { status: "cancelled" };
   await appendRunEvent(runId, "info", "开始发现站内影片目录");
-  const discovery = await discoverAndEnqueuePanSyncTargets();
+  const discovery = await discoverAndEnqueuePanSyncTargets({
+    runId,
+    shouldContinue,
+  });
   if (!(await shouldContinue())) return { status: "cancelled" };
   await patchRun(runId, {
     discovered: discovery.discovered,
@@ -823,7 +826,12 @@ async function executeIncrementalRun(
   if (!run) return { status: "failed", error: "运行记录不存在" };
   if (!(await shouldContinue())) return { status: "cancelled" };
   await appendRunEvent(runId, "info", "开始执行 kkpans 增量同步", { limit: run.batch_limit });
-  const stats: SyncStats = await runIncrementalSync(run.batch_limit, true, shouldContinue);
+  const stats: SyncStats = await runIncrementalSync(
+    run.batch_limit,
+    true,
+    shouldContinue,
+    { runId }
+  );
   const cancelled = Boolean(stats.cancelled) || !(await shouldContinue());
   await patchRun(runId, {
     discovered: stats.pulled,

@@ -5,11 +5,16 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { DoubanMovie } from "@/types/douban";
 import DoubanCard from "@/components/DoubanCard";
 import { useMovieMatch } from "@/hooks/useMovieMatch";
-import {
-  searchDouban,
-  type SuggestItem,
-  type Subject,
-} from "@/lib/douban-service";
+interface ContentSearchItem {
+  id: string;
+  provider_id: string;
+  title: string;
+  cover: string;
+  rate: string;
+  episode_info: string;
+  url: string;
+  release_date?: string;
+}
 
 function SearchSkeleton() {
   return (
@@ -27,16 +32,14 @@ function SearchSkeleton() {
   );
 }
 
-// 将豆瓣搜索结果统一映射为卡片数据
-function toMovie(item: SuggestItem | Subject): DoubanMovie {
-  const suggest = item as SuggestItem;
-  const advanced = item as Subject;
+// 将宿主内容搜索结果统一映射为卡片数据
+function toMovie(item: ContentSearchItem): DoubanMovie {
   return {
     id: String(item.id),
     title: item.title,
-    cover: suggest.img || advanced.cover || "",
-    rate: advanced.rate || "",
-    episode_info: suggest.episode || advanced.episode_info || "",
+    cover: item.cover || "",
+    rate: item.rate || "",
+    episode_info: item.episode_info || "",
     is_new: false,
     playable: false,
     url: item.url,
@@ -61,7 +64,7 @@ function SearchContent() {
     setSearchKeyword(queryKeyword);
   }, [queryKeyword]);
 
-  // 执行豆瓣搜索
+  // 执行部署画像选择的内容搜索
   useEffect(() => {
     if (!queryKeyword.trim()) return;
 
@@ -70,12 +73,16 @@ function SearchContent() {
       setLoading(true);
       setSearched(true);
       try {
-        const data = await searchDouban(queryKeyword.trim());
+        const response = await fetch(
+          `/api/content/search?q=${encodeURIComponent(queryKeyword.trim())}`,
+          { cache: "no-store", signal: AbortSignal.timeout(15_000) }
+        );
+        if (!response.ok) throw new Error(`内容搜索失败（HTTP ${response.status}）`);
+        const payload = (await response.json()) as {
+          data?: { items?: ContentSearchItem[] };
+        };
         if (cancelled) return;
-        const items: DoubanMovie[] = (data.suggest?.length
-          ? data.suggest
-          : data.advanced || []
-        ).map(toMovie);
+        const items: DoubanMovie[] = (payload.data?.items || []).map(toMovie);
         setSearchResults(items);
       } catch (error) {
         console.error("搜索失败:", error);

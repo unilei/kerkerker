@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminRequest } from '@/lib/admin-route';
+import { formatBytes } from '@/lib/kkpan';
 import {
-  searchKkpanResources,
-  cleanKkpanTitle,
-  formatBytes,
-} from '@/lib/kkpan';
+  createProfileInvocation,
+  getActivePluginProfileId,
+  invokeProfilePlugin,
+  type CloudDriveResourceCandidate,
+  type PluginPage,
+} from '@/lib/plugins';
+import { KKPAN_PLUGIN_ID } from '@/lib/plugins/adapters/kkpan-cloud-drive';
 import { PAN_BRANDS, type PanBrand } from '@/types/pan-resource';
 
-const FORMAT_RE = /\b(MP4|MKV|AVI|MOV|RMVB|WMV|FLV|WEBM|ISO|TS)\b/i;
-
-// GET - 从 kkpans.com 拉取转存成功的网盘资源（管理端录入辅助）
+// GET - 兼容的 KKPAN 管理搜索入口。真实执行经 profile/runtime 选择插件，
+// 返回格式暂时保持不变，避免插件迁移破坏现有后台。
 // ?keyword=片名，仅返回品牌可映射且带有效分享链接的条目
 export async function GET(request: NextRequest) {
   const unauthorizedResponse = requireAdminRequest(request);
@@ -24,27 +27,55 @@ export async function GET(request: NextRequest) {
       { status: 400 }
     );
   }
+  if (keyword.length > 200) {
+    return NextResponse.json(
+      { code: 400, message: 'keyword 最长 200 个字符', data: null },
+      { status: 400 }
+    );
+  }
 
   try {
-    const items = await searchKkpanResources(keyword);
+    const profileId = getActivePluginProfileId();
+    const { context } = createProfileInvocation({
+      profileId,
+      capability: 'resource.cloud-drive',
+      signal: request.signal,
+      timeoutMs: 15_000,
+    });
+    const page = await invokeProfilePlugin<PluginPage<CloudDriveResourceCandidate>>({
+      profileId,
+      capability: 'resource.cloud-drive',
+      operation: 'search',
+      context,
+      request: { title: keyword, limit: 40 },
+    });
 
-    const normalized = items
-      .filter(
-        (item): item is typeof item & { targetPlatform: PanBrand } =>
-          (PAN_BRANDS as string[]).includes(item.targetPlatform)
-      )
-      .map((item) => ({
-        brand: item.targetPlatform,
-        title: cleanKkpanTitle(item.fileName),
-        url: item.shareLink,
-        code: item.shareCode?.toUpperCase() || undefined,
-        size: formatBytes(item.fileSize),
-        format: item.fileName.match(FORMAT_RE)?.[1]?.toUpperCase(),
-        // 透传 kkpan_id 与 source，便于前端入库时回传，参与失效联动与 ID 对账
-        kkpan_id: item.id,
+    const normalized = page.items.flatMap((item) => {
+      const platformId = item.platform.brand || item.platform.platformId;
+      if (!(PAN_BRANDS as readonly string[]).includes(platformId)) return [];
+      const numericId = Number(item.externalId);
+      if (
+        item.providerId !== KKPAN_PLUGIN_ID ||
+        !Number.isSafeInteger(numericId) ||
+        numericId <= 0
+      ) {
+        return [];
+      }
+      return [{
+        brand: platformId as PanBrand,
+        title: item.title,
+        url: item.url,
+        code: item.accessCode?.toUpperCase() || undefined,
+        size: formatBytes(item.sizeBytes),
+        format: item.format,
+        kkpan_id: numericId,
         source: 'kkpan' as const,
-        updatedAt: item.updatedAt?.slice(0, 10),
-      }));
+        provider_id: item.providerId,
+        provider_resource_id: item.externalId,
+        content_id: item.contentId,
+        updatedAt: item.sourceUpdatedAt?.slice(0, 10),
+      }];
+    });
 
     return NextResponse.json({
       code: 200,

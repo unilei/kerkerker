@@ -3,12 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Search, Loader2, Film, RefreshCw, DatabaseZap } from "lucide-react";
 import {
-  searchDouban,
-  getSubjectDetail,
-  type SuggestItem,
-  type Subject,
-} from "@/lib/douban-service";
-import {
   PAN_BRAND_CONFIGS,
   type PanResource,
 } from "@/types/pan-resource";
@@ -32,6 +26,14 @@ interface SelectedMovie {
   title: string;
   cover?: string;
   year?: string;
+  internal_id?: number;
+}
+
+interface ContentDetailResponse {
+  id: string;
+  title: string;
+  cover: string;
+  release_year: string;
   internal_id?: number;
 }
 
@@ -60,6 +62,16 @@ interface SyncStatsView {
 
 const inputClass =
   "flex-1 bg-[#333] border border-[#444] rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-[#E50914] transition-colors";
+
+async function fetchContentDetail(id: string): Promise<ContentDetailResponse | null> {
+  const response = await fetch(`/api/content/detail/${encodeURIComponent(id)}`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) return null;
+  const payload = (await response.json()) as { data?: ContentDetailResponse };
+  return payload.data?.id ? payload.data : null;
+}
 
 export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabProps) {
   // 影片搜索
@@ -157,20 +169,31 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
     setIsSearching(true);
     setHasSearched(true);
     try {
-      const data = await searchDouban(query);
-      const items: SearchResultItem[] =
-        data.suggest?.length > 0
-          ? data.suggest.map((item: SuggestItem) => ({
-              id: item.id,
-              title: item.title,
-              cover: item.img,
-              year: item.year,
-            }))
-          : (data.advanced || []).map((item: Subject) => ({
-              id: item.id,
-              title: item.title,
-              cover: item.cover,
-            }));
+      const response = await fetch(
+        `/api/content/search?q=${encodeURIComponent(query)}`,
+        { cache: "no-store", signal: AbortSignal.timeout(15_000) }
+      );
+      const result = (await response.json()) as {
+        code?: number;
+        message?: string;
+        data?: {
+          items?: Array<{
+            id: string;
+            title: string;
+            cover?: string;
+            release_date?: string;
+          }>;
+        };
+      };
+      if (!response.ok || result.code !== 200) {
+        throw new Error(result.message || `内容搜索失败（HTTP ${response.status}）`);
+      }
+      const items: SearchResultItem[] = (result.data?.items || []).map((item) => ({
+        id: item.id,
+        title: item.title,
+        cover: item.cover || "",
+        year: item.release_date || undefined,
+      }));
       setSearchResults(items);
     } catch (error) {
       onShowToast({
@@ -186,8 +209,8 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
   // 补充影片详情（internal_id / 封面），失败不影响录入
   const enrichMovie = useCallback(async (doubanId: string) => {
     try {
-      const detail = await getSubjectDetail(doubanId);
-      if (detail?.id) {
+      const detail = await fetchContentDetail(doubanId);
+      if (detail) {
         setSelectedMovie((prev) =>
           prev && prev.douban_id === doubanId
             ? {
@@ -249,8 +272,8 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
     setSearchQuery("");
     // 补充详情，拿到真实片名与 internal_id 后覆盖占位
     try {
-      const detail = await getSubjectDetail(id);
-      if (detail?.id) {
+      const detail = await fetchContentDetail(id);
+      if (detail) {
         setSelectedMovie({
           douban_id: detail.id,
           title: detail.title,

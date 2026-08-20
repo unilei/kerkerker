@@ -1,19 +1,23 @@
 import { getDatabase } from "@/lib/db";
 import { COLLECTIONS } from "@/lib/constants/db";
 import {
-  getCategoryData,
-  getCalendar,
-  getHeroMovies,
-  getLatestContent,
-  getMoviesCategories,
-  getNewContent,
-  getTop250,
-  getTVCategories,
-  type HeroMovie,
-  type Subject,
-} from "@/lib/douban-service";
+  getContentCalendar,
+  getContentCatalog,
+  type ContentHostExecutionOptions,
+} from "@/lib/plugins/content-host";
+import {
+  getActivePluginProfileId,
+  pluginProfileRegistry,
+} from "@/lib/plugins/builtin-profiles";
+import type {
+  ContentCandidate,
+  ContentCatalogCandidate,
+  PluginPage,
+} from "@/lib/plugins/types";
 import { getKnownPanMovieTargets } from "@/lib/pan-resources-db";
 import { syncPanResourcesForMovie } from "@/lib/pan/sync";
+import { resolveContentIdentity } from "@/lib/content-identity-db";
+import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
 
 export const PAN_SYNC_TARGET_STATUSES = [
   "pending",
@@ -28,6 +32,7 @@ export type PanSyncTargetStatus = (typeof PAN_SYNC_TARGET_STATUSES)[number];
 export interface PanSyncTargetDoc {
   _id?: unknown;
   douban_id: string;
+  content_id?: string;
   title: string;
   cover?: string;
   year?: string;
@@ -47,6 +52,7 @@ export interface PanSyncTargetDoc {
 
 export interface PanSyncTarget {
   douban_id: string;
+  content_id?: string;
   title: string;
   cover?: string;
   year?: string;
@@ -64,6 +70,7 @@ export interface PanSyncTarget {
 
 export interface PanSyncTargetInput {
   douban_id: string;
+  content_id?: string;
   title: string;
   cover?: string;
   year?: string;
@@ -114,6 +121,7 @@ function collection() {
 function toTarget(doc: PanSyncTargetDoc): PanSyncTarget {
   return {
     douban_id: doc.douban_id,
+    content_id: doc.content_id,
     title: doc.title,
     cover: doc.cover,
     year: doc.year,
@@ -134,10 +142,15 @@ function normalizeInput(input: PanSyncTargetInput): PanSyncTargetInput | null {
   const doubanId = String(input.douban_id || "").trim();
   const title = String(input.title || "").trim();
   if (!/^\d{1,20}$/.test(doubanId) || !title) return null;
+  const contentId = typeof input.content_id === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.content_id)
+    ? input.content_id
+    : undefined;
   const cover = typeof input.cover === "string" ? input.cover.trim() : "";
   const year = typeof input.year === "string" ? input.year.trim() : "";
   return {
     douban_id: doubanId,
+    content_id: contentId,
     title: title.slice(0, 200),
     cover: cover || undefined,
     year: year || undefined,
@@ -162,15 +175,32 @@ export async function upsertPanSyncTargets(
   ];
   if (normalized.length === 0) return 0;
 
+  // A caller may suggest content_id, but the host identity resolver is the
+  // authority. Discovery without content_id remains allowed and is resolved
+  // before the actual resource sync claims the target.
+  const validated = await Promise.all(
+    normalized.map(async (input) => {
+      if (!input.content_id) return input;
+      const identity = await resolveContentIdentity([
+        { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: input.douban_id },
+      ]);
+      if (input.content_id !== identity.contentId) {
+        throw new Error("同步台账 content_id 与影片外部引用不一致");
+      }
+      return { ...input, content_id: identity.contentId };
+    })
+  );
+
   const now = new Date().toISOString();
   const coll = await collection();
   const result = await coll.bulkWrite(
-    normalized.map((input) => ({
+    validated.map((input) => ({
       updateOne: {
         filter: { douban_id: input.douban_id },
         update: {
           $set: {
             title: input.title,
+            ...(input.content_id ? { content_id: input.content_id } : {}),
             ...(input.cover !== undefined ? { cover: input.cover } : {}),
             ...(input.year !== undefined ? { year: input.year } : {}),
             ...(input.internal_id !== undefined
@@ -180,6 +210,7 @@ export async function upsertPanSyncTargets(
           },
           $setOnInsert: {
             douban_id: input.douban_id,
+            ...(input.content_id ? { content_id: input.content_id } : {}),
             status: "pending" as const,
             attempts: 0,
             resources_count: 0,
@@ -408,6 +439,10 @@ export interface SiteCatalogDiscovery {
   sourceErrors: string[];
 }
 
+export interface SiteCatalogDiscoveryOptions extends ContentHostExecutionOptions {
+  shouldContinue?: () => boolean | Promise<boolean>;
+}
+
 function addSubject(subjects: Map<string, PanSyncTargetInput>, subject: unknown) {
   if (!subject || typeof subject !== "object") return;
   const candidate = subject as {
@@ -429,135 +464,230 @@ function addSubject(subjects: Map<string, PanSyncTargetInput>, subject: unknown)
   });
 }
 
+function contentExecutionOptions(
+  options: SiteCatalogDiscoveryOptions
+): ContentHostExecutionOptions {
+  return {
+    ...(options.profileId ? { profileId: options.profileId } : {}),
+    ...(options.requestId ? { requestId: options.requestId } : {}),
+    ...(options.runId ? { runId: options.runId } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+  };
+}
+
+function candidateTitle(candidate: ContentCandidate): string {
+  return candidate.titles[0]?.value?.trim() || "";
+}
+
+function addContentCandidate(
+  subjects: Map<string, PanSyncTargetInput>,
+  candidate: ContentCandidate
+): "added" | "unresolved" | "incompatible" {
+  const doubanRef = candidate.externalRefs.find(
+    (reference) => reference.providerId === DOUBAN_CONTENT_PLUGIN_ID
+  );
+  if (!doubanRef) {
+    return candidate.externalRefs.length > 0 ? "incompatible" : "unresolved";
+  }
+  const id = doubanRef.externalId.trim();
+  const title = candidateTitle(candidate);
+  if (!/^\d{1,20}$/.test(id) || !title) return "unresolved";
+  const previous = subjects.get(id);
+  const year = candidate.releaseDate?.match(/\b(?:19|20)\d{2}\b/)?.[0];
+  subjects.set(id, {
+    douban_id: id,
+    title,
+    cover: candidate.preview?.posterUrl || previous?.cover,
+    year: year || previous?.year,
+  });
+  return "added";
+}
+
+async function discoverCategoryCandidates(
+  category: string,
+  options: SiteCatalogDiscoveryOptions
+): Promise<CatalogPageScanResult> {
+  return scanContentCatalogPages(
+    (cursor) =>
+      getContentCatalog(
+        {
+          view: "category",
+          key: category,
+          cursor,
+          limit: CATEGORY_PAGE_SIZE,
+        },
+        contentExecutionOptions(options)
+      ),
+    MAX_CATEGORY_PAGES,
+    options.shouldContinue
+  );
+}
+
+export interface CatalogPageScanResult {
+  items: ContentCatalogCandidate[];
+  error?: string;
+}
+
+/** Follow provider-owned opaque cursors while preserving partial discovery on failure. */
+export async function scanContentCatalogPages(
+  fetchPage: (cursor?: string) => Promise<PluginPage<ContentCatalogCandidate>>,
+  maxPages = MAX_CATEGORY_PAGES,
+  shouldContinue?: () => boolean | Promise<boolean>
+): Promise<CatalogPageScanResult> {
+  const items: ContentCatalogCandidate[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  try {
+    for (let page = 1; page <= maxPages; page++) {
+      if (shouldContinue && !(await shouldContinue())) {
+        throw new Error("目录发现已停止");
+      }
+      const response = await fetchPage(cursor);
+      if (!response || !Array.isArray(response.items)) {
+        throw new Error("响应格式无效：items 必须是数组");
+      }
+      items.push(...response.items);
+      if (!response.hasMore) return { items };
+      if (!response.nextCursor) {
+        throw new Error("插件声明还有下一页，但没有返回 nextCursor");
+      }
+      if (cursors.has(response.nextCursor)) {
+        throw new Error("插件返回了重复的目录游标");
+      }
+      cursors.add(response.nextCursor);
+      cursor = response.nextCursor;
+      if (page === maxPages) {
+        return { items, error: "达到分页安全上限，目录可能不完整" };
+      }
+    }
+  } catch (error) {
+    return {
+      items,
+      error: error instanceof Error ? error.message : "请求失败",
+    };
+  }
+  return { items };
+}
+
 /**
  * 收集站内实际使用的影片目录，而不是把整个豆瓣作为同步范围。
  * 分类接口支持分页，先按站内分类拉取，再合并首页/最新快照并按 douban_id 去重。
  */
-export async function discoverSiteMovieTargets(): Promise<SiteCatalogDiscovery> {
+export async function discoverSiteMovieTargets(
+  options: SiteCatalogDiscoveryOptions = {}
+): Promise<SiteCatalogDiscovery> {
   const subjects = new Map<string, PanSyncTargetInput>();
   const sourceErrors: string[] = [];
 
   // 分类之间相互独立，限制并发以缩短首次发现时间，同时避免一次性打满上游。
   for (let offset = 0; offset < SITE_CATEGORIES.length; offset += CATEGORY_CONCURRENCY) {
+    if (options.shouldContinue && !(await options.shouldContinue())) {
+      sourceErrors.push("catalog: 目录发现已停止");
+      return { targets: [...subjects.values()], sourceErrors };
+    }
     const categories = SITE_CATEGORIES.slice(offset, offset + CATEGORY_CONCURRENCY);
     const results = await Promise.all(
-      categories.map(async (category) => {
-        const found: Subject[] = [];
-        let truncated = false;
-        try {
-          for (let page = 1; page <= MAX_CATEGORY_PAGES; page++) {
-            const response = await getCategoryData(
-              category,
-              page,
-              CATEGORY_PAGE_SIZE
-            );
-            if (!response || !Array.isArray(response.subjects)) {
-              throw new Error("响应格式无效：subjects 必须是数组");
-            }
-            found.push(...response.subjects);
-            const pagination = response.pagination;
-            const hasMore =
-              typeof pagination?.hasMore === "boolean"
-                ? pagination.hasMore
-                : response.subjects.length === CATEGORY_PAGE_SIZE;
-            const reachedReportedTotal =
-              typeof pagination?.total === "number" &&
-              page * CATEGORY_PAGE_SIZE >= pagination.total;
-            if (
-              !hasMore ||
-              !response.subjects?.length ||
-              reachedReportedTotal ||
-              page >= MAX_CATEGORY_PAGES
-            ) {
-              truncated =
-                page >= MAX_CATEGORY_PAGES && hasMore;
-              break;
-            }
-          }
-          return { category, found, error: truncated ? "达到分页安全上限，目录可能不完整" : undefined };
-        } catch (error) {
-          return {
-            category,
-            found,
-            error: error instanceof Error ? error.message : "请求失败",
-          };
-        }
-      })
+      categories.map(async (category) => ({
+        category,
+        ...(await discoverCategoryCandidates(category, options)),
+      }))
     );
     for (const result of results) {
-      for (const subject of result.found) addSubject(subjects, subject);
-    if (result.error) sourceErrors.push(`${result.category}: ${result.error}`);
+      let incompatible = 0;
+      for (const candidate of result.items) {
+        if (addContentCandidate(subjects, candidate) === "incompatible") incompatible++;
+      }
+      if (incompatible > 0) {
+        sourceErrors.push(
+          `${result.category}: ${incompatible} 条内容不属于当前 Douban 兼容身份空间`
+        );
+      }
+      if (result.error) sourceErrors.push(`${result.category}: ${result.error}`);
     }
   }
 
   // 这些接口代表首页、电影页、电视剧页、最新页和日历页的实际展示快照；
   // 即使条目不属于上面的分类，也应进入站内同步台账。接口彼此独立，
   // 使用 allSettled 保留可用结果并把单个上游故障展示给后台。
-  const snapshots = await Promise.allSettled([
-    getLatestContent(),
-    getMoviesCategories(),
-    getTVCategories(),
-    getNewContent(),
-    getHeroMovies(),
-    getTop250(),
-    getCalendar(),
-  ]);
-  const snapshotLabels = [
-    "latest",
-    "movies",
-    "tv",
-    "new",
-    "hero",
-    "top250",
-    "calendar",
+  if (options.shouldContinue && !(await options.shouldContinue())) {
+    sourceErrors.push("catalog: 目录发现已停止");
+    return { targets: [...subjects.values()], sourceErrors };
+  }
+  const profileId = options.profileId || getActivePluginProfileId();
+  const profile = pluginProfileRegistry.require(profileId);
+  const today = new Date();
+  const through = new Date(today);
+  through.setUTCDate(through.getUTCDate() + 6);
+  const execution = contentExecutionOptions({ ...options, profileId });
+  const snapshotSources: Array<{
+    label: string;
+    load: () => Promise<PluginPage<ContentCandidate>>;
+  }> = [
+    {
+      label: "latest",
+      load: () => getContentCatalog({ view: "latest", limit: 50 }, execution),
+    },
+    {
+      label: "movies",
+      load: () => getContentCatalog({ view: "sections", key: "movies" }, execution),
+    },
+    {
+      label: "series",
+      load: () => getContentCatalog({ view: "sections", key: "series" }, execution),
+    },
+    {
+      label: "new-releases",
+      load: () => getContentCatalog({ view: "new-releases" }, execution),
+    },
+    {
+      label: "featured",
+      load: () => getContentCatalog({ view: "featured" }, execution),
+    },
+    {
+      label: "top250",
+      load: () =>
+        getContentCatalog({ view: "category", key: "top250", limit: 50 }, execution),
+    },
+    {
+      label: "calendar",
+      load: () =>
+        getContentCalendar(
+          {
+            from: today.toISOString().slice(0, 10),
+            to: through.toISOString().slice(0, 10),
+            region: profile.region,
+          },
+          execution
+        ),
+    },
   ];
+  const snapshots = await Promise.allSettled(
+    snapshotSources.map((source) => source.load())
+  );
   snapshots.forEach((snapshot, index) => {
+    const label = snapshotSources[index].label;
     if (snapshot.status === "rejected") {
       sourceErrors.push(
-        `${snapshotLabels[index]}: ${
+        `${label}: ${
           snapshot.reason instanceof Error ? snapshot.reason.message : "请求失败"
         }`
       );
       return;
     }
     const value = snapshot.value;
-    const objectValue = value as unknown as {
-      subjects?: unknown;
-      days?: unknown;
-    };
-    if (Array.isArray(value)) {
-      for (const group of value) {
-        if (!group || typeof group !== "object") continue;
-        const categoryGroup = group as { data?: unknown };
-        if (Array.isArray(categoryGroup.data)) {
-          for (const subject of categoryGroup.data) {
-            addSubject(subjects, subject as Subject);
-          }
-        } else {
-          addSubject(subjects, group as Subject | HeroMovie);
-        }
-      }
-    } else if (Array.isArray(objectValue.subjects)) {
-      for (const subject of objectValue.subjects) addSubject(subjects, subject as Subject);
-    } else if (Array.isArray(objectValue.days)) {
-      for (const day of objectValue.days as Array<{ entries?: unknown }>) {
-        if (!day || !Array.isArray(day.entries)) continue;
-        for (const entry of day.entries) {
-          const id = String(entry?.douban_id || "").trim();
-          const title = String(
-            entry?.show_name_cn || entry?.show_name || ""
-          ).trim();
-          if (id && title) {
-            addSubject(subjects, {
-              id,
-              title,
-              cover: typeof entry?.poster === "string" ? entry.poster : "",
-            });
-          }
-        }
-      }
-    } else {
-      sourceErrors.push(`${snapshotLabels[index]}: 响应格式无效`);
+    if (!value || !Array.isArray(value.items)) {
+      sourceErrors.push(`${label}: 响应格式无效`);
+      return;
+    }
+    let incompatible = 0;
+    for (const candidate of value.items) {
+      if (addContentCandidate(subjects, candidate) === "incompatible") incompatible++;
+    }
+    if (incompatible > 0) {
+      sourceErrors.push(
+        `${label}: ${incompatible} 条内容不属于当前 Douban 兼容身份空间`
+      );
     }
   });
 
@@ -581,12 +711,14 @@ export async function discoverSiteMovieTargets(): Promise<SiteCatalogDiscovery> 
   return { targets: [...subjects.values()], sourceErrors };
 }
 
-export async function discoverAndEnqueuePanSyncTargets(): Promise<{
+export async function discoverAndEnqueuePanSyncTargets(
+  options: SiteCatalogDiscoveryOptions = {}
+): Promise<{
   discovered: number;
   upserted: number;
   sourceErrors: string[];
 }> {
-  const discovery = await discoverSiteMovieTargets();
+  const discovery = await discoverSiteMovieTargets(options);
   const upserted = await upsertPanSyncTargets(discovery.targets);
   return {
     discovered: discovery.targets.length,
@@ -649,13 +781,28 @@ export async function runPanSyncTargetBatch(
 
   for (let index = 0; index < bounded; index++) {
     if (hooks.shouldContinue && !(await hooks.shouldContinue())) break;
-    const target = await claimPanSyncTarget(owner, doubanId);
-    if (!target) break;
+    const claimed = await claimPanSyncTarget(owner, doubanId);
+    if (!claimed) break;
+    let target: PanSyncTarget = claimed;
     processed++;
     await runBatchHook(() => hooks.onTargetStart?.(target));
     try {
+      const identity = await resolveContentIdentity([
+        { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: target.douban_id },
+      ]);
+      if (target.content_id && target.content_id !== identity.contentId) {
+        throw new Error("同步台账 content_id 与外部引用映射冲突，需要人工处理");
+      }
+      if (!target.content_id) {
+        await (await collection()).updateOne(
+          { douban_id: target.douban_id, claimed_by: owner },
+          { $set: { content_id: identity.contentId, updated_at: new Date().toISOString() } }
+        );
+        target = { ...target, content_id: identity.contentId };
+      }
       const result = await syncPanResourcesForMovie({
         doubanId: target.douban_id,
+        contentId: target.content_id,
         title: target.title,
         year: target.year,
       });

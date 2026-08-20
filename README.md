@@ -18,6 +18,10 @@
 
 ---
 
+## 插件平台架构
+
+内容数据、播放资源、网盘资源、弹幕、图片、搜索和推荐按统一插件契约演进。架构基线与开发验收标准见 [`docs/plugin-platform/README.md`](docs/plugin-platform/README.md) 和 [`docs/plugin-platform/development-standard.md`](docs/plugin-platform/development-standard.md)；当前分支已提供 v1 契约、Manifest 校验、静态注册中心以及 Douban/KKPAN 参考适配器。
+
 ## ✨ 功能特性
 
 - 🎬 **视频聚合** - 聚合 Dailymotion 等多个视频源
@@ -235,15 +239,41 @@ curl -fsS -X POST https://your-domain.example/api/pan-resources/sync-kkpan \
 
 首次部署或数据库为空时，建议先在后台点击一次“一键同步未处理”，确认目录发现和资源写入正常，再打开后台自动任务。
 
-已有数据库升级到当前版本前，请先在应用目录执行一次
-`npx tsx scripts/pan-dedup.ts`，清理历史重复/空的 `kkpan_id` 并创建部分唯一索引，
-再重启应用。
+已有数据库升级到当前版本前，先备份 MongoDB，并在应用目录依次执行只读预览：
+
+```bash
+npx tsx scripts/pan-dedup.ts
+npx tsx scripts/content-identity-backfill.ts
+```
+
+两个预览发现的跨影片、来源引用或 `content_id` 冲突都必须人工对账，脚本不会猜测或覆盖
+已有身份。预览通过后，停止所有应用实例、调度器和外部同步写入，再显式执行维护：
+
+```bash
+npx tsx scripts/pan-dedup.ts --apply --maintenance
+npx tsx scripts/content-identity-backfill.ts --apply --maintenance
+```
+
+维护完成并通过脚本的最终对账后再重启应用。默认预览不会创建索引或修改文档；身份回填只给
+缺失字段写入已确认的映射，错误、孤立或不一致的现有 `content_id` 会直接中止迁移。
+`pan-dedup.ts` 会把所有待修改或删除的原文档写入 `pan_resource_dedup_backups`，并在
+`pan_resource_dedup_runs` 保存原索引摘要和运行状态。若运行状态为 `failed`，索引和数据步骤
+可能只完成了一部分，必须保持停写并按对应 `backup_run_id` 对账，不能直接启动应用或再次部署。
 
 ### 当前分支 Docker 自动部署
 
 `cn-compliance` 分支包含独立的 GitHub Actions 部署流程：push 到该分支后，流程会先执行
-Lint、TypeScript 检查和测试，再构建 `linux/amd64` 镜像推送到 GHCR，最后通过 SSH 更新 VPS 上的
+Lint、TypeScript 检查和全部 `tests/*.test.ts`，再构建 `linux/amd64` 镜像推送到 GHCR，最后通过 SSH 更新 VPS 上的
 Docker Compose 服务。不会触发 `master` 分支的部署。
+
+生产镜像内含编译后的迁移运行器。部署任务会先启动 MongoDB 并执行两份只读预览，预览通过后
+停止旧应用并进入维护写入；只有迁移及最终对账都成功才启动新应用。发现身份冲突时发布会失败并恢复
+旧应用，数据库不会被静默猜测修复；此时应根据 Actions 日志和迁移运行记录人工对账。
+发布前还会从应用容器验证豆瓣服务的 `/api/v1/250` 必须返回完整 250 条数据，因此应先部署
+`kerkerker-douban-service` 的 `cn-compliance` 工作流，再部署本项目。
+
+GitHub 不提供公开仓库中的私有分支。若该分支包含不能公开的插件或部署实现，必须把分支和
+工作流放入私有部署仓库，或先把整个仓库设为私有；不要将待保密提交推到当前公开 origin。
 
 仓库需要配置以下 Actions Secrets：
 
@@ -257,7 +287,8 @@ Docker Compose 服务。不会触发 `master` 分支的部署。
 
 可选的仓库 Variables：`DEPLOY_PATH`（默认 `/www/wwwroot/kerkerker`）、
 `DEPLOY_PORT`（默认 `3003`）和 `DEPLOY_BIND`（默认 `0.0.0.0`）。默认端口是为了避开服务器上已有的
-3000 端口服务；变更端口后，反向代理配置也要同步调整。部署过程会保留上一份 `.env`，健康检查失败时自动恢复旧容器配置。
+3000 端口服务；私有部署仓库还可以用 `IMAGE_NAME` 指定私有 GHCR 镜像名。变更端口后，
+反向代理配置也要同步调整。部署过程会保留上一份 `.env`，健康检查失败时自动恢复旧容器配置。
 
 ---
 

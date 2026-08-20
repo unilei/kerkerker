@@ -103,12 +103,19 @@ export default function MovieDetailPage() {
       setIsLoadingDetail(false); // 有缓存立即结束加载状态
     }
 
-    // 2. 异步请求 API 补充详细信息
+    // 2. 通过部署画像选择的内容插件补充详细信息
     const fetchApiDetail = async () => {
       try {
-        const { getSubjectDetail } = await import("@/lib/douban-service");
-        const apiData = await getSubjectDetail(doubanId);
-        if (apiData && apiData.id) {
+        const response = await fetch(
+          `/api/content/detail/${encodeURIComponent(doubanId)}`,
+          { cache: "no-store", signal: AbortSignal.timeout(15_000) }
+        );
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          data?: MovieDetail;
+        };
+        const apiData = payload.data;
+        if (apiData?.id) {
           // 用 API 数据补充缓存没有的字段，缓存字段优先
           setMovieDetail((prev) => {
             const cachedData = prev || ({} as MovieDetail);
