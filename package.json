@@ -9,6 +9,7 @@
     "lint": "eslint",
     "docker:dev": "bash scripts/dev.sh",
     "docker:prod": "bash scripts/prod.sh",
+    "content-identity:audit": "tsx scripts/content-identity-audit.ts",
     "plugin-contract:check": "tsc -p packages/kerkerker-plugin-contract/tsconfig.json --noEmit",
     "plugin-contract:test": "tsx packages/kerkerker-plugin-contract/tests/contract.test.ts"
   },
