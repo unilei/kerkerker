@@ -69,10 +69,3 @@ test("content catalog route keeps top250 as a catalog capability", async () => {
     globalThis.fetch = previousFetch;
   }
 });
-
-test("content catalog does not allow a request to override the profile region", async () => {
-  const response = await getContentCatalog(
-    new NextRequest("http://localhost/api/content/catalog?view=latest&region=US")
-  );
-  assert.equal(response.status, 400);
-});

@@ -162,12 +162,6 @@ export async function GET(request: NextRequest) {
       signal: request.signal,
       timeoutMs: 15_000,
     });
-    if (region !== undefined && region !== context.region) {
-      return NextResponse.json(
-        { code: 400, message: "region 必须与当前插件画像一致", data: null },
-        { status: 400 }
-      );
-    }
     const result = await invokeProfilePlugin<PluginPage<ContentCatalogCandidate>>({
       profileId,
       capability: "content.catalog",
@@ -178,7 +172,7 @@ export async function GET(request: NextRequest) {
         key,
         cursor: String(page),
         limit,
-        filters: filters ? { ...filters, region: context.region } : undefined,
+        filters,
       },
     });
     const items: CatalogItem[] = [];
