@@ -20,7 +20,8 @@ function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
 }
 
 function toRun(document: PluginJobDocument): PluginJobRun {
-  const { _id: _ignored, ...run } = document;
+  const run = { ...document } as PluginJobDocument;
+  delete run._id;
   return {
     ...run,
     actor: { ...run.actor },
