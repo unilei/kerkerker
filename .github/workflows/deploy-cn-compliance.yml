@@ -51,6 +51,12 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Check public plugin contract
+        run: npm run plugin-contract:check
+
+      - name: Test public plugin contract
+        run: npm run plugin-contract:test
+
       - name: Run tests
         shell: bash
         run: |

@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "docker:dev": "bash scripts/dev.sh",
-    "docker:prod": "bash scripts/prod.sh"
+    "docker:prod": "bash scripts/prod.sh",
+    "plugin-contract:check": "tsc -p packages/kerkerker-plugin-contract/tsconfig.json --noEmit",
+    "plugin-contract:test": "tsx packages/kerkerker-plugin-contract/tests/contract.test.ts"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",

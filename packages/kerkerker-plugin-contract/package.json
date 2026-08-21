@@ -1,0 +1,21 @@
+{
+  "name": "@kerkerker/plugin-contract",
+  "version": "1.0.0",
+  "description": "Framework-neutral Kerkerker plugin contract for built-in, package, and sidecar plugins.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx tests/contract.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
