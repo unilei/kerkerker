@@ -29,6 +29,8 @@ export const COLLECTIONS = {
   AUDIT_EVENTS: 'audit_events',
   /** 内容、资源、插件或来源的下架记录 */
   TAKEDOWN_RECORDS: 'takedown_records',
+  /** Provider-neutral plugin job runs */
+  PLUGIN_JOBS: 'plugin_jobs',
 } as const;
 
 /** 集合名称类型 */

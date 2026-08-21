@@ -45,6 +45,7 @@ async function enqueue(runner: PluginJobRunner, overrides: Record<string, unknow
 test("job runner keeps idempotent metadata snapshots", async () => {
   const { runner } = makeRunner();
   const first = await enqueue(runner);
+  assert.equal(first.expires_at?.toISOString(), "2026-09-20T00:00:00.000Z");
   const duplicate = await enqueue(runner, {
     metadata: { source: "changed" },
     runId: "a-different-run-id",

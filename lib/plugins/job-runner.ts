@@ -109,6 +109,7 @@ export interface PluginJobRun {
   readonly metadata: Readonly<Record<string, unknown>>;
   /** Monotonic revision used by durable adapters for compare-and-swap updates. */
   readonly revision: number;
+  readonly expires_at?: Date;
   readonly created_at: string;
   readonly updated_at: string;
   readonly started_at?: string;
@@ -134,6 +135,7 @@ export interface PluginJobRunnerOptions {
   readonly now?: () => Date;
   readonly defaultRetryPolicy?: Partial<PluginJobRetryPolicy>;
   readonly defaultLeaseTtlMs?: number;
+  readonly retentionMs?: number;
 }
 
 export interface PluginJobStartOptions {
@@ -203,6 +205,8 @@ const DEFAULT_RETRY_POLICY: PluginJobRetryPolicy = {
 const DEFAULT_LEASE_TTL_MS = 5 * 60_000;
 const MAX_LEASE_TTL_MS = 30 * 60_000;
 const MAX_RETRY_DELAY_MS = 24 * 60 * 60_000;
+const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+const MAX_RETENTION_MS = 365 * 24 * 60 * 60_000;
 const MAX_CURSOR_LENGTH = 4096;
 const MAX_METADATA_KEYS = 100;
 
@@ -277,6 +281,10 @@ function assertLeaseTtl(ttlMs: number): number {
   return boundedInteger(ttlMs, "leaseTtlMs", 100, MAX_LEASE_TTL_MS);
 }
 
+function assertRetentionMs(retentionMs: number): number {
+  return boundedInteger(retentionMs, "retentionMs", 60_000, MAX_RETENTION_MS);
+}
+
 function withUpdatedTimestamp(run: PluginJobRun, now: string): PluginJobRun {
   return { ...run, revision: run.revision + 1, updated_at: now };
 }
@@ -289,6 +297,7 @@ export class PluginJobRunner implements PluginJobRunnerPort {
   private readonly now: () => Date;
   private readonly defaultRetryPolicy: PluginJobRetryPolicy;
   private readonly defaultLeaseTtlMs: number;
+  private readonly retentionMs: number;
 
   constructor(
     private readonly store: PluginJobStore,
@@ -297,6 +306,7 @@ export class PluginJobRunner implements PluginJobRunnerPort {
     this.now = options.now || (() => new Date());
     this.defaultRetryPolicy = normalizeRetryPolicy(options.defaultRetryPolicy);
     this.defaultLeaseTtlMs = assertLeaseTtl(options.defaultLeaseTtlMs ?? DEFAULT_LEASE_TTL_MS);
+    this.retentionMs = assertRetentionMs(options.retentionMs ?? DEFAULT_RETENTION_MS);
   }
 
   async enqueue(input: PluginJobEnqueueInput): Promise<PluginJobRun> {
@@ -344,6 +354,7 @@ export class PluginJobRunner implements PluginJobRunnerPort {
       progress: normalizeProgress(input.progress),
       metadata,
       revision: 0,
+      expires_at: new Date(this.now().getTime() + this.retentionMs),
       created_at: now,
       updated_at: now,
     };

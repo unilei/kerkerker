@@ -22,3 +22,4 @@ export * from "@/lib/plugins/types";
 export * from "@/lib/plugins/errors";
 export * from "@/lib/plugins/compliance";
 export * from "@/lib/plugins/job-runner";
+export * from "@/lib/plugins/mongo-job-store";

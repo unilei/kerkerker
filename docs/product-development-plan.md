@@ -43,6 +43,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 | 已完成 | 首页、分类、浏览、详情和日历的宿主 API 边界 | `app/api/content/*`、对应 hooks/pages |
 | 已完成 | KKPAN 云盘适配器与 provider-neutral cloud-drive host bridge | `lib/plugins/adapters/kkpan-cloud-drive.ts`、`lib/plugins/resource-host.ts`、`lib/pan/cloud-drive-task.ts` |
 | 已完成 | 影片台账、批量同步、定时任务、租约、取消、运行日志和宿主任务状态/退避边界 | `lib/pan/catalog-sync.ts`、`lib/pan/scheduler.ts`、`lib/plugins/job-runner.ts` |
+| 已完成 | 通用任务的 Mongo CAS 存储端口、幂等/状态索引和 TTL 保留边界 | `lib/plugins/mongo-job-store.ts`、`lib/db.ts`、`tests/plugin-mongo-job-store.test.ts` |
 | 已完成 | 网盘任务运行记录的插件/画像/版本/操作者/幂等元数据快照，旧记录兼容读取 | `lib/pan/scheduler.ts`、`tests/pan-scheduler.test.ts` |
 | 已完成 | 内容身份 UUID、外部引用、资源/同步台账的 `content_id` 权威写入及迁移脚本预览/维护模式 | `lib/content-identity-db.ts`、`lib/pan-resources-db.ts`、`lib/pan/catalog-sync.ts`、`scripts/content-identity-backfill.ts` |
 | 已完成 | Douban 图片 R2 镜像、Mongo 持久化和部署门禁 | `kerkerker-douban-service`、`.github/workflows` |
@@ -56,7 +57,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 已支持健康检查、服务间认证、协议版本协商、进程内熔断，画像仅在上游错误时按声明顺序回退；跨实例健康状态、重试上限和集中式健康摘除仍未完成。
 4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；跨来源 `content_id` 精确映射、TMDB 图片 R2 持久化、英文 UI smoke 和运营审批仍未完成。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
-6. Go 服务刷新任务和 Web 网盘任务还没有共享完整的持久化插件作业运行器；宿主已有统一状态转换、租约、取消、进度、可重试错误和退避边界，跨仓持久化适配、进度回报和恢复仍属于阶段 3/7。
+6. Go 服务刷新任务和 Web 网盘任务还没有共享完整的持久化插件作业运行器；宿主已有统一状态转换、租约、取消、进度、可重试错误、退避边界和 Mongo CAS 存储端口，跨仓接入、进度回报和恢复仍属于阶段 3/7。
 
 ## 3. 总体顺序与依赖
 
@@ -145,7 +146,7 @@ flowchart LR
 
 **实现内容**：
 
-- 从 `lib/pan/scheduler.ts` 提取通用 `PluginJobRunner`，统一 `run_id`、租约、心跳、取消、恢复、幂等键、游标、重试退避和配置快照；当前已先交付无供应商依赖的生命周期、CAS 版本、租约、进度、取消和退避边界，并以兼容适配器承载现有影片同步，下一步接入 Mongo 持久化。
+- 从 `lib/pan/scheduler.ts` 提取通用 `PluginJobRunner`，统一 `run_id`、租约、心跳、取消、恢复、幂等键、游标、重试退避和配置快照；当前已交付无供应商依赖的生命周期、CAS 版本、租约、进度、取消和退避边界，并提供 Mongo `PluginJobStore` 与兼容适配器，下一步接入实际作业执行和跨仓刷新。
 - 当前网盘调度已先落地兼容的运行元数据层：新运行记录固定保存 `plugin_id`、插件版本、`profile_id`、配置版本、actor 和幂等键，事件与审计继承同一快照；历史记录读取使用明确的 legacy 默认值。下一步把这组字段和生命周期抽到真正的通用 runner，而不是复制网盘专用状态机。
 - 建立独立的 `kerkerker-plugin-contract` 包/仓库，发布 Manifest、能力接口、DTO、错误码、JSON Schema、兼容性测试包和 TypeScript SDK；当前仓内发布骨架和 CI 检查已完成。
 - 将 Douban、KKPAN 适配器拆成独立插件包；私有实现可以使用受控 package 或 Sidecar 镜像，宿主只通过注册表和版本化契约调用。

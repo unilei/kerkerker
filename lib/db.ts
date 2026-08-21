@@ -278,6 +278,15 @@ async function initializeDatabase(db: Db) {
     await panSyncRunEventsCollection.createIndex({ run_id: 1, created_at: 1 });
     await panSyncRunEventsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
 
+    // Provider-neutral job runner. The revision predicate is used by the
+    // storage adapter for compare-and-swap updates across workers.
+    const pluginJobsCollection = db.collection(COLLECTIONS.PLUGIN_JOBS);
+    await pluginJobsCollection.createIndex({ run_id: 1 }, { unique: true });
+    await pluginJobsCollection.createIndex({ idempotency_key: 1 }, { unique: true });
+    await pluginJobsCollection.createIndex({ status: 1, updated_at: -1 });
+    await pluginJobsCollection.createIndex({ plugin_id: 1, created_at: -1 });
+    await pluginJobsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
+
     // Phase 1 compliance data layer. Index creation is idempotent; retention
     // is enforced by TTL indexes while policy and takedown records remain
     // queryable for operational review.
