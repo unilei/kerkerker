@@ -93,11 +93,11 @@ flowchart LR
 
 当前宿主兼容导出仍位于 [`lib/plugins/types.ts`](../../lib/plugins/types.ts)、[`lib/plugins/validation.ts`](../../lib/plugins/validation.ts) 和 [`lib/plugins/errors.ts`](../../lib/plugins/errors.ts)；可发布的 v1 契约包已位于 [`packages/kerkerker-plugin-contract/`](../../packages/kerkerker-plugin-contract/)，并由 CI 执行独立类型检查和契约测试。参考适配器可以暂时放在 [`lib/plugins/`](../../lib/plugins/) 内，以降低契约频繁调整的跨仓成本，但模块边界必须按未来可拆包设计：不能反向导入 `app/`、`components/` 或具体 MongoDB 集合。
 
-当前分支已经落地第一批可运行地基：[`lib/plugins/registry.ts`](../../lib/plugins/registry.ts) 提供封存式静态注册，[`lib/plugins/runtime.ts`](../../lib/plugins/runtime.ts) 提供按能力和操作的统一服务端调用边界，Douban 与 KKPAN 适配器分别位于 [`lib/plugins/adapters/douban-content.ts`](../../lib/plugins/adapters/douban-content.ts) 和 [`lib/plugins/adapters/kkpan-cloud-drive.ts`](../../lib/plugins/adapters/kkpan-cloud-drive.ts)。管理端只能通过受保护的 [`GET /api/plugins`](../../app/api/plugins/route.ts) 查看已注册的非秘密 Manifest 元数据；该接口不支持上传、动态加载或任意插件执行。
+当前分支已经落地第一批可运行地基：[`lib/plugins/registry.ts`](../../lib/plugins/registry.ts) 提供封存式静态注册，[`lib/plugins/runtime.ts`](../../lib/plugins/runtime.ts) 提供按能力和操作的统一服务端调用边界，Douban、TMDB 与 KKPAN 适配器分别位于 [`lib/plugins/adapters/douban-content.ts`](../../lib/plugins/adapters/douban-content.ts)、[`lib/plugins/adapters/tmdb-content.ts`](../../lib/plugins/adapters/tmdb-content.ts) 和 [`lib/plugins/adapters/kkpan-cloud-drive.ts`](../../lib/plugins/adapters/kkpan-cloud-drive.ts)。管理端只能通过受保护的 [`GET /api/plugins`](../../app/api/plugins/route.ts) 查看已注册的非秘密 Manifest 元数据；该接口不支持上传、动态加载或任意插件执行。
 
 兼容的 [`GET /api/kkpan/search`](../../app/api/kkpan/search/route.ts) 已经改为通过 `cn-default` 画像调用 `resource.cloud-drive.search`，旧响应字段保留，后台无需一次性改版。宿主会创建带超时和取消信号的 `PluginContext`，并在返回前校验来源插件、资源 ID 和网盘品牌。需要原始页指纹、跨页唯一 ID 和漂移校验的全量增量/失效任务仍暂留在同步兼容层；只有当插件契约提供等价的快照或稳定游标保证后，才允许迁移到通用分页调用。
 
-第二阶段已加入 [`lib/plugins/profiles.ts`](../../lib/plugins/profiles.ts) 的静态发布画像注册：画像固定 `locale`、`region` 和按能力排列的插件优先级，启动时校验插件是否声明该能力并支持该语言/地区；`cn-default` 当前绑定 Douban 内容与 KKPAN 网盘，未来英文画像可以替换为 TMDB 等内容插件而不复制页面代码。运行时通过 `invokeProfilePlugin` 解析画像后再调用插件，未配置能力会返回 `CAPABILITY_UNAVAILABLE`，不会静默选择其他供应商。
+第二阶段已加入 [`lib/plugins/profiles.ts`](../../lib/plugins/profiles.ts) 的静态发布画像注册：画像固定 `locale`、`region` 和按能力排列的插件优先级，启动时校验插件是否声明该能力并支持该语言/地区；`cn-default` 绑定 Douban 内容与 KKPAN 网盘，`en-default` 的 catalog、calendar、detail、search 和 image 已绑定 TMDB，不复制页面代码，也不会回退到 Douban。运行时通过 `invokeProfilePlugin` 解析画像后再调用插件，未配置能力会返回 `CAPABILITY_UNAVAILABLE`，不会静默选择其他供应商。
 
 宿主运行配置由 [`lib/plugins/invocation.ts`](../../lib/plugins/invocation.ts) 集中注入并按 Manifest 的必填字段、URL 类型和精确网络主机权限校验；API 路由和后台任务不得自行读取供应商环境变量。服务端页面之外的目录发现、搜索和日历任务统一通过 [`lib/plugins/content-host.ts`](../../lib/plugins/content-host.ts) 调用活动画像，`run_id`、超时和取消信号沿同一上下文传播，不通过内部 HTTP 绕回 API 路由。
 
@@ -247,7 +247,7 @@ interface ContentIdentity {
 
 插件不得根据服务器 IP、系统语言或未声明环境变量静默推断地区。插件不支持请求画像时必须返回标准的 `UNSUPPORTED_LOCALE` 或 `UNSUPPORTED_REGION`，由宿主决定回退，不得在插件内部偷换数据源。
 
-中文站可以选择 Douban 内容插件和中国区资源策略，英文站可以选择 TMDB 内容插件及不同图片、搜索和播放插件。页面与路由不需要为两套站点复制业务代码。
+中文站可以选择 Douban 内容插件和中国区资源策略，英文站可以选择 TMDB 内容插件及不同图片、搜索和播放插件。当前 `en-default` 已完成服务端读路径；正式启用前仍需完成 TMDB 授权材料、跨来源身份映射、R2 图片镜像和英文 UI smoke。页面与路由不需要为两套站点复制业务代码。
 
 ## 运行与数据流
 
