@@ -17,7 +17,11 @@ import {
 } from "@/lib/pan/catalog-sync";
 import { runIncrementalSync, type SyncStats } from "@/lib/pan/sync";
 import { recordAudit } from "@/lib/compliance-db";
-import { KKPAN_PLUGIN_ID } from "@/lib/plugins/adapters/kkpan-cloud-drive";
+import type { AuditActorDoc } from "@/lib/compliance-types";
+import {
+  KKPAN_PLUGIN_ID,
+  kkpanCloudDriveManifest,
+} from "@/lib/plugins/adapters/kkpan-cloud-drive";
 
 export const PAN_SYNC_TASKS = ["catalog", "incremental"] as const;
 export type PanSyncTask = (typeof PAN_SYNC_TASKS)[number];
@@ -53,6 +57,63 @@ const RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 // 定时槽位认领与运行记录写入不是同一个 Mongo 操作。认领超过这个窗口仍
 // 没有对应 run 时，下一轮调度会把它视为进程崩溃留下的孤儿槽位并释放。
 const SCHEDULE_CLAIM_GRACE_MS = RUN_LEASE_TTL_MS;
+const DEFAULT_PAN_SYNC_PROFILE = "cn-default";
+const LEGACY_CONFIG_VERSION = "legacy";
+const RUNTIME_CONFIG_VERSION = "runtime";
+
+export interface PanSyncJobMetadata {
+  plugin_id: string;
+  plugin_version: string;
+  profile_id: string;
+  profile: string;
+  config_version: string;
+  actor: AuditActorDoc;
+  idempotency_key: string;
+}
+
+export interface PanSyncJobMetadataInput {
+  run_id: string;
+  plugin_id?: string;
+  plugin_version?: string;
+  profile_id?: string;
+  profile?: string;
+  config_version?: string;
+  actor?: AuditActorDoc;
+  idempotency_key?: string;
+}
+
+/**
+ * Normalize scheduler metadata at the read boundary. Documents created before
+ * provider-neutral job metadata existed are intentionally treated as the
+ * original KKPAN/cn-default job, rather than inheriting a newer deployment's
+ * active profile.
+ */
+export function normalizePanSyncRunMetadata(
+  input: PanSyncJobMetadataInput
+): PanSyncJobMetadata {
+  const profile = input.profile || input.profile_id || DEFAULT_PAN_SYNC_PROFILE;
+  return {
+    plugin_id: input.plugin_id || KKPAN_PLUGIN_ID,
+    plugin_version: input.plugin_version || LEGACY_CONFIG_VERSION,
+    profile_id: input.profile_id || profile,
+    profile,
+    config_version: input.config_version || LEGACY_CONFIG_VERSION,
+    actor: input.actor || { type: "system", id: "pan-scheduler" },
+    idempotency_key: input.idempotency_key || `pan-sync:${input.run_id}`,
+  };
+}
+
+function createPanSyncRunMetadata(runId: string): PanSyncJobMetadata {
+  const profile = process.env.KERKERKER_PLUGIN_PROFILE?.trim() || DEFAULT_PAN_SYNC_PROFILE;
+  return normalizePanSyncRunMetadata({
+    run_id: runId,
+    plugin_version: kkpanCloudDriveManifest.version,
+    profile_id: profile,
+    profile,
+    config_version:
+      process.env.KERKERKER_PLUGIN_CONFIG_VERSION?.trim() || RUNTIME_CONFIG_VERSION,
+  });
+}
 
 export interface PanSyncScheduleDoc {
   _id?: ObjectId;
@@ -88,6 +149,14 @@ export interface PanSyncSchedule {
 export interface PanSyncRunDoc {
   _id?: ObjectId;
   run_id: string;
+  /** Provider-neutral job metadata. Optional for pre-migration Mongo documents. */
+  plugin_id?: string;
+  plugin_version?: string;
+  profile_id?: string;
+  profile?: string;
+  config_version?: string;
+  actor?: AuditActorDoc;
+  idempotency_key?: string;
   task: PanSyncTask;
   trigger: PanSyncRunTrigger;
   status: PanSyncRunStatus;
@@ -123,6 +192,13 @@ export interface PanSyncRunDoc {
 
 export interface PanSyncRun {
   run_id: string;
+  plugin_id: string;
+  plugin_version: string;
+  profile_id: string;
+  profile: string;
+  config_version: string;
+  actor: AuditActorDoc;
+  idempotency_key: string;
   task: PanSyncTask;
   trigger: PanSyncRunTrigger;
   status: PanSyncRunStatus;
@@ -150,7 +226,25 @@ export interface PanSyncRun {
   updated_at: string;
 }
 
-export interface PanSyncRunEvent extends Document {
+export interface PanSyncRunEventDoc extends Document {
+  run_id: string;
+  /** Optional because historical event documents predate job metadata. */
+  plugin_id?: string;
+  plugin_version?: string;
+  profile_id?: string;
+  profile?: string;
+  config_version?: string;
+  actor?: AuditActorDoc;
+  idempotency_key?: string;
+  seq: number;
+  level: "info" | "warning" | "error";
+  message: string;
+  data?: Record<string, unknown>;
+  created_at: string;
+  expires_at: Date;
+}
+
+export interface PanSyncRunEvent extends Document, PanSyncJobMetadata {
   run_id: string;
   seq: number;
   level: "info" | "warning" | "error";
@@ -180,7 +274,7 @@ function runCollection() {
 }
 
 function eventCollection() {
-  return taskCollection<PanSyncRunEvent>(COLLECTIONS.PAN_SYNC_RUN_EVENTS);
+  return taskCollection<PanSyncRunEventDoc>(COLLECTIONS.PAN_SYNC_RUN_EVENTS);
 }
 
 function toSchedule(doc: PanSyncScheduleDoc): PanSyncSchedule {
@@ -200,8 +294,19 @@ function toSchedule(doc: PanSyncScheduleDoc): PanSyncSchedule {
 }
 
 function toRun(doc: PanSyncRunDoc): PanSyncRun {
+  const metadata = normalizePanSyncRunMetadata({
+    run_id: doc.run_id,
+    plugin_id: doc.plugin_id,
+    plugin_version: doc.plugin_version,
+    profile_id: doc.profile_id,
+    profile: doc.profile,
+    config_version: doc.config_version,
+    actor: doc.actor,
+    idempotency_key: doc.idempotency_key,
+  });
   return {
     run_id: doc.run_id,
+    ...metadata,
     task: doc.task,
     trigger: doc.trigger,
     status: doc.status,
@@ -227,6 +332,32 @@ function toRun(doc: PanSyncRunDoc): PanSyncRun {
     finished_at: doc.finished_at,
     created_at: doc.created_at,
     updated_at: doc.updated_at,
+  };
+}
+
+function toRunEvent(
+  doc: PanSyncRunEventDoc,
+  fallback: PanSyncJobMetadata
+): PanSyncRunEvent {
+  const metadata = normalizePanSyncRunMetadata({
+    run_id: doc.run_id,
+    plugin_id: doc.plugin_id || fallback.plugin_id,
+    plugin_version: doc.plugin_version || fallback.plugin_version,
+    profile_id: doc.profile_id || fallback.profile_id,
+    profile: doc.profile || fallback.profile,
+    config_version: doc.config_version || fallback.config_version,
+    actor: doc.actor || fallback.actor,
+    idempotency_key: doc.idempotency_key || `${fallback.idempotency_key}:event:${doc.seq}`,
+  });
+  return {
+    ...doc,
+    ...metadata,
+    run_id: doc.run_id,
+    seq: doc.seq,
+    level: doc.level,
+    message: doc.message,
+    created_at: doc.created_at,
+    expires_at: doc.expires_at,
   };
 }
 
@@ -519,8 +650,11 @@ async function createRunDoc(input: {
   scheduleSlot?: string;
 }): Promise<PanSyncRun> {
   const now = new Date().toISOString();
+  const runId = randomUUID();
+  const metadata = createPanSyncRunMetadata(runId);
   const doc: PanSyncRunDoc = {
-    run_id: randomUUID(),
+    run_id: runId,
+    ...metadata,
     task: input.task,
     trigger: input.trigger,
     status: "queued",
@@ -596,12 +730,25 @@ export async function listPanSyncRunEvents(
   limit = 100
 ): Promise<PanSyncRunEvent[]> {
   const coll = await eventCollection();
-  return coll
+  const events = await coll
     .find({ run_id: runId })
     .sort({ seq: -1 })
     .limit(Math.min(Math.max(Math.floor(limit), 1), 200))
-    .toArray()
-    .then((events) => events.reverse());
+    .toArray();
+  const run = await getRunDoc(runId);
+  const fallback = run
+    ? normalizePanSyncRunMetadata({
+        run_id: run.run_id,
+        plugin_id: run.plugin_id,
+        plugin_version: run.plugin_version,
+        profile_id: run.profile_id,
+        profile: run.profile,
+        config_version: run.config_version,
+        actor: run.actor,
+        idempotency_key: run.idempotency_key,
+      })
+    : normalizePanSyncRunMetadata({ run_id: runId });
+  return events.reverse().map((event) => toRunEvent(event, fallback));
 }
 
 async function appendRunEvent(
@@ -614,11 +761,36 @@ async function appendRunEvent(
   const run = await runs.findOneAndUpdate(
     { run_id: runId },
     { $inc: { event_seq: 1 } },
-    { returnDocument: "after", projection: { event_seq: 1 } }
+    {
+      returnDocument: "after",
+      projection: {
+        event_seq: 1,
+        plugin_id: 1,
+        plugin_version: 1,
+        profile_id: 1,
+        profile: 1,
+        config_version: 1,
+        actor: 1,
+        idempotency_key: 1,
+      },
+    }
   );
   const seq = run?.event_seq || Date.now();
+  const metadata = run
+    ? normalizePanSyncRunMetadata({
+        run_id: runId,
+        plugin_id: run.plugin_id,
+        plugin_version: run.plugin_version,
+        profile_id: run.profile_id,
+        profile: run.profile,
+        config_version: run.config_version,
+        actor: run.actor,
+        idempotency_key: run.idempotency_key,
+      })
+    : normalizePanSyncRunMetadata({ run_id: runId });
   const event: PanSyncRunEvent = {
     run_id: runId,
+    ...metadata,
     seq,
     level,
     message: message.slice(0, 1000),
@@ -636,23 +808,41 @@ async function recordSchedulerAudit(
     task: PanSyncTask;
     trigger?: PanSyncRunTrigger;
     status?: PanSyncRunStatus;
-    reason?: string;
     metadata?: Record<string, unknown>;
+    pluginId?: string;
+    pluginVersion?: string;
+    profileId?: string;
+    profile?: string;
+    configVersion?: string;
+    actor?: AuditActorDoc;
+    idempotencyKey?: string;
+    reason?: string;
   }
 ): Promise<void> {
   try {
+    const jobMetadata = normalizePanSyncRunMetadata({
+      run_id: input.runId,
+      plugin_id: input.pluginId,
+      plugin_version: input.pluginVersion,
+      profile_id: input.profileId,
+      profile: input.profile,
+      config_version: input.configVersion,
+      actor: input.actor,
+      idempotency_key: input.idempotencyKey,
+    });
     await recordAudit({
-      idempotencyKey: `pan-sync:${input.runId}:${action}`,
-      actor: { type: "system", id: "pan-scheduler" },
+      idempotencyKey: `${jobMetadata.idempotency_key}:${action}`,
+      actor: jobMetadata.actor,
       action,
       target: {
         type: "pan-sync-run",
         id: input.runId,
-        pluginId: KKPAN_PLUGIN_ID,
+        pluginId: jobMetadata.plugin_id,
       },
-      pluginId: KKPAN_PLUGIN_ID,
-      providerId: KKPAN_PLUGIN_ID,
-      profile: process.env.KERKERKER_PLUGIN_PROFILE?.trim() || "cn-default",
+      pluginId: jobMetadata.plugin_id,
+      providerId: jobMetadata.plugin_id,
+      pluginVersion: jobMetadata.plugin_version,
+      profile: jobMetadata.profile,
       region: process.env.KERKERKER_PLUGIN_REGION?.trim() || "CN",
       runId: input.runId,
       reason:
@@ -660,6 +850,12 @@ async function recordSchedulerAudit(
         `网盘${input.task}任务${action === "sync.run.enqueue" ? "入队" : "结束"}`,
       metadata: {
         task: input.task,
+        plugin_id: jobMetadata.plugin_id,
+        plugin_version: jobMetadata.plugin_version,
+        profile_id: jobMetadata.profile_id,
+        config_version: jobMetadata.config_version,
+        actor: jobMetadata.actor,
+        idempotency_key: jobMetadata.idempotency_key,
         ...(input.trigger ? { trigger: input.trigger } : {}),
         ...(input.status ? { status: input.status } : {}),
         ...(input.metadata || {}),
@@ -755,6 +951,13 @@ async function finishRun(
     runId,
     task: finishedRun?.task || "catalog",
     status,
+    pluginId: finishedRun?.plugin_id,
+    pluginVersion: finishedRun?.plugin_version,
+    profileId: finishedRun?.profile_id,
+    profile: finishedRun?.profile,
+    configVersion: finishedRun?.config_version,
+    actor: finishedRun?.actor,
+    idempotencyKey: finishedRun?.idempotency_key,
     ...(error ? { reason: truncateError(error) } : {}),
   });
 }
@@ -1033,6 +1236,13 @@ export async function enqueuePanSyncRun(options: {
       runId: run.run_id,
       task: run.task,
       trigger: run.trigger,
+      pluginId: run.plugin_id,
+      pluginVersion: run.plugin_version,
+      profileId: run.profile_id,
+      profile: run.profile,
+      configVersion: run.config_version,
+      actor: run.actor,
+      idempotencyKey: run.idempotency_key,
       metadata: { batch_limit: run.batch_limit, max_batches: run.max_batches },
     });
     launchRun(run.run_id, owner);
@@ -1206,6 +1416,13 @@ async function schedulerTick(): Promise<void> {
           runId: run.run_id,
           task: run.task,
           trigger: run.trigger,
+          pluginId: run.plugin_id,
+          pluginVersion: run.plugin_version,
+          profileId: run.profile_id,
+          profile: run.profile,
+          configVersion: run.config_version,
+          actor: run.actor,
+          idempotencyKey: run.idempotency_key,
           metadata: { schedule_slot: `${task}:${parts.date}` },
         });
         launchRun(run.run_id, owner);

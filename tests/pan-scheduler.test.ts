@@ -6,7 +6,9 @@ import {
   calculateNextPanSyncRunAt,
   defaultPanSyncSchedule,
   isPanSyncScheduleDue,
+  normalizePanSyncRunMetadata,
 } from "@/lib/pan/scheduler";
+import { KKPAN_PLUGIN_ID } from "@/lib/plugins/adapters/kkpan-cloud-drive";
 import {
   GET as getScheduler,
   POST as updateScheduler,
@@ -88,4 +90,37 @@ test("调度器仅在启用且 next_run_at 到期后执行", () => {
     isPanSyncScheduleDue({ ...base, enabled: false }, new Date("2026-08-20T03:00:00.000Z")),
     false
   );
+});
+
+test("历史调度记录读取时补齐 KKPAN 元数据且不继承当前部署配置", () => {
+  const metadata = normalizePanSyncRunMetadata({ run_id: "legacy-run" });
+  assert.equal(metadata.plugin_id, KKPAN_PLUGIN_ID);
+  assert.equal(metadata.plugin_version, "legacy");
+  assert.equal(metadata.profile_id, "cn-default");
+  assert.equal(metadata.profile, "cn-default");
+  assert.equal(metadata.config_version, "legacy");
+  assert.deepEqual(metadata.actor, { type: "system", id: "pan-scheduler" });
+  assert.equal(metadata.idempotency_key, "pan-sync:legacy-run");
+});
+
+test("调度作业元数据支持插件、画像、配置版本和幂等键快照", () => {
+  const metadata = normalizePanSyncRunMetadata({
+    run_id: "tmdb-run",
+    plugin_id: "kerkerker.tmdb-content",
+    plugin_version: "1.2.3",
+    profile_id: "en-default",
+    profile: "en-default",
+    config_version: "2026-08-21T00:00:00Z",
+    actor: { type: "system", id: "job-runner" },
+    idempotency_key: "job:tmdb:catalog:en-default:window-1",
+  });
+  assert.deepEqual(metadata, {
+    plugin_id: "kerkerker.tmdb-content",
+    plugin_version: "1.2.3",
+    profile_id: "en-default",
+    profile: "en-default",
+    config_version: "2026-08-21T00:00:00Z",
+    actor: { type: "system", id: "job-runner" },
+    idempotency_key: "job:tmdb:catalog:en-default:window-1",
+  });
 });
