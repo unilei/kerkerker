@@ -107,6 +107,8 @@ flowchart LR
 
 身份迁移前先运行 `npm run content-identity:audit -- --json`。该命令只读取 `content_identities`、`pan_resources` 和 `pan_sync_targets`，不创建索引、不生成 UUID、不写入数据；退出码 2 表示发现必须人工处理的身份或来源冲突。缺失 `content_id` 且能由唯一 Douban 引用推断的记录只计入待回填，不会被审计命令自动修复；写入仍须使用 `scripts/content-identity-backfill.ts --apply --maintenance` 的停写流程。
 
+管理员也可以通过受保护的 `GET /api/plugins/identity-audit` 查看同一份只读快照。接口支持 `limit`（默认 100，最多 200）和 `conflicts_only=true`，只返回受限的冲突明细，同时保留完整计数、待回填数量和截断标记；鉴权失败或数据库读取失败不会返回身份数据。该接口与 CLI 共用 `skipInitialization` 的读取层，不会因为查看审计而创建索引或修改记录。
+
 私有插件有两种受支持的交付形式：
 
 1. 私有仓库构建受控插件包，并在私有部署流水线中与宿主组合成最终镜像。最终镜像也必须保持私有。

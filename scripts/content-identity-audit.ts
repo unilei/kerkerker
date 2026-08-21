@@ -10,41 +10,14 @@
  */
 
 import "dotenv/config";
-import { closeDatabase, getDatabase } from "@/lib/db";
-import { COLLECTIONS } from "@/lib/constants/db";
+import { closeDatabase } from "@/lib/db";
 import {
-  auditContentIdentityGraph,
-  type ContentIdentityAuditIdentityInput,
-  type ContentIdentityAuditLinkInput,
   type ContentIdentityAuditReport,
 } from "@/lib/content-identity-audit";
+import { loadContentIdentityAuditReport } from "@/lib/content-identity-audit-db";
 
 const jsonOutput = process.argv.includes("--json");
 const MAX_PRINTED_ISSUES = 100;
-
-function documentId(value: unknown): string {
-  return value == null ? "(missing)" : String(value);
-}
-
-function toIdentityInput(doc: Record<string, unknown>): ContentIdentityAuditIdentityInput {
-  return {
-    documentId: documentId(doc._id),
-    content_id: doc.content_id,
-    external_refs: doc.external_refs,
-  };
-}
-
-function toLinkInput(doc: Record<string, unknown>): ContentIdentityAuditLinkInput {
-  return {
-    documentId: documentId(doc._id),
-    content_id: doc.content_id,
-    douban_id: doc.douban_id,
-    provider_id: doc.provider_id,
-    provider_resource_id: doc.provider_resource_id,
-    kkpan_id: doc.kkpan_id,
-    source: doc.source,
-  };
-}
 
 function printHumanReport(report: ContentIdentityAuditReport): void {
   const resources = report.collections.pan_resources;
@@ -83,32 +56,7 @@ function printHumanReport(report: ContentIdentityAuditReport): void {
 }
 
 async function main(): Promise<void> {
-  const db = await getDatabase({ skipInitialization: true });
-  const [identities, panResources, panSyncTargets] = await Promise.all([
-    db.collection<Record<string, unknown>>(COLLECTIONS.CONTENT_IDENTITIES)
-      .find({}, { projection: { content_id: 1, external_refs: 1 } })
-      .toArray(),
-    db.collection<Record<string, unknown>>(COLLECTIONS.PAN_RESOURCES)
-      .find({}, {
-        projection: {
-          content_id: 1,
-          douban_id: 1,
-          provider_id: 1,
-          provider_resource_id: 1,
-          kkpan_id: 1,
-          source: 1,
-        },
-      })
-      .toArray(),
-    db.collection<Record<string, unknown>>(COLLECTIONS.PAN_SYNC_TARGETS)
-      .find({}, { projection: { content_id: 1, douban_id: 1 } })
-      .toArray(),
-  ]);
-  const report = auditContentIdentityGraph({
-    identities: identities.map(toIdentityInput),
-    panResources: panResources.map(toLinkInput),
-    panSyncTargets: panSyncTargets.map(toLinkInput),
-  });
+  const report = await loadContentIdentityAuditReport();
   if (jsonOutput) {
     console.log(JSON.stringify({ generated_at: new Date().toISOString(), ...report }, null, 2));
   } else {
@@ -123,4 +71,3 @@ main()
     process.exitCode = 1;
   })
   .finally(() => closeDatabase());
-
