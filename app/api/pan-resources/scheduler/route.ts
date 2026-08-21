@@ -11,6 +11,7 @@ import {
   type PanSyncSchedulePatch,
   type PanSyncTask,
 } from "@/lib/pan/scheduler";
+import { adaptPanSyncRunsToPluginJobRuns } from "@/lib/pan/job-runner-adapter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +61,20 @@ export async function GET(request: NextRequest) {
       runId: runId || undefined,
       limit,
     });
-    return NextResponse.json({ code: 200, message: "获取成功", data: dashboard });
+    // The legacy scheduler remains the write-side source of truth. Expose a
+    // read-only provider-neutral view for the future job center without
+    // widening or renaming the existing `runs`/`active_run` API fields.
+    return NextResponse.json({
+      code: 200,
+      message: "获取成功",
+      data: {
+        ...dashboard,
+        plugin_runs: adaptPanSyncRunsToPluginJobRuns(dashboard.runs),
+        active_plugin_run: dashboard.active_run
+          ? adaptPanSyncRunsToPluginJobRuns([dashboard.active_run])[0]
+          : null,
+      },
+    });
   } catch (error) {
     console.error("读取后台同步调度状态失败:", error);
     return NextResponse.json({ code: 500, message: error instanceof Error ? error.message : "读取调度状态失败", data: null }, { status: 500 });

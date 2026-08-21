@@ -67,3 +67,14 @@ export function adaptPanSyncRunToPluginJobRun(run: PanSyncRun): PluginJobRun {
     ...(run.finished_at ? { finished_at: run.finished_at } : {}),
   };
 }
+
+/**
+ * Read-only batch adapter used by job-center consumers. The legacy scheduler
+ * remains the source of truth and keeps its six-state vocabulary; this helper
+ * deliberately performs no persistence or lifecycle mutation.
+ */
+export function adaptPanSyncRunsToPluginJobRuns(
+  runs: readonly PanSyncRun[]
+): PluginJobRun[] {
+  return runs.map(adaptPanSyncRunToPluginJobRun);
+}

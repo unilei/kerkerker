@@ -6,7 +6,10 @@ import {
   PLUGIN_JOB_ERROR_CODES,
   type PluginJobRunner,
 } from "@/lib/plugins/job-runner";
-import { adaptPanSyncRunToPluginJobRun } from "@/lib/pan/job-runner-adapter";
+import {
+  adaptPanSyncRunToPluginJobRun,
+  adaptPanSyncRunsToPluginJobRuns,
+} from "@/lib/pan/job-runner-adapter";
 
 function input(overrides: Record<string, unknown> = {}) {
   return {
@@ -238,4 +241,48 @@ test("legacy pan scheduler snapshots map to the generic job contract", () => {
   });
   assert.equal(generic.metadata.task, "catalog");
   assert.equal(generic.retry_policy.maxAttempts, 1);
+});
+
+test("batch pan snapshots expose a read-only generic view without changing legacy states", () => {
+  const base = {
+    run_id: "pan-run-batch",
+    plugin_id: "kerkerker.kkpan-cloud-drive",
+    plugin_version: "1.4.0",
+    profile_id: "cn-default",
+    profile: "cn-default",
+    config_version: "runtime",
+    actor: { type: "system" as const, id: "pan-scheduler" },
+    idempotency_key: "pan-sync:pan-run-batch",
+    task: "incremental" as const,
+    trigger: "manual" as const,
+    status: "queued" as const,
+    batch_limit: 50,
+    max_batches: 1,
+    discovered: 0,
+    queued: 0,
+    processed: 0,
+    synced: 0,
+    empty: 0,
+    failed: 0,
+    imported: 0,
+    refreshed: 0,
+    disabled: 0,
+    remaining: 0,
+    progress_total: 0,
+    completed_batches: 0,
+    cancel_requested: false,
+    created_at: "2026-08-21T00:00:00.000Z",
+    updated_at: "2026-08-21T00:00:00.000Z",
+  };
+  const [generic] = adaptPanSyncRunsToPluginJobRuns([base]);
+  assert.equal(generic?.status, "queued");
+  assert.equal(generic?.retry_policy.maxAttempts, 1);
+  assert.deepEqual(generic?.metadata, {
+    task: "incremental",
+    trigger: "manual",
+    batch_limit: 50,
+    max_batches: 1,
+    completed_batches: 0,
+    remaining: 0,
+  });
 });
