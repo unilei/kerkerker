@@ -369,6 +369,33 @@ function validateCompliance(
       );
     }
   }
+  for (const field of ["owner", "authorizationRef"] as const) {
+    if (compliance[field] !== undefined && !nonEmptyString(compliance[field])) {
+      addIssue(issues, "INVALID_COMPLIANCE", `compliance.${field}`, `${field} must be a non-empty string`);
+    }
+  }
+  if (compliance.dataPurpose !== undefined &&
+      !nonEmptyString(compliance.dataPurpose) &&
+      !(Array.isArray(compliance.dataPurpose) && compliance.dataPurpose.length > 0 && compliance.dataPurpose.every(nonEmptyString))) {
+    addIssue(issues, "INVALID_COMPLIANCE", "compliance.dataPurpose", "dataPurpose must be a non-empty string or list");
+  }
+  if (compliance.retentionDays !== undefined &&
+      (typeof compliance.retentionDays !== "number" ||
+        !Number.isSafeInteger(compliance.retentionDays) ||
+        compliance.retentionDays < 1 || compliance.retentionDays > 3650)) {
+    addIssue(issues, "INVALID_COMPLIANCE", "compliance.retentionDays", "retentionDays must be an integer from 1 to 3650");
+  }
+  for (const field of ["correctionContact", "takedownContact"] as const) {
+    const contact = compliance[field];
+    if (contact === undefined) continue;
+    if (typeof contact === "string") {
+      if (!nonEmptyString(contact)) addIssue(issues, "INVALID_COMPLIANCE", `compliance.${field}`, `${field} must not be empty`);
+      continue;
+    }
+    if (!isRecord(contact) || !Object.values(contact).some(nonEmptyString)) {
+      addIssue(issues, "INVALID_COMPLIANCE", `compliance.${field}`, `${field} must contain contact information`);
+    }
+  }
 }
 
 function validateNetworkHost(host: unknown, path: string, issues: PluginValidationIssue[]): void {

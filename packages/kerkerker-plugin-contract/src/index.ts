@@ -71,6 +71,12 @@ export interface PluginManifest {
   readonly compliance: {
     readonly legalBasis: string;
     readonly termsUrl?: string;
+    readonly owner?: string;
+    readonly authorizationRef?: string;
+    readonly dataPurpose?: string | readonly string[];
+    readonly retentionDays?: number;
+    readonly correctionContact?: PluginComplianceContact | string;
+    readonly takedownContact?: PluginComplianceContact | string;
     readonly contentScope: string | readonly string[];
     readonly regions: readonly string[];
     readonly dataClassification: string;
@@ -80,6 +86,12 @@ export interface PluginManifest {
     readonly secrets: readonly string[];
     readonly storage: "none" | "ephemeral" | "namespaced" | "persistent";
   };
+}
+
+export interface PluginComplianceContact {
+  readonly name?: string;
+  readonly email?: string;
+  readonly url?: string;
 }
 
 export interface ExternalReference {

@@ -93,6 +93,12 @@ export interface PluginComplianceDeclaration {
   /** The legal or contractual basis for collecting/processing the data. */
   readonly legalBasis: string;
   readonly termsUrl?: string;
+  readonly owner?: string;
+  readonly authorizationRef?: string;
+  readonly dataPurpose?: string | readonly string[];
+  readonly retentionDays?: number;
+  readonly correctionContact?: { readonly name?: string; readonly email?: string; readonly url?: string } | string;
+  readonly takedownContact?: { readonly name?: string; readonly email?: string; readonly url?: string } | string;
   /** A concise description, or a list, of the data/content covered by the plugin. */
   readonly contentScope: string | readonly string[];
   /** ISO 3166-1 alpha-2 codes, or an explicit deployment region label. */

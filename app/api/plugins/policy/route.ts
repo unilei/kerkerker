@@ -130,6 +130,12 @@ function enforcementMode(value: unknown): "audit" | "enforce" | undefined {
 function descriptorComplianceDefaults(descriptor: PluginDescriptor) {
   return {
     legalBasis: descriptor.compliance.legalBasis,
+    owner: descriptor.compliance.owner,
+    authorizationRef: descriptor.compliance.authorizationRef,
+    dataPurpose: descriptor.compliance.dataPurpose,
+    retentionDays: descriptor.compliance.retentionDays,
+    correctionContact: descriptor.compliance.correctionContact,
+    takedownContact: descriptor.compliance.takedownContact,
     contentScope: descriptor.compliance.contentScope,
     regions: descriptor.compliance.regions,
     dataClassification: descriptor.compliance.dataClassification,
@@ -164,6 +170,23 @@ function buildPolicyInput(
   if (action === "enable" && existing?.status !== "approved") {
     throw new RangeError("只有已批准插件可以启用");
   }
+  const owner = optionalString(body.owner, "owner") || existing?.owner || defaults.owner;
+  const authorizationRef =
+    optionalString(body.authorization_ref, "authorization_ref") ||
+    existing?.authorization_ref ||
+    defaults.authorizationRef;
+  const dataPurpose =
+    stringOrStringArray(body.data_purpose, "data_purpose") ||
+    existing?.data_purpose ||
+    defaults.dataPurpose;
+  const configuredRetention = retentionDays(body.retention_days);
+  const retention = configuredRetention ?? existing?.retention_days ?? defaults.retentionDays;
+  const correctionContact = body.correction_contact !== undefined
+    ? body.correction_contact as PluginPolicyInput["correctionContact"]
+    : existing?.correction_contact || defaults.correctionContact;
+  const takedownContact = body.takedown_contact !== undefined
+    ? body.takedown_contact as PluginPolicyInput["takedownContact"]
+    : existing?.takedown_contact || defaults.takedownContact;
 
   const status =
     action === "approve" || action === "enable"
@@ -195,19 +218,15 @@ function buildPolicyInput(
       ...(enforcementMode(body.enforcement_mode)
         ? { enforcementMode: enforcementMode(body.enforcement_mode) }
         : {}),
-      ...(optionalString(body.owner, "owner") ? { owner: optionalString(body.owner, "owner") } : {}),
-      ...(optionalString(body.authorization_ref, "authorization_ref")
-        ? { authorizationRef: optionalString(body.authorization_ref, "authorization_ref") }
-        : {}),
+      ...(owner ? { owner } : {}),
+      ...(authorizationRef ? { authorizationRef } : {}),
       ...(optionalString(body.license, "license") ? { license: optionalString(body.license, "license") } : {}),
       legalBasis:
         optionalString(body.legal_basis, "legal_basis") ||
         existing?.legal_basis ||
         defaults.legalBasis,
       ...(optionalString(body.terms_url, "terms_url") ? { termsUrl: optionalString(body.terms_url, "terms_url") } : {}),
-      ...(stringOrStringArray(body.data_purpose, "data_purpose")
-        ? { dataPurpose: stringOrStringArray(body.data_purpose, "data_purpose") }
-        : {}),
+      ...(dataPurpose ? { dataPurpose } : {}),
       contentScope:
         stringOrStringArray(body.content_scope, "content_scope") ||
         existing?.content_scope ||
@@ -217,15 +236,9 @@ function buildPolicyInput(
         optionalString(body.data_classification, "data_classification", 100) ||
         existing?.data_classification ||
         defaults.dataClassification,
-      ...(retentionDays(body.retention_days) !== undefined
-        ? { retentionDays: retentionDays(body.retention_days) }
-        : {}),
-      ...(body.correction_contact !== undefined
-        ? { correctionContact: body.correction_contact as PluginPolicyInput["correctionContact"] }
-        : {}),
-      ...(body.takedown_contact !== undefined
-        ? { takedownContact: body.takedown_contact as PluginPolicyInput["takedownContact"] }
-        : {}),
+      ...(retention !== undefined ? { retentionDays: retention } : {}),
+      ...(correctionContact ? { correctionContact } : {}),
+      ...(takedownContact ? { takedownContact } : {}),
       ...(action === "approve"
         ? { approvedBy: actor, approvedAt: new Date().toISOString() }
         : {}),
