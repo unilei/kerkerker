@@ -105,6 +105,8 @@ flowchart LR
 
 宿主身份层位于 [`lib/content-identity-db.ts`](../../lib/content-identity-db.ts)，集合为 `content_identities`。它只接受精确的 `(provider_id, external_id)` 引用，以宿主 UUID 生成不可变 `content_id`；同一请求发现引用指向多个身份时会报冲突，禁止标题模糊合并。网盘资源和影片同步台账在迁移期双写 `content_id` 与旧 `douban_id`，旧 API 仍保持兼容。
 
+通用作业的管理员只读入口为 `GET /api/plugins/jobs`。它只查询已写入 `plugin_jobs` 的通用作业，支持 `status`、`run_id` 和 `limit`，响应明确标记 `writable=false`；旧 Pan 调度的 `runs`/`plugin_runs` 仍由 `/api/pan-resources/scheduler` 提供，不能通过此入口修改或重试。只有完成双写、CAS 对账和执行器迁移后，才可以增加通用作业的写操作。
+
 身份迁移前先运行 `npm run content-identity:audit -- --json`。该命令只读取 `content_identities`、`pan_resources` 和 `pan_sync_targets`，不创建索引、不生成 UUID、不写入数据；退出码 2 表示发现必须人工处理的身份或来源冲突。缺失 `content_id` 且能由唯一 Douban 引用推断的记录只计入待回填，不会被审计命令自动修复；写入仍须使用 `scripts/content-identity-backfill.ts --apply --maintenance` 的停写流程。
 
 管理员也可以通过受保护的 `GET /api/plugins/identity-audit` 查看同一份只读快照。接口支持 `limit`（默认 100，最多 200）和 `conflicts_only=true`，只返回受限的冲突明细，同时保留完整计数、待回填数量和截断标记；鉴权失败或数据库读取失败不会返回身份数据。该接口与 CLI 共用 `skipInitialization` 的读取层，不会因为查看审计而创建索引或修改记录。
