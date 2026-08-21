@@ -9,7 +9,6 @@ import {
   Loader2,
   RefreshCw,
   ShieldCheck,
-  XCircle,
 } from "lucide-react";
 import type { ToastState } from "./types";
 
