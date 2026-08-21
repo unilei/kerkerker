@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPluginRegistry } from "@/lib/plugins/registry";
 import { invokePlugin } from "@/lib/plugins/runtime";
-import { invokeRemoteSidecar } from "@/lib/plugins/sidecar";
+import { invokeRemoteSidecar, SidecarCircuitBreaker } from "@/lib/plugins/sidecar";
 import { PluginError } from "@/lib/plugins/errors";
 import type { Plugin, PluginContext } from "@/lib/plugins/types";
 
@@ -245,4 +245,31 @@ test("remote sidecar stops before invoke when its health endpoint is unavailable
     (error: unknown) => error instanceof PluginError && error.code === "UPSTREAM_ERROR" && error.path === "runtime.health"
   );
   assert.deepEqual(urls, ["https://1.1.1.1/healthz"]);
+});
+
+test("sidecar circuit opens after upstream failures and allows one cooldown probe", () => {
+  let now = 1_000;
+  const breaker = new SidecarCircuitBreaker({
+    failureThreshold: 2,
+    cooldownMs: 500,
+    now: () => now,
+  });
+
+  assert.doesNotThrow(() => breaker.beforeRequest("example.remote@1.0.0"));
+  assert.deepEqual(breaker.recordFailure("example.remote@1.0.0"), { opened: false, failures: 1 });
+  assert.doesNotThrow(() => breaker.beforeRequest("example.remote@1.0.0"));
+  assert.deepEqual(breaker.recordFailure("example.remote@1.0.0"), { opened: true, failures: 2 });
+  assert.throws(
+    () => breaker.beforeRequest("example.remote@1.0.0"),
+    (error: unknown) => error instanceof PluginError && error.code === "UPSTREAM_ERROR" && error.path === "runtime.circuit"
+  );
+
+  now += 500;
+  assert.doesNotThrow(() => breaker.beforeRequest("example.remote@1.0.0"));
+  assert.throws(
+    () => breaker.beforeRequest("example.remote@1.0.0"),
+    (error: unknown) => error instanceof PluginError && error.path === "runtime.circuit"
+  );
+  breaker.recordSuccess("example.remote@1.0.0");
+  assert.doesNotThrow(() => breaker.beforeRequest("example.remote@1.0.0"));
 });

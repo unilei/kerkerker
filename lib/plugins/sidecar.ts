@@ -15,6 +15,8 @@ const MAX_RESPONSE_BYTES = 1_048_576;
 const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
 const PROTOCOL_VERSION_HEADER = "x-kerkerker-contract-version";
 const PROTOCOL_VERSIONS_HEADER = "x-kerkerker-contract-versions";
+const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 3;
+const DEFAULT_CIRCUIT_COOLDOWN_MS = 30_000;
 
 interface SidecarFetchResponse {
   readonly ok: boolean;
@@ -32,7 +34,89 @@ export interface InvokeSidecarOptions {
   readonly request: unknown;
   readonly fetcher?: typeof fetch;
   readonly maxResponseBytes?: number;
+  readonly circuitBreaker?: SidecarCircuitBreaker;
 }
+
+export interface SidecarCircuitBreakerOptions {
+  readonly failureThreshold?: number;
+  readonly cooldownMs?: number;
+  readonly now?: () => number;
+}
+
+interface SidecarCircuitState {
+  failures: number;
+  openedAt?: number;
+  probeInFlight: boolean;
+}
+
+/**
+ * Process-local sidecar circuit breaker. The registry remains immutable; this
+ * state only prevents a failing remote from being hammered by this host while
+ * a cooldown probe determines whether it has recovered.
+ */
+export class SidecarCircuitBreaker {
+  private readonly failureThreshold: number;
+  private readonly cooldownMs: number;
+  private readonly now: () => number;
+  private readonly states = new Map<string, SidecarCircuitState>();
+
+  constructor(options: SidecarCircuitBreakerOptions = {}) {
+    const failureThreshold = options.failureThreshold ?? DEFAULT_CIRCUIT_FAILURE_THRESHOLD;
+    const cooldownMs = options.cooldownMs ?? DEFAULT_CIRCUIT_COOLDOWN_MS;
+    if (!Number.isSafeInteger(failureThreshold) || failureThreshold < 1 || failureThreshold > 100) {
+      throw new RangeError("Sidecar 熔断失败阈值无效");
+    }
+    if (!Number.isSafeInteger(cooldownMs) || cooldownMs < 100 || cooldownMs > 3_600_000) {
+      throw new RangeError("Sidecar 熔断冷却时间无效");
+    }
+    this.failureThreshold = failureThreshold;
+    this.cooldownMs = cooldownMs;
+    this.now = options.now || Date.now;
+  }
+
+  beforeRequest(key: string): void {
+    const state = this.states.get(key);
+    if (state?.openedAt === undefined) return;
+
+    const elapsed = this.now() - state.openedAt;
+    if (elapsed < this.cooldownMs) {
+      throw new PluginError("UPSTREAM_ERROR", "远程插件暂时熔断，请稍后重试", {
+        path: "runtime.circuit",
+      });
+    }
+    if (state.probeInFlight) {
+      throw new PluginError("UPSTREAM_ERROR", "远程插件正在进行恢复探测", {
+        path: "runtime.circuit",
+      });
+    }
+    state.probeInFlight = true;
+  }
+
+  recordSuccess(key: string): void {
+    this.states.delete(key);
+  }
+
+  recordFailure(key: string): { readonly opened: boolean; readonly failures: number } {
+    const state = this.states.get(key) || { failures: 0, probeInFlight: false };
+    state.failures += 1;
+    state.probeInFlight = false;
+    if (state.failures >= this.failureThreshold) {
+      state.openedAt = this.now();
+    }
+    this.states.set(key, state);
+    return { opened: Boolean(state.openedAt), failures: state.failures };
+  }
+
+  reset(key: string): void {
+    this.states.delete(key);
+  }
+
+  get cooldownDurationMs(): number {
+    return this.cooldownMs;
+  }
+}
+
+export const defaultSidecarCircuitBreaker = new SidecarCircuitBreaker();
 
 type RemoteRuntime = PluginManifest["runtime"] & { readonly mode: "remote" };
 
@@ -247,49 +331,69 @@ export async function invokeRemoteSidecar<T>(options: InvokeSidecarOptions): Pro
   const endpoint = sidecarUrl(runtime.entry);
   await assertSafeOutboundUrl(endpoint);
   const fetcher = options.fetcher || fetch;
-  await checkRemoteHealth(runtime, options.context, fetcher);
   const maxBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1024 || maxBytes > 10 * MAX_RESPONSE_BYTES) {
     throw new RangeError("远程插件响应大小限制无效");
   }
+  const circuitBreaker = options.circuitBreaker || defaultSidecarCircuitBreaker;
+  const circuitKey = `${options.manifest.id}@${options.manifest.version}`;
+  circuitBreaker.beforeRequest(circuitKey);
 
-  let response: SidecarFetchResponse;
-  const headers = {
-    "content-type": "application/json",
-    accept: "application/json",
-    "x-kerkerker-request-id": options.context.requestId,
-    ...protocolHeaders(runtime),
-    ...authHeaders(runtime, options.context),
-  };
   try {
-    response = (await fetcher(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        contractVersion: "1.0.0",
-        capability: options.capability,
-        operation: options.operation,
-        context: publicContext(options.context),
-        request: options.request,
-      }),
-      signal: options.context.signal,
-    })) as SidecarFetchResponse;
-  } catch (error) {
-    if (options.context.signal.aborted) {
-      throw new PluginError("EXECUTION_CANCELLED", "远程插件调用已取消", { cause: error });
-    }
-    throw new PluginError("UPSTREAM_ERROR", "远程插件请求失败", { cause: error });
-  }
+    await checkRemoteHealth(runtime, options.context, fetcher);
 
-  const text = await readBoundedBody(response, maxBytes);
-  const payload = parseSidecarPayload(text);
-  assertNegotiatedProtocol(runtime, response);
-  if (!response.ok) {
-    const envelope = payload && typeof payload === "object" && !Array.isArray(payload)
-      ? (payload as { error?: { code?: unknown; message?: unknown } }).error
-      : undefined;
-    const message = typeof envelope?.message === "string" ? envelope.message : `远程插件 HTTP ${response.status}`;
-    throw new PluginError("UPSTREAM_ERROR", message, { path: typeof envelope?.code === "string" ? envelope.code : undefined });
+    let response: SidecarFetchResponse;
+    const headers = {
+      "content-type": "application/json",
+      accept: "application/json",
+      "x-kerkerker-request-id": options.context.requestId,
+      ...protocolHeaders(runtime),
+      ...authHeaders(runtime, options.context),
+    };
+    try {
+      response = (await fetcher(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          contractVersion: "1.0.0",
+          capability: options.capability,
+          operation: options.operation,
+          context: publicContext(options.context),
+          request: options.request,
+        }),
+        signal: options.context.signal,
+      })) as SidecarFetchResponse;
+    } catch (error) {
+      if (options.context.signal.aborted) {
+        throw new PluginError("EXECUTION_CANCELLED", "远程插件调用已取消", { cause: error });
+      }
+      throw new PluginError("UPSTREAM_ERROR", "远程插件请求失败", { cause: error });
+    }
+
+    const text = await readBoundedBody(response, maxBytes);
+    const payload = parseSidecarPayload(text);
+    assertNegotiatedProtocol(runtime, response);
+    if (!response.ok) {
+      const envelope = payload && typeof payload === "object" && !Array.isArray(payload)
+        ? (payload as { error?: { code?: unknown; message?: unknown } }).error
+        : undefined;
+      const message = typeof envelope?.message === "string" ? envelope.message : `远程插件 HTTP ${response.status}`;
+      throw new PluginError("UPSTREAM_ERROR", message, { path: typeof envelope?.code === "string" ? envelope.code : undefined });
+    }
+    circuitBreaker.recordSuccess(circuitKey);
+    return payload as T;
+  } catch (error) {
+    if (error instanceof PluginError && error.code === "UPSTREAM_ERROR") {
+      const result = circuitBreaker.recordFailure(circuitKey);
+      if (result.opened) {
+        options.context.logger.warn("plugin.sidecar.circuit_open", {
+          pluginId: options.manifest.id,
+          version: options.manifest.version,
+          failures: result.failures,
+          cooldownMs: circuitBreaker.cooldownDurationMs,
+        });
+      }
+    }
+    throw error;
   }
-  return payload as T;
 }
