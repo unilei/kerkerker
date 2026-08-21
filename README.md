@@ -20,7 +20,7 @@
 
 ## 插件平台架构
 
-内容数据、播放资源、网盘资源、弹幕、图片、搜索和推荐按统一插件契约演进。架构基线与开发验收标准见 [`docs/plugin-platform/README.md`](docs/plugin-platform/README.md) 和 [`docs/plugin-platform/development-standard.md`](docs/plugin-platform/development-standard.md)；当前分支已提供 v1 契约、Manifest 校验、静态注册中心以及 Douban/KKPAN 参考适配器。
+内容数据、播放资源、网盘资源、弹幕、图片、搜索和推荐按统一插件契约演进。架构基线与开发验收标准见 [`docs/plugin-platform/README.md`](docs/plugin-platform/README.md) 和 [`docs/plugin-platform/development-standard.md`](docs/plugin-platform/development-standard.md)；从当前地基到 1.0 的完整交付顺序见 [`docs/product-development-plan.md`](docs/product-development-plan.md)。当前分支已提供 v1 契约、Manifest 校验、静态注册中心以及 Douban/KKPAN 参考适配器。
 
 ## ✨ 功能特性
 
