@@ -6,36 +6,29 @@
  * Next.js, MongoDB, React, or a vendor SDK.
  */
 
-export const PLUGIN_CONTRACT_VERSION = "1.0.0" as const;
+import {
+  PLUGIN_CAPABILITIES as PUBLIC_PLUGIN_CAPABILITIES,
+  PLUGIN_CONTRACT_VERSION as PUBLIC_PLUGIN_CONTRACT_VERSION,
+  type ExternalReference as PublicExternalReference,
+  type HostContentReference as PublicHostContentReference,
+  type PluginCapabilityDeclaration as PublicPluginCapabilityDeclaration,
+  type PluginCapabilityId,
+  type PluginContractVersion as PublicPluginContractVersion,
+  type PluginPage as PublicPluginPage,
+  type PluginPageConsistency as PublicPluginPageConsistency,
+  type PluginRuntime as PublicPluginRuntime,
+  type PluginRuntimeMode as PublicPluginRuntimeMode,
+} from "@/packages/kerkerker-plugin-contract/src/index";
+
+export const PLUGIN_CONTRACT_VERSION = PUBLIC_PLUGIN_CONTRACT_VERSION;
 
 /** Contract versions may omit patch when referring to a compatible API line. */
-export type PluginContractVersion =
-  | `${number}.${number}`
-  | `${number}.${number}.${number}`;
+export type PluginContractVersion = PublicPluginContractVersion;
 
 /** Stable capability identifiers.  Provider names must never become IDs. */
-export type PluginCapability =
-  | "content.catalog"
-  | "content.calendar"
-  | "content.detail"
-  | "content.search"
-  | "resource.cloud-drive"
-  | "resource.playback"
-  | "interaction.danmu"
-  | "asset.image"
-  | "recommendation";
+export type PluginCapability = PluginCapabilityId;
 
-export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
-  "content.catalog",
-  "content.calendar",
-  "content.detail",
-  "content.search",
-  "resource.cloud-drive",
-  "resource.playback",
-  "interaction.danmu",
-  "asset.image",
-  "recommendation",
-] as const;
+export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = PUBLIC_PLUGIN_CAPABILITIES;
 
 export type CloudDriveFeature = "search" | "incremental" | "availability";
 
@@ -57,20 +50,12 @@ export const CLOUD_DRIVE_FEATURES: readonly CloudDriveFeature[] = [
   "availability",
 ] as const;
 
-export type PluginRuntimeMode = "built-in" | "package" | "remote";
+export type PluginRuntimeMode = PublicPluginRuntimeMode;
 
 /** The entry is a module specifier for local runtimes and an HTTP(S) URL for a remote runtime. */
-export interface PluginRuntime {
-  readonly mode: PluginRuntimeMode;
-  readonly entry: string;
-}
+export type PluginRuntime = PublicPluginRuntime;
 
-export interface PluginCapabilityDeclaration {
-  readonly id: PluginCapability;
-  readonly version: string;
-  /** Cloud-drive implementations must declare the operations they expose. */
-  readonly features?: readonly CloudDriveFeature[];
-}
+export type PluginCapabilityDeclaration = PublicPluginCapabilityDeclaration;
 
 /** Authoring input is intentionally versioned; bare capability strings are not loadable. */
 export type PluginCapabilityInput = PluginCapabilityDeclaration;
@@ -176,17 +161,9 @@ export type SourceRef = PluginSourceRef;
 export type PlatformRef = ResourcePlatformRef;
 
 /** External IDs are provider-owned; only the host can create contentId. */
-export interface ExternalReference {
-  readonly providerId: string;
-  readonly externalId: string;
-  readonly canonicalUrl?: string;
-  readonly verifiedAt?: string;
-}
+export type ExternalReference = PublicExternalReference;
 
-export interface HostContentReference {
-  readonly contentId: string;
-  readonly externalRefs: readonly ExternalReference[];
-}
+export type HostContentReference = PublicHostContentReference;
 
 export interface LocalizedText {
   readonly locale: string;
@@ -384,26 +361,9 @@ export interface RecommendationCandidate {
   readonly provenance: ResultProvenance;
 }
 
-export interface PluginPage<T> {
-  readonly items: readonly T[];
-  readonly nextCursor?: string;
-  readonly hasMore?: boolean;
-  readonly total?: number;
-  /**
-   * Optional source-page evidence for host jobs that must detect offset-page
-   * drift. Providers with a stable opaque cursor may omit this entirely.
-   */
-  readonly consistency?: PluginPageConsistency;
-}
+export type PluginPage<T> = PublicPluginPage<T>;
 
-export interface PluginPageConsistency {
-  /** Number of raw source rows before candidate filtering. */
-  readonly rawCount: number;
-  /** Stable source IDs in the order returned by the provider. */
-  readonly rawIds: readonly string[];
-  /** Provider-generated fingerprint for the raw page. */
-  readonly fingerprint: string;
-}
+export type PluginPageConsistency = PublicPluginPageConsistency;
 
 export interface PluginLogger {
   info(event: string, fields?: Readonly<Record<string, unknown>>): void;

@@ -116,13 +116,15 @@ export interface PluginErrorEnvelope {
 export interface PluginPage<T> {
   readonly items: readonly T[];
   readonly nextCursor?: string;
-  readonly hasMore: boolean;
-  readonly consistency?: {
-    readonly snapshotId?: string;
-    readonly rawCount?: number;
-    readonly rawIds?: readonly string[];
-    readonly fingerprint?: string;
-  };
+  readonly hasMore?: boolean;
+  readonly total?: number;
+  readonly consistency?: PluginPageConsistency;
+}
+
+export interface PluginPageConsistency {
+  readonly rawCount: number;
+  readonly rawIds: readonly string[];
+  readonly fingerprint: string;
 }
 
 export function isPluginCapabilityId(value: unknown): value is PluginCapabilityId {
