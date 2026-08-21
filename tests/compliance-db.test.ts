@@ -117,6 +117,9 @@ test("takedown blocks in enforce mode, can be resolved, and replays are stable",
     reason: "operator verified request",
     evidence: { url: "https://example.test/case?id=1&token=secret" },
   });
+  // Cross a clock tick: generated effective_at must not make a semantic replay
+  // conflict with the first request.
+  await new Promise((resolve) => setTimeout(resolve, 5));
   const replay = await repository.createTakedown({
     idempotencyKey: "takedown-1",
     target: { type: "content", contentId: "550e8400-e29b-41d4-a716-446655440000" },

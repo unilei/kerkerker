@@ -184,6 +184,8 @@ export interface TakedownRecordDoc {
   _id?: unknown;
   takedown_id: string;
   idempotency_key: string;
+  /** Fingerprint of caller-controlled fields; generated timestamps are excluded. */
+  request_fingerprint: string;
   target: TakedownTargetDoc;
   status: TakedownStatus;
   reason_code: string;

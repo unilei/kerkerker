@@ -447,7 +447,14 @@ function normalizeTakedownInput(input: TakedownInput): TakedownRecordDoc {
   const target = normalizeTakedownTarget(input.target);
   const reasonCode = boundedString(input.reasonCode, "reasonCode", 100);
   const reason = normalizeReason(input.reason);
-  const effectiveAt = normalizeTimestamp(input.effectiveAt, "effectiveAt");
+  const requestedBy = normalizeActor(input.requestedBy, "admin");
+  const evidence = input.evidence !== undefined
+    ? redactSensitive(input.evidence)
+    : undefined;
+  const explicitEffectiveAt = input.effectiveAt
+    ? normalizeTimestamp(input.effectiveAt, "effectiveAt")
+    : undefined;
+  const effectiveAt = explicitEffectiveAt || new Date().toISOString();
   const expiresAt = input.expiresAt
     ? normalizeDate(input.expiresAt, "expiresAt")
     : undefined;
@@ -457,16 +464,29 @@ function normalizeTakedownInput(input: TakedownInput): TakedownRecordDoc {
   const idempotencyKey = input.idempotencyKey
     ? boundedString(input.idempotencyKey, "idempotencyKey", 300)
     : generatedIdempotencyKey("takedown", { target, reasonCode, reason });
+  // Replays must compare caller-controlled intent, not generated timestamps.
+  // Otherwise the same request becomes a conflict as soon as the wall clock
+  // advances between attempts.
+  const requestFingerprint = fingerprint({
+    target,
+    reasonCode,
+    reason,
+    evidence,
+    requestedBy,
+    effectiveAt: explicitEffectiveAt || null,
+    expiresAt: expiresAt || null,
+  });
   const now = new Date().toISOString();
   return {
     takedown_id: randomUUID(),
     idempotency_key: idempotencyKey,
+    request_fingerprint: requestFingerprint,
     target,
     status: "active",
     reason_code: reasonCode,
     reason,
-    ...(input.evidence !== undefined ? { evidence: redactSensitive(input.evidence) } : {}),
-    requested_by: normalizeActor(input.requestedBy, "admin"),
+    ...(evidence !== undefined ? { evidence } : {}),
+    requested_by: requestedBy,
     effective_at: effectiveAt,
       ...(expiresAt ? { expires_at: expiresAt } : {}),
     created_at: now,
@@ -1094,6 +1114,12 @@ function assertSameAuditIdentity(existing: AuditEventDoc, requested: AuditEventD
 }
 
 function takedownIdentity(record: TakedownRecordDoc): unknown {
+  if (record.request_fingerprint) {
+    return {
+      idempotency_key: record.idempotency_key,
+      request_fingerprint: record.request_fingerprint,
+    };
+  }
   return {
     idempotency_key: record.idempotency_key,
     target: record.target,
