@@ -464,9 +464,6 @@ export class PluginJobRunner implements PluginJobRunnerPort {
   ): Promise<PluginJobRun> {
     const current = await this.require(runId);
     this.assertActiveLease(current, owner, this.now());
-    if (current.cancel_requested && input.status !== "cancelled") {
-      throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.INVALID_STATE, "任务已请求取消，不能标记为成功");
-    }
     const next = normalizeProgress(patch, current.progress);
     for (const key of Object.keys(current.progress) as (keyof PluginJobProgress)[]) {
       if (next[key] < current.progress[key]) {
@@ -532,6 +529,9 @@ export class PluginJobRunner implements PluginJobRunnerPort {
   ): Promise<PluginJobRun> {
     const current = await this.require(runId);
     this.assertActiveLease(current, owner, this.now());
+    if (current.cancel_requested && input.status !== "cancelled") {
+      throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.INVALID_STATE, "任务已请求取消，不能标记为成功");
+    }
     const now = this.now().toISOString();
     const updated = await this.update(current, (run) => ({
       ...withUpdatedTimestamp(run, now),

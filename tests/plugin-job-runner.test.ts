@@ -130,6 +130,11 @@ test("queued and running jobs have cooperative cancellation", async () => {
   const requested = await runner.requestCancel(active.run_id);
   assert.equal(requested?.status, "running");
   assert.equal(requested?.cancel_requested, true);
+  await assert.rejects(
+    () => runner.finish(active.run_id, "worker-a", { status: "succeeded" }),
+    (error: unknown) =>
+      error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.INVALID_STATE
+  );
   const stopped = await runner.finish(active.run_id, "worker-a", { status: "cancelled" });
   assert.equal(stopped.status, "cancelled");
 });
