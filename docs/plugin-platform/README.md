@@ -91,7 +91,7 @@ flowchart LR
 | `kerkerker-plugin-*` | 某一供应商或业务能力的适配实现 | 按授权选择公开或私有 | 独立包或 Sidecar 镜像 |
 | `kerkerker-douban-service` | 当前豆瓣内容服务和缓存实现 | 现有独立项目 | 作为 `content` 插件的上游服务 |
 
-当前第一阶段契约已落在 [`lib/plugins/types.ts`](../../lib/plugins/types.ts)、[`lib/plugins/validation.ts`](../../lib/plugins/validation.ts) 和 [`lib/plugins/errors.ts`](../../lib/plugins/errors.ts)。后续参考适配器可以暂时放在 [`lib/plugins/`](../../lib/plugins/) 内，以降低契约频繁调整的跨仓成本，但模块边界必须按未来可拆包设计：不能反向导入 `app/`、`components/` 或具体 MongoDB 集合。契约稳定后再发布到独立公共仓库。
+当前宿主兼容导出仍位于 [`lib/plugins/types.ts`](../../lib/plugins/types.ts)、[`lib/plugins/validation.ts`](../../lib/plugins/validation.ts) 和 [`lib/plugins/errors.ts`](../../lib/plugins/errors.ts)；可发布的 v1 契约包已位于 [`packages/kerkerker-plugin-contract/`](../../packages/kerkerker-plugin-contract/)，并由 CI 执行独立类型检查和契约测试。参考适配器可以暂时放在 [`lib/plugins/`](../../lib/plugins/) 内，以降低契约频繁调整的跨仓成本，但模块边界必须按未来可拆包设计：不能反向导入 `app/`、`components/` 或具体 MongoDB 集合。
 
 当前分支已经落地第一批可运行地基：[`lib/plugins/registry.ts`](../../lib/plugins/registry.ts) 提供封存式静态注册，[`lib/plugins/runtime.ts`](../../lib/plugins/runtime.ts) 提供按能力和操作的统一服务端调用边界，Douban 与 KKPAN 适配器分别位于 [`lib/plugins/adapters/douban-content.ts`](../../lib/plugins/adapters/douban-content.ts) 和 [`lib/plugins/adapters/kkpan-cloud-drive.ts`](../../lib/plugins/adapters/kkpan-cloud-drive.ts)。管理端只能通过受保护的 [`GET /api/plugins`](../../app/api/plugins/route.ts) 查看已注册的非秘密 Manifest 元数据；该接口不支持上传、动态加载或任意插件执行。
 
@@ -111,6 +111,8 @@ flowchart LR
 2. 私有仓库部署独立 Sidecar，宿主只通过版本化 HTTP 契约访问。Sidecar 使用服务间认证、出站白名单和独立密钥，适合需要隐藏实现、跨语言或独立扩缩容的插件。
 
 两种形式都属于可信静态注册：插件 ID、版本、端点和启用状态在部署时确定；管理后台只能修改经过 Manifest 声明的配置，不能上传代码或任意指定可执行文件。
+
+当前宿主已实现 Sidecar v1 的基础调用：仅允许 HTTPS 入口，入口主机必须同时出现在 Manifest 的精确 `permissions.networkHosts` 白名单中；请求带有受控上下文、请求 ID、取消信号和契约版本，响应有 1 MiB 默认大小上限。服务间认证、健康检查、熔断和版本回退仍必须在 Sidecar 进入生产画像前完成。
 
 ### 宿主与插件职责
 

@@ -37,6 +37,8 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 | 状态 | 已交付内容 | 主要位置 |
 | --- | --- | --- |
 | 已完成 | 插件契约、Manifest 校验、错误模型和静态注册 | `lib/plugins/types.ts`、`validation.ts`、`registry.ts` |
+| 已完成 | 可发布的 v1 公共契约包和宿主兼容导出 | `packages/kerkerker-plugin-contract/`、`lib/plugins/types.ts` |
+| 已完成 | 受白名单、HTTPS、请求取消和响应大小限制的远程 Sidecar 调用 | `lib/plugins/sidecar.ts`、`lib/plugins/runtime.ts`、`tests/plugin-sidecar.test.ts` |
 | 已完成 | 运行画像、上下文、超时和能力调用边界 | `lib/plugins/profiles.ts`、`invocation.ts`、`content-host.ts` |
 | 已完成 | 首页、分类、浏览、详情和日历的宿主 API 边界 | `app/api/content/*`、对应 hooks/pages |
 | 已完成 | KKPAN 云盘适配器与 provider-neutral cloud-drive host bridge | `lib/plugins/adapters/kkpan-cloud-drive.ts`、`lib/plugins/resource-host.ts`、`lib/pan/cloud-drive-task.ts` |
@@ -49,7 +51,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 
 1. 合规策略、审计事件、下架记录、公开资源过滤和后台操作面板已在本分支落地；生产仍处于 `audit` 迁移模式，必须完成每个插件的材料登记后再切换 `enforce`。
 2. 旧资源模型仍保留 `douban_id`、`source=kkpan` 和 `kkpan_id` 作为迁移兼容字段；资源 repository 已要求 `content_id`，后台资源/单片同步 API 已支持 content-only，但全量旧数据对账和“零旧写”证据尚未完成。
-3. 公共契约还在主应用仓库，远程 Sidecar、健康检查、熔断和版本回退尚未成为可发布运行时。
+3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 基础调用已落地，但健康检查、服务间认证、熔断、版本协商和版本回退仍未完成。
 4. 没有真正的 TMDB 内容插件和 `en-default` 画像。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
 6. Go 服务刷新任务和 Web 网盘任务还没有共享完整的插件作业运行器；Web 网盘调度已开始写入统一审计，跨仓运行器仍属于阶段 3/7。
@@ -79,7 +81,7 @@ flowchart LR
 | 0.5 | Top250 上游端点修复 | 已完成/P0 | 已完成 | 0 | Web、Go 服务和文档使用同一可用路径 |
 | 1 | 合规审批、审计、下架 | 本轮基础已完成，生产收口中 | 1–2 周 | 0 | 策略数据层/API/UI/运行时门禁已交付；待运营填写材料并切换 enforce |
 | 2 | 内容身份和旧字段迁移 | P0 | 2–3 周 | 1 | 资源/台账新写入已用 `content_id`；待完成全量对账、备份回滚演练和零旧写指标 |
-| 3 | 统一作业基础与独立契约包 | P1 | 3–5 周 | 2 | 任务和插件都使用版本化运行边界 |
+| 3 | 统一作业基础与独立契约包 | 本轮契约基础已完成，作业运行器收口中 | 3–5 周 | 2 | 任务和插件都使用版本化运行边界；待完成通用 runner 与 Sidecar 生产治理 |
 | 4 | TMDB 内容插件与英文画像 | P1 | 2–4 周 | 3 | 英文画像不依赖 Douban 回源 |
 | 5 | 通用云盘插件与资源中心 | P1 | 2–3 周 | 2、3 | 新云盘来源无需改宿主路由 |
 | 6 | 播放、弹幕、图片、推荐插件 | P1 | 3–5 周 | 3、4 | 每项能力有标准 DTO 和策略门禁 |
@@ -142,9 +144,9 @@ flowchart LR
 **实现内容**：
 
 - 从 `lib/pan/scheduler.ts` 提取通用 `PluginJobRunner`，统一 `run_id`、租约、心跳、取消、恢复、幂等键、游标、重试退避和配置快照；先以兼容适配器承载现有影片同步。
-- 建立独立的 `kerkerker-plugin-contract` 仓库，发布 Manifest、能力接口、DTO、错误码、JSON Schema、兼容性测试包和 TypeScript SDK。
+- 建立独立的 `kerkerker-plugin-contract` 包/仓库，发布 Manifest、能力接口、DTO、错误码、JSON Schema、兼容性测试包和 TypeScript SDK；当前仓内发布骨架和 CI 检查已完成。
 - 将 Douban、KKPAN 适配器拆成独立插件包；私有实现可以使用受控 package 或 Sidecar 镜像，宿主只通过注册表和版本化契约调用。
-- 实现 Sidecar HTTP 协议：服务间认证、请求 ID、超时/取消、健康检查、能力检查、熔断、重试上限、版本协商和出站主机白名单。
+- 实现 Sidecar HTTP 协议：当前已完成 HTTPS、精确出站主机白名单、请求 ID、超时/取消、能力/操作 allowlist 和响应大小限制；服务间认证、健康检查、熔断、重试上限、版本协商仍是本阶段剩余工作。
 - 注册表支持优先级、健康摘除、明确回退和配置版本；不允许管理员上传代码或任意 endpoint。
 
 **验收**：任务在多实例、重启和取消场景下不重复执行；新增一个示例插件只改插件仓库、部署注册和测试，不改宿主业务路由；Sidecar 不可用时有可观测的失败或批准的回退；契约破坏性变更会阻止构建。
