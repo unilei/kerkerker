@@ -41,14 +41,14 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 | 已完成 | 首页、分类、浏览、详情和日历的宿主 API 边界 | `app/api/content/*`、对应 hooks/pages |
 | 已完成 | KKPAN 云盘适配器与 provider-neutral cloud-drive host bridge | `lib/plugins/adapters/kkpan-cloud-drive.ts`、`lib/plugins/resource-host.ts`、`lib/pan/cloud-drive-task.ts` |
 | 已完成 | 影片台账、批量同步、定时任务、租约、取消和运行日志 | `lib/pan/catalog-sync.ts`、`lib/pan/scheduler.ts` |
-| 已完成 | 内容身份 UUID、外部引用及迁移脚本的预览/维护模式 | `lib/content-identity-db.ts`、`scripts/content-identity-backfill.ts` |
+| 已完成 | 内容身份 UUID、外部引用、资源/同步台账的 `content_id` 权威写入及迁移脚本预览/维护模式 | `lib/content-identity-db.ts`、`lib/pan-resources-db.ts`、`lib/pan/catalog-sync.ts`、`scripts/content-identity-backfill.ts` |
 | 已完成 | Douban 图片 R2 镜像、Mongo 持久化和部署门禁 | `kerkerker-douban-service`、`.github/workflows` |
 | 已完成 | 当前生产部署健康、Mongo、R2 和 Top250 烟测 | GitHub Actions 部署流程 |
 
 ### 2.2 当前明确的缺口
 
 1. 合规策略、审计事件、下架记录、公开资源过滤和后台操作面板已在本分支落地；生产仍处于 `audit` 迁移模式，必须完成每个插件的材料登记后再切换 `enforce`。
-2. 旧资源模型仍有 `douban_id`、`source=kkpan` 和 `kkpan_id` 的迁移兼容写入路径，尚未达到“零旧写”。
+2. 旧资源模型仍保留 `douban_id`、`source=kkpan` 和 `kkpan_id` 作为迁移兼容字段；资源 repository 已要求 `content_id`，后台资源/单片同步 API 已支持 content-only，但全量旧数据对账和“零旧写”证据尚未完成。
 3. 公共契约还在主应用仓库，远程 Sidecar、健康检查、熔断和版本回退尚未成为可发布运行时。
 4. 没有真正的 TMDB 内容插件和 `en-default` 画像。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
@@ -78,7 +78,7 @@ flowchart LR
 | 0 | 地基冻结与基线验证 | 已完成 | 维护 | 无 | 当前生产烟测和分支策略有效 |
 | 0.5 | Top250 上游端点修复 | 已完成/P0 | 已完成 | 0 | Web、Go 服务和文档使用同一可用路径 |
 | 1 | 合规审批、审计、下架 | 本轮基础已完成，生产收口中 | 1–2 周 | 0 | 策略数据层/API/UI/运行时门禁已交付；待运营填写材料并切换 enforce |
-| 2 | 内容身份和旧字段迁移 | P0 | 2–3 周 | 1 | 新写入只用 `content_id`，冲突为零 |
+| 2 | 内容身份和旧字段迁移 | P0 | 2–3 周 | 1 | 资源/台账新写入已用 `content_id`；待完成全量对账、备份回滚演练和零旧写指标 |
 | 3 | 统一作业基础与独立契约包 | P1 | 3–5 周 | 2 | 任务和插件都使用版本化运行边界 |
 | 4 | TMDB 内容插件与英文画像 | P1 | 2–4 周 | 3 | 英文画像不依赖 Douban 回源 |
 | 5 | 通用云盘插件与资源中心 | P1 | 2–3 周 | 2、3 | 新云盘来源无需改宿主路由 |
