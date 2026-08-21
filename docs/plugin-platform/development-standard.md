@@ -612,6 +612,7 @@ npm run build
 - [ ] 插件制品和依赖可追踪且不可变，部署、配置迁移、观测指标和回滚步骤已经验证。
 - [ ] 关闭插件后不会再回源或启动任务，已有数据可按来源和地区安全隐藏、下架或恢复。
 - [ ] 新插件接入没有要求通用路由、核心数据模型或 UI 增加供应商专用判断。
+
 ### Legacy job read adapters
 
 When a provider-specific scheduler is being migrated, a read-only adapter may expose its records as the provider-neutral `PluginJobRun` DTO. The adapter must not claim a durable CAS revision or retry capability that the source scheduler does not have: use `revision: 0`, a truthful `maxAttempts` value, and keep the legacy status vocabulary unchanged. Write-side migration requires an explicit dual-write/reconciliation design and must not point the generic store at a legacy collection by type assertion alone.
