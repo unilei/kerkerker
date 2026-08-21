@@ -16,6 +16,7 @@ import {
 } from '@/types/pan-resource';
 import {
   findContentIdentityByExternalRef,
+  findContentIdentityById,
   isValidContentId,
   resolveContentIdentity,
 } from '@/lib/content-identity-db';
@@ -65,19 +66,53 @@ function getKkpanIdentityIssue(input: PanResourceInput): string | null {
 }
 
 async function withHostIdentity(
-  input: PanResourceInput & { douban_id: string },
+  input: PanResourceInput & { douban_id?: string; content_id?: string },
   options: { assignManualSource?: boolean } = {}
 ) {
-  const identity = await resolveContentIdentity([
-    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: input.douban_id },
-  ]);
-  if (input.content_id && input.content_id !== identity.contentId) {
-    throw new RangeError('content_id 与 douban_id 的宿主身份不一致');
+  const suppliedDoubanId = input.douban_id?.trim();
+  const suppliedContentId = input.content_id?.trim();
+  if (suppliedContentId && !isValidContentId(suppliedContentId)) {
+    throw new RangeError('content_id 格式无效');
+  }
+
+  let contentId: string;
+  let doubanId: string;
+  if (suppliedContentId) {
+    // content_id is authoritative for new plugin callers. Reading an existing
+    // identity is intentionally non-creating: a missing/partial identity must
+    // be repaired by the migration workflow, not invented by a resource write.
+    const identity = await findContentIdentityById(suppliedContentId);
+    if (!identity) {
+      throw new RangeError('content_id 尚未解析为宿主内容身份');
+    }
+    const doubanRef = identity.externalRefs.find(
+      (ref) => ref.providerId === DOUBAN_CONTENT_PLUGIN_ID
+    );
+    if (!doubanRef || !/^\d{1,20}$/.test(doubanRef.externalId)) {
+      throw new RangeError('content_id 缺少有效的 Douban 外部引用');
+    }
+    contentId = suppliedContentId;
+    doubanId = doubanRef.externalId;
+    if (suppliedDoubanId && suppliedDoubanId !== doubanId) {
+      throw new RangeError('content_id 与 douban_id 的宿主身份不一致');
+    }
+  } else if (suppliedDoubanId) {
+    if (!/^\d{1,20}$/.test(suppliedDoubanId)) {
+      throw new RangeError('douban_id 格式无效');
+    }
+    const identity = await resolveContentIdentity([
+      { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: suppliedDoubanId },
+    ]);
+    contentId = identity.contentId;
+    doubanId = suppliedDoubanId;
+  } else {
+    throw new RangeError('必须提供 douban_id 或 content_id');
   }
   const hasKkpanId = isValidKkpanId(input.kkpan_id);
   return {
     ...input,
-    content_id: identity.contentId,
+    douban_id: doubanId,
+    content_id: contentId,
     ...(options.assignManualSource && !hasKkpanId
       ? { source: input.source || ('manual' as const) }
       : {}),
@@ -214,21 +249,29 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const { douban_id, brand, title, url } = body;
+    const { douban_id, content_id, brand, title, url } = body;
 
-    if (!douban_id || !brand || !title || !url) {
+    if ((!douban_id && !content_id) || !brand || !title || !url) {
       return NextResponse.json(
         {
           code: 400,
-          message: '缺少必要字段（douban_id、brand、title、url）',
+          message: '缺少必要字段（douban_id 或 content_id、brand、title、url）',
           data: null,
         },
         { status: 400 }
       );
     }
-    if (!/^\d{1,20}$/.test(douban_id)) {
+    if (douban_id !== undefined &&
+      (typeof douban_id !== 'string' || !/^\d{1,20}$/.test(douban_id))) {
       return NextResponse.json(
         { code: 400, message: 'douban_id 格式无效', data: null },
+        { status: 400 }
+      );
+    }
+    if (content_id !== undefined &&
+      (typeof content_id !== 'string' || !isValidContentId(content_id))) {
+      return NextResponse.json(
+        { code: 400, message: 'content_id 格式无效', data: null },
         { status: 400 }
       );
     }
@@ -272,14 +315,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const authoritativeBody = await withHostIdentity(
-      { ...body, douban_id },
-      { assignManualSource: true }
-    );
+    const authoritativeBody = await withHostIdentity(body, {
+      assignManualSource: true,
+    });
 
     const { resource } = await createPanResourceInDB({
       ...authoritativeBody,
-      douban_id,
       brand: brand as PanBrand,
       title,
       url,
@@ -399,6 +440,15 @@ export async function PUT(request: NextRequest) {
     ) {
       return NextResponse.json(
         { code: 400, message: 'douban_id 格式无效', data: null },
+        { status: 400 }
+      );
+    }
+    if (
+      updates.content_id !== undefined &&
+      (typeof updates.content_id !== 'string' || !isValidContentId(updates.content_id))
+    ) {
+      return NextResponse.json(
+        { code: 400, message: 'content_id 格式无效', data: null },
         { status: 400 }
       );
     }

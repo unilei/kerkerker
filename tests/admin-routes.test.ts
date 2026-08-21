@@ -127,6 +127,55 @@ test("pan resource updates reject an empty compatibility movie ID before databas
   }
 });
 
+test("pan resource updates reject malformed content_id before database access", async () => {
+  const previousSecret = process.env.ADMIN_SESSION_SECRET;
+  try {
+    const response = await updatePanResource(
+      authenticatedRawRequest(
+        "http://localhost/api/pan-resources",
+        "PUT",
+        JSON.stringify({
+          id: "507f1f77bcf86cd799439011",
+          content_id: "not-a-uuid",
+        })
+      )
+    );
+    assert.equal(response.status, 400);
+  } finally {
+    if (previousSecret === undefined) delete process.env.ADMIN_SESSION_SECRET;
+    else process.env.ADMIN_SESSION_SECRET = previousSecret;
+  }
+});
+
+test("pan resource creation accepts content_id as the preferred identity input", async () => {
+  const previousSecret = process.env.ADMIN_SESSION_SECRET;
+  const previousMongoUri = process.env.MONGODB_URI;
+  try {
+    process.env.MONGODB_URI = "";
+    const response = await createPanResource(
+      authenticatedRawRequest(
+        "http://localhost/api/pan-resources",
+        "POST",
+        JSON.stringify({
+          content_id: "550e8400-e29b-41d4-a716-446655440000",
+          brand: "quark",
+          title: "测试资源",
+          url: "https://pan.quark.cn/s/example",
+        })
+      )
+    );
+    // The request passes route-level validation and reaches the identity
+    // repository; without Mongo it must fail as an infrastructure error,
+    // rather than being rejected for a missing legacy douban_id.
+    assert.notEqual(response.status, 400);
+  } finally {
+    if (previousSecret === undefined) delete process.env.ADMIN_SESSION_SECRET;
+    else process.env.ADMIN_SESSION_SECRET = previousSecret;
+    if (previousMongoUri === undefined) delete process.env.MONGODB_URI;
+    else process.env.MONGODB_URI = previousMongoUri;
+  }
+});
+
 test("pan resource deletion requires an authenticated admin session", async () => {
   const response = await deletePanResource(
     new NextRequest(

@@ -16,7 +16,10 @@ import type {
 } from "@/lib/plugins/types";
 import { getKnownPanMovieTargets } from "@/lib/pan-resources-db";
 import { syncPanResourcesForMovie } from "@/lib/pan/sync";
-import { resolveContentIdentity } from "@/lib/content-identity-db";
+import {
+  isValidContentId,
+  resolveContentIdentity,
+} from "@/lib/content-identity-db";
 import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
 
 export const PAN_SYNC_TARGET_STATUSES = [
@@ -142,10 +145,13 @@ function normalizeInput(input: PanSyncTargetInput): PanSyncTargetInput | null {
   const doubanId = String(input.douban_id || "").trim();
   const title = String(input.title || "").trim();
   if (!/^\d{1,20}$/.test(doubanId) || !title) return null;
-  const contentId = typeof input.content_id === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.content_id)
-    ? input.content_id
-    : undefined;
+  let contentId: string | undefined;
+  if (input.content_id !== undefined) {
+    contentId = typeof input.content_id === "string" ? input.content_id.trim() : "";
+    if (!isValidContentId(contentId)) {
+      throw new RangeError("同步台账 content_id 格式无效");
+    }
+  }
   const cover = typeof input.cover === "string" ? input.cover.trim() : "";
   const year = typeof input.year === "string" ? input.year.trim() : "";
   return {
@@ -162,34 +168,67 @@ function normalizeInput(input: PanSyncTargetInput): PanSyncTargetInput | null {
   };
 }
 
-export async function upsertPanSyncTargets(
-  inputs: PanSyncTargetInput[]
-): Promise<number> {
-  const normalized = [
-    ...new Map(
-      inputs
-        .map(normalizeInput)
-        .filter((value): value is PanSyncTargetInput => value !== null)
-        .map((value) => [value.douban_id, value] as const)
-    ).values(),
-  ];
-  if (normalized.length === 0) return 0;
+export type PreparedPanSyncTargetInput = PanSyncTargetInput & { content_id: string };
 
-  // A caller may suggest content_id, but the host identity resolver is the
-  // authority. Discovery without content_id remains allowed and is resolved
-  // before the actual resource sync claims the target.
-  const validated = await Promise.all(
+export type PanSyncContentIdResolver = (
+  doubanId: string
+) => Promise<string>;
+
+async function resolveDoubanContentId(doubanId: string): Promise<string> {
+  const identity = await resolveContentIdentity([
+    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: doubanId },
+  ]);
+  return identity.contentId;
+}
+
+/**
+ * Resolve every target identity before any Mongo write starts. Keeping this
+ * as a separate preparation phase makes a mismatch fail the whole batch,
+ * rather than leaving an earlier subset persisted without a content_id.
+ */
+export async function preparePanSyncTargetInputs(
+  inputs: PanSyncTargetInput[],
+  resolveContentId: PanSyncContentIdResolver = resolveDoubanContentId
+): Promise<PreparedPanSyncTargetInput[]> {
+  // Validate every submitted row before deduplication. Otherwise an earlier
+  // duplicate with a forged content_id could be silently discarded by a later
+  // row for the same Douban ID.
+  const normalized = inputs
+    .map(normalizeInput)
+    .filter((value): value is PanSyncTargetInput => value !== null);
+  if (normalized.length === 0) return [];
+
+  const prepared = await Promise.all(
     normalized.map(async (input) => {
-      if (!input.content_id) return input;
-      const identity = await resolveContentIdentity([
-        { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: input.douban_id },
-      ]);
-      if (input.content_id !== identity.contentId) {
+      const resolvedContentId = await resolveContentId(input.douban_id);
+      if (!isValidContentId(resolvedContentId)) {
+        throw new Error("宿主内容身份解析返回了无效 content_id");
+      }
+      if (input.content_id && input.content_id !== resolvedContentId) {
         throw new Error("同步台账 content_id 与影片外部引用不一致");
       }
-      return { ...input, content_id: identity.contentId };
+      return {
+        ...input,
+        content_id: resolvedContentId,
+      };
     })
   );
+
+  return [
+    ...new Map(
+      prepared.map((value) => [value.douban_id, value] as const)
+    ).values(),
+  ];
+}
+
+export async function upsertPanSyncTargets(
+  inputs: PanSyncTargetInput[],
+  resolveContentId: PanSyncContentIdResolver = resolveDoubanContentId
+): Promise<number> {
+  // Resolve all Douban identities before obtaining the collection or issuing
+  // bulkWrite, so a later conflict cannot leave a partial target batch.
+  const validated = await preparePanSyncTargetInputs(inputs, resolveContentId);
+  if (validated.length === 0) return 0;
 
   const now = new Date().toISOString();
   const coll = await collection();
@@ -200,7 +239,7 @@ export async function upsertPanSyncTargets(
         update: {
           $set: {
             title: input.title,
-            ...(input.content_id ? { content_id: input.content_id } : {}),
+            content_id: input.content_id,
             ...(input.cover !== undefined ? { cover: input.cover } : {}),
             ...(input.year !== undefined ? { year: input.year } : {}),
             ...(input.internal_id !== undefined
@@ -210,7 +249,7 @@ export async function upsertPanSyncTargets(
           },
           $setOnInsert: {
             douban_id: input.douban_id,
-            ...(input.content_id ? { content_id: input.content_id } : {}),
+            content_id: input.content_id,
             status: "pending" as const,
             attempts: 0,
             resources_count: 0,

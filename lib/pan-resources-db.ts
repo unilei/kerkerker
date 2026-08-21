@@ -11,6 +11,7 @@ import {
   findContentIdentityById,
   resolveContentIdentity,
 } from "@/lib/content-identity-db";
+import type { HostContentReference } from "@/lib/plugins/types";
 import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
 import { KKPAN_PLUGIN_ID } from "@/lib/plugins/adapters/kkpan-cloud-drive";
 import {
@@ -290,14 +291,14 @@ export async function getKnownPanMovieTargets(): Promise<
 // 而不是写入 null。因为 MongoDB 驱动默认会把 undefined 序列化为 null，而部分唯一索引
 // 即使加 $type 过滤也无法规避同一集合多条 null 文档的语义混乱——直接省略字段最干净。
 export async function createPanResourceInDB(
-  input: Required<
-    Pick<PanResourceInput, "douban_id" | "content_id" | "brand" | "title" | "url">
-  > &
+  input: Required<Pick<PanResourceInput, "brand" | "title" | "url">> &
+    Pick<PanResourceInput, "douban_id" | "content_id"> &
     PanResourceInput
 ): Promise<{ resource: PanResource; created: boolean }> {
   if (
-    typeof input.douban_id !== "string" ||
-    !/^\d{1,20}$/.test(input.douban_id)
+    input.douban_id !== undefined &&
+    (typeof input.douban_id !== "string" ||
+      !/^\d{1,20}$/.test(input.douban_id))
   ) {
     throw new RangeError("douban_id 格式无效");
   }
@@ -313,47 +314,61 @@ export async function createPanResourceInDB(
   if (input.kkpan_id !== undefined && !hasKkpanId) {
     throw new RangeError("kkpan_id 必须是正安全整数");
   }
-  if (input.content_id !== undefined && !CONTENT_ID_PATTERN.test(input.content_id)) {
+  const contentId = input.content_id;
+  if (contentId !== undefined && !CONTENT_ID_PATTERN.test(contentId)) {
     throw new RangeError("content_id 必须是有效 UUID");
   }
   if (input.source === "kkpan" && !hasKkpanId) {
     throw new RangeError("kkpan 来源资源必须提供有效 kkpan_id");
   }
-
-  // A resource write is only valid after the host identity resolver has
-  // assigned a content_id.  Routes may still accept a legacy douban_id, but
-  // they must resolve it before reaching this repository boundary.
-  if (!CONTENT_ID_PATTERN.test(input.content_id)) {
+  if (!contentId) {
     throw new RangeError("资源写入必须提供有效 content_id");
   }
-  const hostIdentity = await findContentIdentityById(input.content_id);
-  if (!hostIdentity) {
-    throw new RangeError("content_id 尚未解析为宿主内容身份");
-  }
-  const doubanRef = hostIdentity.externalRefs.find(
-    (ref) => ref.providerId === DOUBAN_CONTENT_PLUGIN_ID
-  );
-  if (!doubanRef || doubanRef.externalId !== input.douban_id) {
-    throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
-  }
 
-  const identity = await resolveContentIdentity([
-    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: input.douban_id },
-  ]);
-  if (input.content_id && input.content_id !== identity.contentId) {
-    throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
+  // `content_id` is authoritative at the repository boundary. The API may
+  // translate a legacy douban_id into an existing identity before calling us,
+  // but a direct database caller cannot create a new resource without it.
+  let identity: HostContentReference;
+  let canonicalDoubanId: string;
+  if (contentId) {
+    const existingIdentity = await findContentIdentityById(contentId);
+    if (!existingIdentity) {
+      throw new RangeError("content_id 尚未解析为宿主内容身份");
+    }
+    const doubanRefs = existingIdentity.externalRefs.filter(
+      (ref) =>
+        ref.providerId === DOUBAN_CONTENT_PLUGIN_ID &&
+        /^\d{1,20}$/.test(ref.externalId)
+    );
+    const doubanRef = input.douban_id
+      ? doubanRefs.find((ref) => ref.externalId === input.douban_id)
+      : doubanRefs.length === 1
+        ? doubanRefs[0]
+        : undefined;
+    if (!doubanRef) {
+      throw new RangeError(
+        input.douban_id
+          ? "content_id 与 douban_id 的宿主身份不一致"
+          : "content_id 必须唯一映射到一个有效的 Douban 外部引用"
+      );
+    }
+    identity = existingIdentity;
+    canonicalDoubanId = doubanRef.externalId;
+  } else {
+    throw new RangeError("资源写入必须提供有效 content_id");
   }
+  const canonicalContentId = identity.contentId;
 
   await enforceProviderWritePolicy(
     providerId || (hasKkpanId ? KKPAN_PLUGIN_ID : undefined),
     providerResourceId || (hasKkpanId ? String(input.kkpan_id) : undefined),
-    { contentId: identity.contentId }
+    { contentId: canonicalContentId }
   );
 
   // 手工录入时省略 kkpan_id 字段，避免 undefined→null 触发唯一索引语义歧义
   const doc: Omit<PanResourceDoc, "_id"> = {
-    douban_id: input.douban_id,
-    content_id: identity.contentId,
+    douban_id: canonicalDoubanId,
+    content_id: canonicalContentId,
     internal_id: input.internal_id,
     movie_title: input.movie_title,
     brand: input.brand,
@@ -413,13 +428,12 @@ export async function createPanResourceInDB(
     }
     const existing = kkpanExisting || providerExisting;
     if (!existing) throw err; // 不应该走到，保守重抛
-    if (existing.douban_id !== input.douban_id) {
+    if (existing.douban_id !== canonicalDoubanId) {
       throw new Error("同一 kkpan_id 已关联到其他影片，需要人工处理");
     }
     if (
-      input.content_id &&
       existing.content_id &&
-      existing.content_id !== input.content_id
+      existing.content_id !== canonicalContentId
     ) {
       throw new Error("同一 kkpan_id 已关联到其他 content_id，需要人工处理");
     }
@@ -432,8 +446,8 @@ export async function createPanResourceInDB(
       throw new Error("同一资源已经关联到其他 provider 引用，需要人工处理");
     }
     const compatibilityBackfill: Partial<PanResourceDoc> = {};
-    if (input.content_id && !existing.content_id) {
-      compatibilityBackfill.content_id = input.content_id;
+    if (!existing.content_id) {
+      compatibilityBackfill.content_id = canonicalContentId;
     }
     if (hasProviderRef && !existing.provider_id) {
       compatibilityBackfill.provider_id = providerId;
