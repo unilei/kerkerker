@@ -216,3 +216,33 @@ test("remote sidecar rejects an incompatible negotiated protocol version", async
     (error: unknown) => error instanceof PluginError && error.code === "UPSTREAM_ERROR" && error.path === "x-kerkerker-contract-version"
   );
 });
+
+test("remote sidecar stops before invoke when its health endpoint is unavailable", async () => {
+  const plugin: Plugin = {
+    ...remotePlugin,
+    manifest: {
+      ...remotePlugin.manifest,
+      runtime: {
+        ...remotePlugin.manifest.runtime,
+        health: { path: "/healthz", timeoutMs: 500 },
+      },
+    },
+  };
+  const urls: string[] = [];
+  const fetcher: typeof fetch = async (url) => {
+    urls.push(String(url));
+    return new Response("unhealthy", { status: 503 });
+  };
+  await assert.rejects(
+    () => invokeRemoteSidecar({
+      manifest: plugin.manifest,
+      capability: "content.detail",
+      operation: "detail",
+      context: context(),
+      request: {},
+      fetcher,
+    }),
+    (error: unknown) => error instanceof PluginError && error.code === "UPSTREAM_ERROR" && error.path === "runtime.health"
+  );
+  assert.deepEqual(urls, ["https://1.1.1.1/healthz"]);
+});
