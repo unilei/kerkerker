@@ -420,6 +420,7 @@ export interface ContentCalendarRequest {
   readonly to: string;
   readonly region?: string;
   readonly cursor?: string;
+  readonly limit?: number;
 }
 
 export interface ContentDetailRequest {

@@ -1,5 +1,6 @@
 import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
 import { KKPAN_PLUGIN_ID } from "@/lib/plugins/adapters/kkpan-cloud-drive";
+import { TMDB_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/tmdb-content";
 import { pluginRegistry } from "@/lib/plugins/builtin";
 import {
   createPluginProfileRegistry,
@@ -7,6 +8,7 @@ import {
 } from "@/lib/plugins/profiles";
 
 export const CN_DEFAULT_PROFILE_ID = "cn-default";
+export const EN_DEFAULT_PROFILE_ID = "en-default";
 
 export const cnDefaultPluginProfile: PluginProfile = {
   id: CN_DEFAULT_PROFILE_ID,
@@ -23,11 +25,24 @@ export const cnDefaultPluginProfile: PluginProfile = {
   },
 };
 
-/**
- * Add future profiles (for example en-default with TMDB) to this static list.
- * Selection and validation logic remains provider-neutral.
- */
-export const BUILTIN_PLUGIN_PROFILES = [cnDefaultPluginProfile] as const;
+export const enDefaultPluginProfile: PluginProfile = {
+  id: EN_DEFAULT_PROFILE_ID,
+  locale: "en-US",
+  region: "US",
+  capabilities: {
+    "content.catalog": [TMDB_CONTENT_PLUGIN_ID],
+    "content.calendar": [TMDB_CONTENT_PLUGIN_ID],
+    "content.detail": [TMDB_CONTENT_PLUGIN_ID],
+    "content.search": [TMDB_CONTENT_PLUGIN_ID],
+    "asset.image": [TMDB_CONTENT_PLUGIN_ID],
+  },
+};
+
+/** Selection and validation remain provider-neutral as more profiles are added. */
+export const BUILTIN_PLUGIN_PROFILES = [
+  cnDefaultPluginProfile,
+  enDefaultPluginProfile,
+] as const;
 
 export const pluginProfileRegistry = createPluginProfileRegistry(
   pluginRegistry,

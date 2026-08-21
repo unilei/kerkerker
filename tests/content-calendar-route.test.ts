@@ -120,3 +120,42 @@ test("content calendar route does not label non-Douban external IDs as douban_id
     globalThis.fetch = previousFetch;
   }
 });
+
+test("en-default calendar uses TMDB without falling back to Douban", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousProfile = process.env.KERKERKER_PLUGIN_PROFILE;
+  const previousKey = process.env.TMDB_API_KEY;
+  process.env.KERKERKER_PLUGIN_PROFILE = "en-default";
+  process.env.TMDB_API_KEY = "test-read-token";
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.pathname, "/3/discover/tv");
+    assert.equal(url.searchParams.get("air_date.gte"), "2026-08-20");
+    assert.equal(url.searchParams.get("air_date.lte"), "2026-08-26");
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer test-read-token");
+    return new Response(
+      JSON.stringify({
+        page: 1,
+        total_pages: 1,
+        total_results: 1,
+        results: [{ id: 1399, name: "Game of Thrones", first_air_date: "2026-08-21" }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+  try {
+    const response = await getContentCalendar(
+      new NextRequest("http://localhost/api/content/calendar?start_date=2026-08-20&end_date=2026-08-26")
+    );
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.data.days[0].entries[0].provider_id, "kerkerker.tmdb-content");
+    assert.equal(body.data.days[0].entries[0].douban_id, undefined);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousProfile === undefined) delete process.env.KERKERKER_PLUGIN_PROFILE;
+    else process.env.KERKERKER_PLUGIN_PROFILE = previousProfile;
+    if (previousKey === undefined) delete process.env.TMDB_API_KEY;
+    else process.env.TMDB_API_KEY = previousKey;
+  }
+});

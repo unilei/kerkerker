@@ -2,12 +2,15 @@ export { BUILTIN_PLUGINS, pluginRegistry } from "@/lib/plugins/builtin";
 export {
   BUILTIN_PLUGIN_PROFILES,
   CN_DEFAULT_PROFILE_ID,
+  EN_DEFAULT_PROFILE_ID,
   cnDefaultPluginProfile,
+  enDefaultPluginProfile,
   getActivePluginProfileId,
   pluginProfileRegistry,
 } from "@/lib/plugins/builtin-profiles";
 export { doubanContentPlugin, doubanContentManifest } from "@/lib/plugins/adapters/douban-content";
 export { kkpanCloudDrivePlugin, kkpanCloudDriveManifest } from "@/lib/plugins/adapters/kkpan-cloud-drive";
+export { tmdbContentPlugin, tmdbContentManifest } from "@/lib/plugins/adapters/tmdb-content";
 export * from "@/lib/plugins/registry";
 export * from "@/lib/plugins/profiles";
 export * from "@/lib/plugins/runtime";

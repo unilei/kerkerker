@@ -85,14 +85,14 @@ export async function GET(request: NextRequest) {
     .slice(0, 10);
   const start = request.nextUrl.searchParams.get("start_date")?.trim() || today;
   const end = request.nextUrl.searchParams.get("end_date")?.trim() || defaultEnd;
-  const region = request.nextUrl.searchParams.get("region")?.trim() || "CN";
+  const requestedRegion = request.nextUrl.searchParams.get("region")?.trim() || undefined;
 
   if (
     !isIsoDate(start) ||
     !isIsoDate(end) ||
     Date.parse(`${end}T00:00:00Z`) < Date.parse(`${start}T00:00:00Z`) ||
     rangeDays(start, end) > MAX_RANGE_DAYS ||
-    !/^[A-Z]{2}$/.test(region)
+    (requestedRegion !== undefined && !/^[A-Z]{2}$/.test(requestedRegion))
   ) {
     return NextResponse.json(
       { code: 400, message: "日历查询参数无效", data: null },
@@ -108,12 +108,18 @@ export async function GET(request: NextRequest) {
       signal: request.signal,
       timeoutMs: 15_000,
     });
+    if (requestedRegion !== undefined && requestedRegion !== context.region) {
+      return NextResponse.json(
+        { code: 400, message: "region 必须与当前插件画像一致", data: null },
+        { status: 400 }
+      );
+    }
     const page = await invokeProfilePlugin<PluginPage<ContentCalendarCandidate>>({
       profileId,
       capability: "content.calendar",
       operation: "calendar",
       context,
-      request: { from: start, to: end, region },
+      request: { from: start, to: end, region: context.region },
     });
 
     const days = new Map<string, CalendarResponse["days"][number]["entries"]>();

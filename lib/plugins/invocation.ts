@@ -3,6 +3,7 @@ import { createPluginContext, type CreatePluginContextOptions } from "@/lib/plug
 import { pluginProfileRegistry } from "@/lib/plugins/builtin-profiles";
 import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
 import { KKPAN_PLUGIN_ID } from "@/lib/plugins/adapters/kkpan-cloud-drive";
+import { TMDB_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/tmdb-content";
 import type {
   PluginCapability,
   PluginContext,
@@ -30,6 +31,13 @@ const RUNTIME_SETTINGS_LOADERS: Readonly<Record<string, RuntimeSettingsLoader>> 
       config: {
         baseUrl: process.env.KKPAN_API_BASE || "https://www.kkpans.com",
       },
+    }),
+    [TMDB_CONTENT_PLUGIN_ID]: () => ({
+      config: {
+        baseUrl: process.env.TMDB_BASE_URL || "https://api.themoviedb.org/3",
+        imageBase: process.env.TMDB_IMAGE_BASE || "https://image.tmdb.org/t/p/w500",
+      },
+      secrets: { apiKey: process.env.TMDB_API_KEY },
     }),
   });
 

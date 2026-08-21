@@ -208,6 +208,10 @@ jobs:
           SCHEDULER_DISABLED: ${{ vars.PAN_SYNC_SCHEDULER_DISABLED || 'false' }}
           SCHEDULER_POLL_MS: ${{ vars.PAN_SYNC_SCHEDULER_POLL_MS || '30000' }}
           PLUGIN_PROFILE: ${{ vars.KERKERKER_PLUGIN_PROFILE || 'cn-default' }}
+          PLUGIN_REGION: ${{ vars.KERKERKER_PLUGIN_REGION || 'CN' }}
+          TMDB_API_KEY: ${{ secrets.DEPLOY_TMDB_API_KEY }}
+          TMDB_BASE_URL: ${{ secrets.DEPLOY_TMDB_BASE_URL || 'https://api.themoviedb.org/3' }}
+          TMDB_IMAGE_BASE: ${{ secrets.DEPLOY_TMDB_IMAGE_BASE || 'https://image.tmdb.org/t/p/original' }}
           KEY_FILE: ${{ steps.ssh.outputs.key_file }}
           KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
         shell: bash
@@ -236,6 +240,10 @@ jobs:
               ("PAN_SYNC_SCHEDULER_DISABLED", "SCHEDULER_DISABLED"),
               ("PAN_SYNC_SCHEDULER_POLL_MS", "SCHEDULER_POLL_MS"),
               ("KERKERKER_PLUGIN_PROFILE", "PLUGIN_PROFILE"),
+              ("KERKERKER_PLUGIN_REGION", "PLUGIN_REGION"),
+              ("TMDB_API_KEY", "TMDB_API_KEY"),
+              ("TMDB_BASE_URL", "TMDB_BASE_URL"),
+              ("TMDB_IMAGE_BASE", "TMDB_IMAGE_BASE"),
           )
 
           def quote(value: str) -> str:
