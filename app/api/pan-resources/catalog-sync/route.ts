@@ -16,6 +16,11 @@ import {
   runPanSyncTargetBatch,
   type PanSyncTargetStatus,
 } from "@/lib/pan/catalog-sync";
+import {
+  findContentIdentityById,
+  isValidContentId,
+} from "@/lib/content-identity-db";
+import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
 
 function badRequest(message: string) {
   return NextResponse.json(
@@ -72,6 +77,7 @@ async function parseBody(request: NextRequest): Promise<{
   action: string;
   limit: number;
   doubanId?: string;
+  contentId?: string;
 } | null> {
   let raw: string;
   try {
@@ -96,11 +102,40 @@ async function parseBody(request: NextRequest): Promise<{
   if (typeof limit !== "number" || !Number.isSafeInteger(limit)) return null;
   const doubanId = body.douban_id;
   if (doubanId !== undefined && typeof doubanId !== "string") return null;
+  const contentId = body.content_id;
+  if (contentId !== undefined && typeof contentId !== "string") return null;
   return {
     action,
     limit,
     doubanId: typeof doubanId === "string" ? doubanId.trim() : undefined,
+    contentId: typeof contentId === "string" ? contentId.trim() : undefined,
   };
+}
+
+async function resolveTargetDoubanId(input: {
+  doubanId?: string;
+  contentId?: string;
+}): Promise<string | undefined> {
+  if (!input.contentId) return input.doubanId;
+  if (!isValidContentId(input.contentId)) {
+    throw new RangeError("content_id 格式无效");
+  }
+  const identity = await findContentIdentityById(input.contentId);
+  if (!identity) throw new RangeError("content_id 尚未解析为宿主内容身份");
+  const doubanRefs = identity.externalRefs.filter(
+    (ref) =>
+      ref.providerId === DOUBAN_CONTENT_PLUGIN_ID &&
+      /^\d{1,20}$/.test(ref.externalId)
+  );
+  const matchingRef = input.doubanId
+    ? doubanRefs.find((ref) => ref.externalId === input.doubanId)
+    : doubanRefs.length === 1
+      ? doubanRefs[0]
+      : undefined;
+  if (!matchingRef) {
+    throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
+  }
+  return matchingRef.externalId;
 }
 
 async function withSyncLease<T>(
@@ -156,13 +191,17 @@ export async function POST(request: NextRequest) {
     return badRequest("limit 必须在 1 到 20 之间");
   }
   if (["sync", "retry"].includes(body.action) && !body.doubanId) {
-    return badRequest("该操作需要 douban_id");
+    if (!body.contentId) return badRequest("该操作需要 douban_id 或 content_id");
   }
   if (body.doubanId && !/^\d{1,20}$/.test(body.doubanId)) {
     return badRequest("douban_id 必须是数字 ID");
   }
+  if (body.contentId && !isValidContentId(body.contentId)) {
+    return badRequest("content_id 格式无效");
+  }
 
   try {
+    const targetDoubanId = await resolveTargetDoubanId(body);
     if (body.action === "discover") {
       const result = await withSyncLease(async () => {
         const discovery = await discoverAndEnqueuePanSyncTargets();
@@ -186,8 +225,8 @@ export async function POST(request: NextRequest) {
       return result;
     }
 
-    if (body.action === "retry" && body.doubanId) {
-      const reset = await resetPanSyncTarget(body.doubanId);
+    if (body.action === "retry" && targetDoubanId) {
+      const reset = await resetPanSyncTarget(targetDoubanId);
       if (!reset) return NextResponse.json(
         { code: 404, message: "影片不在同步台账中", data: null },
         { status: 404 }
@@ -195,7 +234,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         code: 200,
         message: "已加入待同步队列",
-        data: { target: await getPanSyncTarget(body.doubanId) },
+        data: { target: await getPanSyncTarget(targetDoubanId) },
       });
     }
 
@@ -203,8 +242,8 @@ export async function POST(request: NextRequest) {
       let discovery:
         | Awaited<ReturnType<typeof discoverAndEnqueuePanSyncTargets>>
         | undefined;
-      if (body.action === "sync" && body.doubanId) {
-        const reset = await resetPanSyncTarget(body.doubanId);
+      if (body.action === "sync" && targetDoubanId) {
+        const reset = await resetPanSyncTarget(targetDoubanId);
         if (!reset) {
           return NextResponse.json(
             { code: 404, message: "影片不在同步台账中，请先发现目录", data: null },
@@ -219,7 +258,7 @@ export async function POST(request: NextRequest) {
       const batch = await runPanSyncTargetBatch(
         body.action === "sync" ? 1 : body.limit,
         owner,
-        body.action === "sync" ? body.doubanId : undefined
+        body.action === "sync" ? targetDoubanId : undefined
       );
       return NextResponse.json({
         code: 200,
@@ -230,13 +269,14 @@ export async function POST(request: NextRequest) {
     return result;
   } catch (error) {
     console.error("执行影片同步任务失败:", error);
+    const status = error instanceof RangeError ? 400 : 502;
     return NextResponse.json(
       {
-        code: 502,
+        code: status,
         message: error instanceof Error ? error.message : "影片同步任务失败",
         data: null,
       },
-      { status: 502 }
+      { status }
     );
   }
 }

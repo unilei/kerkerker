@@ -292,6 +292,19 @@ test("authenticated catalog sync validates body and query before touching the da
       )
     );
     assert.equal(invalidQuery.status, 400);
+
+    const invalidContentId = await runCatalogSync(
+      authenticatedRawRequest(
+        "http://localhost/api/pan-resources/catalog-sync",
+        "POST",
+        JSON.stringify({
+          action: "sync",
+          content_id: "not-a-uuid",
+          limit: 1,
+        })
+      )
+    );
+    assert.equal(invalidContentId.status, 400);
   } finally {
     if (previousSecret === undefined) delete process.env.ADMIN_SESSION_SECRET;
     else process.env.ADMIN_SESSION_SECRET = previousSecret;
