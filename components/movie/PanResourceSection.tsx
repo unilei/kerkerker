@@ -13,6 +13,7 @@ import type { ToastState, ConfirmState } from "@/components/admin/types";
 
 interface PanResourceSectionProps {
   doubanId: string;
+  contentId?: string;
   title?: string;
   internalId?: number;
 }
@@ -25,6 +26,7 @@ interface PanResourceSectionProps {
  */
 export function PanResourceSection({
   doubanId,
+  contentId,
   title,
   internalId,
 }: PanResourceSectionProps) {
@@ -44,8 +46,11 @@ export function PanResourceSection({
 
     const load = async () => {
       try {
+        const resourceQuery = contentId
+          ? `content_id=${encodeURIComponent(contentId)}&douban_id=${encodeURIComponent(doubanId)}`
+          : `douban_id=${encodeURIComponent(doubanId)}`;
         const [resourcesRes, authRes] = await Promise.all([
-          fetch(`/api/pan-resources?douban_id=${encodeURIComponent(doubanId)}`),
+          fetch(`/api/pan-resources?${resourceQuery}`),
           fetch("/api/auth/me"),
         ]);
         const resourcesResult = await resourcesRes.json();
@@ -72,7 +77,7 @@ export function PanResourceSection({
     return () => {
       cancelled = true;
     };
-  }, [doubanId, refreshFlag]);
+  }, [contentId, doubanId, refreshFlag]);
 
   // 复制提取码（不触发外层链接跳转）
   const handleCopyCode = useCallback(
@@ -131,7 +136,12 @@ export function PanResourceSection({
       {isAdmin && showManage && (
         <div className="mb-6 bg-white/[0.03] border border-white/10 rounded-2xl p-4">
           <PanResourceManager
-            movie={{ douban_id: doubanId, title: title || doubanId, internal_id: internalId }}
+            movie={{
+              douban_id: doubanId,
+              content_id: contentId,
+              title: title || doubanId,
+              internal_id: internalId,
+            }}
             onShowToast={setToast}
             onShowConfirm={setConfirm}
             onChanged={() => setRefreshFlag((v) => v + 1)}

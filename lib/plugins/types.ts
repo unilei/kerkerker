@@ -326,6 +326,12 @@ export interface CanonicalResourceCandidate {
   readonly providerId: string;
   readonly externalId: string;
   readonly title: string;
+  /**
+   * Normalized source-facing name, when the provider exposes one. The host
+   * keeps this separate from the display title so compatibility importers can
+   * still parse year/format metadata without depending on raw provider data.
+   */
+  readonly sourceName?: string;
   readonly platform?: ResourcePlatformRef;
   readonly availability: "available" | "unavailable" | "unknown";
   /** Provider-owned update time; distinct from the host persistence timestamp. */
@@ -383,6 +389,20 @@ export interface PluginPage<T> {
   readonly nextCursor?: string;
   readonly hasMore?: boolean;
   readonly total?: number;
+  /**
+   * Optional source-page evidence for host jobs that must detect offset-page
+   * drift. Providers with a stable opaque cursor may omit this entirely.
+   */
+  readonly consistency?: PluginPageConsistency;
+}
+
+export interface PluginPageConsistency {
+  /** Number of raw source rows before candidate filtering. */
+  readonly rawCount: number;
+  /** Stable source IDs in the order returned by the provider. */
+  readonly rawIds: readonly string[];
+  /** Provider-generated fingerprint for the raw page. */
+  readonly fingerprint: string;
 }
 
 export interface PluginLogger {

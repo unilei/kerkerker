@@ -747,6 +747,7 @@ async function executeCatalogRun(
       undefined,
       {
         shouldContinue,
+        execution: { runId },
         onTargetStart: async (target: PanSyncTarget) => {
           await patchRun(runId, {
             current_douban_id: target.douban_id,

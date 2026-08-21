@@ -23,6 +23,7 @@ interface SearchResultItem {
 // 当前选中管理的影片
 interface SelectedMovie {
   douban_id: string;
+  content_id?: string;
   title: string;
   cover?: string;
   year?: string;
@@ -31,6 +32,7 @@ interface SelectedMovie {
 
 interface ContentDetailResponse {
   id: string;
+  content_id?: string;
   title: string;
   cover: string;
   release_year: string;
@@ -215,6 +217,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
           prev && prev.douban_id === doubanId
             ? {
                 ...prev,
+                content_id: detail.content_id ?? prev.content_id,
                 title: detail.title || prev.title,
                 cover: detail.cover || prev.cover,
                 year: detail.release_year || prev.year,
@@ -276,6 +279,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
       if (detail) {
         setSelectedMovie({
           douban_id: detail.id,
+          content_id: detail.content_id,
           title: detail.title,
           cover: detail.cover,
           year: detail.release_year,
@@ -292,6 +296,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
     const doubanId = resource.douban_id;
     setSelectedMovie({
       douban_id: doubanId,
+      content_id: resource.content_id,
       title: resource.movie_title || `豆瓣 ${doubanId}`,
     });
     enrichMovie(doubanId);

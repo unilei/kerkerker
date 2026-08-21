@@ -28,6 +28,7 @@ test("identity resolver rejects empty or malformed external references before da
 test("resource writes require a complete, valid provider identity before database access", async () => {
   const input = {
     douban_id: "1292052",
+    content_id: "550e8400-e29b-41d4-a716-446655440000",
     brand: "quark" as const,
     title: "测试资源",
     url: "https://pan.quark.cn/s/example",
@@ -43,5 +44,30 @@ test("resource writes require a complete, valid provider identity before databas
       provider_resource_id: "1",
     }),
     (error: unknown) => error instanceof RangeError && /provider_id/.test(error.message)
+  );
+});
+
+test("resource writes reject missing host content identity before database access", async () => {
+  await assert.rejects(
+    () => createPanResourceInDB({
+      douban_id: "1292052",
+      content_id: "",
+      brand: "quark",
+      title: "测试资源",
+      url: "https://pan.quark.cn/s/example",
+    }),
+    (error: unknown) => error instanceof RangeError && /content_id/.test(error.message)
+  );
+});
+
+test("resource writes reject an omitted host content identity before database access", async () => {
+  await assert.rejects(
+    () => createPanResourceInDB({
+      douban_id: "1292052",
+      brand: "quark",
+      title: "测试资源",
+      url: "https://pan.quark.cn/s/example",
+    } as unknown as Parameters<typeof createPanResourceInDB>[0]),
+    (error: unknown) => error instanceof RangeError && /content_id/.test(error.message)
   );
 });

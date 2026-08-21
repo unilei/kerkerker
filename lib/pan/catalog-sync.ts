@@ -741,6 +741,8 @@ export interface PanSyncTargetBatchResult {
 
 export interface PanSyncTargetBatchHooks {
   shouldContinue?: () => boolean | Promise<boolean>;
+  /** Execution metadata forwarded to the cloud-drive host for each target. */
+  execution?: ContentHostExecutionOptions;
   onTargetStart?: (target: PanSyncTarget) => void | Promise<void>;
   onTargetComplete?: (
     target: PanSyncTarget,
@@ -805,6 +807,8 @@ export async function runPanSyncTargetBatch(
         contentId: target.content_id,
         title: target.title,
         year: target.year,
+        shouldContinue: hooks.shouldContinue,
+        contentExecution: hooks.execution || { runId: owner },
       });
       imported += result.imported;
       refreshed += result.refreshed ?? 0;

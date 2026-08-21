@@ -14,5 +14,6 @@ export * from "@/lib/plugins/runtime";
 export * from "@/lib/plugins/context";
 export * from "@/lib/plugins/invocation";
 export * from "@/lib/plugins/content-host";
+export * from "@/lib/plugins/resource-host";
 export * from "@/lib/plugins/types";
 export * from "@/lib/plugins/errors";

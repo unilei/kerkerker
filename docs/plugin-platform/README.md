@@ -332,7 +332,7 @@ sequenceDiagram
 当前迁移状态与剩余兼容点包括：
 
 - [`lib/douban-service.ts`](../../lib/douban-service.ts) 只由 Douban 内容适配器调用；页面、Hook、公共 API 和后台内容发现均已改走画像与宿主门面。
-- [`lib/kkpan.ts`](../../lib/kkpan.ts) 仍实现供应商协议；兼容搜索路由已通过 `resource.cloud-drive.search`，需要页指纹和漂移证明的全量增量/失效任务暂留专用同步层。
+- [`lib/kkpan.ts`](../../lib/kkpan.ts) 仍实现供应商协议；兼容搜索路由已通过 `resource.cloud-drive.search`，同步任务通过 [`lib/plugins/resource-host.ts`](../../lib/plugins/resource-host.ts) 和 [`lib/pan/cloud-drive-task.ts`](../../lib/pan/cloud-drive-task.ts) 进入中性宿主边界。需要页指纹和漂移证明的全量增量/失效任务暂留兼容层，旧 KKPAN 页形状只能在该桥内使用。
 - [`lib/pan/catalog-sync.ts`](../../lib/pan/catalog-sync.ts) 和 [`lib/pan/sync.ts`](../../lib/pan/sync.ts) 的内容目录与内容搜索已经改走 `content-host`；匹配、旧字段写入、KKPAN 稳定分页和失效策略仍由宿主兼容层负责。
 - [`types/pan-resource.ts`](../../types/pan-resource.ts) 与 [`lib/db.ts`](../../lib/db.ts) 包含 `douban_id`、`kkpan_id` 和供应商专用索引。
 - 管理端和资源组件仍消费旧网盘字段及兼容 API；新的内容详情、目录、搜索和日历读取不再直接依赖供应商客户端。

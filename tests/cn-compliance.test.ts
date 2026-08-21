@@ -127,8 +127,8 @@ test("P1-3: 增量同步支持水位游标与翻页", () => {
     "增量同步应使用水位游标（last_kkpan_watermark）"
   );
   assert.ok(
-    source.includes("listKkpanPage"),
-    "增量同步应支持翻页（listKkpanPage）"
+    source.includes("listCloudDriveTaskPage"),
+    "增量同步应通过 cloud-drive 任务边界支持翻页"
   );
 });
 

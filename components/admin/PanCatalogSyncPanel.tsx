@@ -19,6 +19,7 @@ type TargetStatus = "pending" | "syncing" | "synced" | "empty" | "failed";
 
 interface TargetItem {
   douban_id: string;
+  content_id?: string;
   title: string;
   cover?: string;
   year?: string;
@@ -63,6 +64,7 @@ interface PanCatalogSyncPanelProps {
   onShowToast: (toast: ToastState) => void;
   onSelectMovie: (movie: {
     douban_id: string;
+    content_id?: string;
     title: string;
     cover?: string;
     year?: string;

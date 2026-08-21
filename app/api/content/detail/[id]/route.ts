@@ -5,6 +5,7 @@ import {
   invokeProfilePlugin,
   type ContentDetailCandidate,
 } from "@/lib/plugins";
+import { findContentIdentityByExternalRef } from "@/lib/content-identity-db";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -72,6 +73,21 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       );
     }
 
+    // Identity lookup is deliberately read-only here. A public detail request
+    // must not create a host identity; persistence paths resolve identities
+    // explicitly before writing resources.
+    let hostContentId: string | undefined;
+    try {
+      hostContentId = (
+        await findContentIdentityByExternalRef({
+          providerId: external.providerId,
+          externalId: external.externalId,
+        })
+      )?.contentId;
+    } catch (error) {
+      console.warn("读取宿主内容身份失败，继续返回兼容详情:", error);
+    }
+
     const details = detail.details;
     const recommendations = (details.recommendations || []).flatMap((item) => {
       const ref = item.externalRefs[0];
@@ -94,6 +110,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
         profile: profileId,
         provider_id: external.providerId,
         id: external.externalId,
+        ...(hostContentId ? { content_id: hostContentId } : {}),
         ...(sourceInternalId && Number.isSafeInteger(Number(sourceInternalId))
           ? { internal_id: Number(sourceInternalId) }
           : {}),

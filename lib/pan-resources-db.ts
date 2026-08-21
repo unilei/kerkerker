@@ -7,7 +7,10 @@ import {
   type PanResource,
   type PanResourceInput,
 } from "@/types/pan-resource";
-import { resolveContentIdentity } from "@/lib/content-identity-db";
+import {
+  findContentIdentityById,
+  resolveContentIdentity,
+} from "@/lib/content-identity-db";
 import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
 
 const CONTENT_ID_PATTERN =
@@ -255,7 +258,9 @@ export async function getKnownPanMovieTargets(): Promise<
 // 而不是写入 null。因为 MongoDB 驱动默认会把 undefined 序列化为 null，而部分唯一索引
 // 即使加 $type 过滤也无法规避同一集合多条 null 文档的语义混乱——直接省略字段最干净。
 export async function createPanResourceInDB(
-  input: Required<Pick<PanResourceInput, "douban_id" | "brand" | "title" | "url">> &
+  input: Required<
+    Pick<PanResourceInput, "douban_id" | "content_id" | "brand" | "title" | "url">
+  > &
     PanResourceInput
 ): Promise<{ resource: PanResource; created: boolean }> {
   if (
@@ -281,6 +286,23 @@ export async function createPanResourceInDB(
   }
   if (input.source === "kkpan" && !hasKkpanId) {
     throw new RangeError("kkpan 来源资源必须提供有效 kkpan_id");
+  }
+
+  // A resource write is only valid after the host identity resolver has
+  // assigned a content_id.  Routes may still accept a legacy douban_id, but
+  // they must resolve it before reaching this repository boundary.
+  if (!CONTENT_ID_PATTERN.test(input.content_id)) {
+    throw new RangeError("资源写入必须提供有效 content_id");
+  }
+  const hostIdentity = await findContentIdentityById(input.content_id);
+  if (!hostIdentity) {
+    throw new RangeError("content_id 尚未解析为宿主内容身份");
+  }
+  const doubanRef = hostIdentity.externalRefs.find(
+    (ref) => ref.providerId === DOUBAN_CONTENT_PLUGIN_ID
+  );
+  if (!doubanRef || doubanRef.externalId !== input.douban_id) {
+    throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
   }
 
   const identity = await resolveContentIdentity([

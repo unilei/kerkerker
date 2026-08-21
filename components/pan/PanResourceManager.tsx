@@ -27,6 +27,7 @@ import type { ToastState, ConfirmState } from "@/components/admin/types";
 // 目标影片（豆瓣数据已就位，无需再搜索）
 export interface PanManagerMovie {
   douban_id: string;
+  content_id?: string;
   title: string;
   internal_id?: number;
 }
@@ -129,14 +130,16 @@ export function PanResourceManager({
     setKkpanChecked(new Set());
     setPasteText("");
     setDrafts([]);
-  }, [movie.douban_id, movie.title]);
+  }, [movie.content_id, movie.douban_id, movie.title]);
 
   // 加载该片全部资源（含禁用，需管理员会话）
   const loadResources = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await fetch(
-        `/api/pan-resources?all=true&douban_id=${encodeURIComponent(movie.douban_id)}`
+        `/api/pan-resources?all=true&${movie.content_id
+          ? `content_id=${encodeURIComponent(movie.content_id)}&douban_id=${encodeURIComponent(movie.douban_id)}`
+          : `douban_id=${encodeURIComponent(movie.douban_id)}`}`
       );
       const result = await response.json();
       if (result.code === 200 && result.data?.resources) {
@@ -150,7 +153,7 @@ export function PanResourceManager({
     } finally {
       setIsLoading(false);
     }
-  }, [movie.douban_id, onShowToast]);
+  }, [movie.content_id, movie.douban_id, onShowToast]);
 
   useEffect(() => {
     loadResources();
@@ -326,6 +329,7 @@ export function PanResourceManager({
       for (const row of drafts) {
         const payload = {
           douban_id: movie.douban_id,
+          content_id: movie.content_id,
           internal_id: movie.internal_id,
           movie_title: movie.title,
           brand: row.brand as PanBrand,
@@ -338,7 +342,6 @@ export function PanResourceManager({
           // 来自 kkpans 的资源透传 kkpan_id 与 source，参与失效联动与对账
           kkpan_id: row.kkpan_id,
           source: row.source,
-          content_id: row.content_id,
           provider_id: row.provider_id,
           provider_resource_id: row.provider_resource_id,
         };

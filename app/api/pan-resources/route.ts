@@ -110,12 +110,22 @@ export async function GET(request: NextRequest) {
         ? Math.min(Math.max(limitParam, 1), 200)
         : 50;
 
-      const resources = await getAllPanResources({
+      let resources = await getAllPanResources({
         doubanId: doubanId || undefined,
         contentId: contentId || undefined,
         keyword: keyword || undefined,
         limit,
       });
+      // During the identity migration older rows may still have only the
+      // legacy Douban key. Prefer the host identity, then fall back only when
+      // it returned no rows for the same explicit movie reference.
+      if (resources.length === 0 && contentId && doubanId) {
+        resources = await getAllPanResources({
+          doubanId,
+          keyword: keyword || undefined,
+          limit,
+        });
+      }
 
       return NextResponse.json({
         code: 200,
@@ -131,9 +141,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const resources = contentId
+    let resources = contentId
       ? await getPanResourcesByContentId(contentId)
       : await getPanResourcesByDoubanId(doubanId);
+    if (resources.length === 0 && contentId && doubanId) {
+      resources = await getPanResourcesByDoubanId(doubanId);
+    }
     return NextResponse.json({
       code: 200,
       message: '获取成功',

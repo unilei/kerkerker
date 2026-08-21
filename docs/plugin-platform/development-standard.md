@@ -563,7 +563,7 @@ npm run build
 ### 现有代码迁移
 
 - [`lib/douban-service.ts`](../../lib/douban-service.ts) 保留为适配器内部客户端；页面、Hook、API 编排和后台任务不得再直接导入它。
-- [`lib/kkpan.ts`](../../lib/kkpan.ts) 保留上游协议解析，迁到 `resource.cloud-drive` 适配器内部；[`lib/pan/sync.ts`](../../lib/pan/sync.ts) 中匹配、写库和失效策略逐步移回宿主。
+- [`lib/kkpan.ts`](../../lib/kkpan.ts) 保留上游协议解析，迁到 `resource.cloud-drive` 适配器内部；[`lib/plugins/resource-host.ts`](../../lib/plugins/resource-host.ts) 是宿主调用边界，[`lib/pan/cloud-drive-task.ts`](../../lib/pan/cloud-drive-task.ts) 只负责迁移期页证据与旧 KKPAN 形状转换；[`lib/pan/sync.ts`](../../lib/pan/sync.ts) 中匹配、写库和失效策略逐步移回宿主。
 - [`types/pan-resource.ts`](../../types/pan-resource.ts) 先增加 `content_id`、`provider_id`、`provider_resource_id` 并双写，完成回填和对账后才移除 `douban_id`、`source`、`kkpan_id` 专用语义。
 - [`app/api/pan-resources/route.ts`](../../app/api/pan-resources/route.ts) 和页面组件先通过兼容 API 读取，再迁到按能力和 `content_id` 的通用接口。
 - 已入库来源对象的 `(provider_id, provider_resource_id)` 与旧 `kkpan_id` 是稳定身份；普通编辑只能修改展示字段，改绑必须走有审计、可回滚的显式迁移流程。

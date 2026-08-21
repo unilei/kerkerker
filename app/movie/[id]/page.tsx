@@ -22,6 +22,7 @@ import { PanResourceSection } from "@/components/movie/PanResourceSection";
 // 完整的电影详情
 interface MovieDetail {
   id: string;
+  content_id?: string;
   internal_id?: number;
   title: string; // 完整标题（含外文名/年份）用于显示
   cover: string;
@@ -121,6 +122,7 @@ export default function MovieDetailPage() {
             const cachedData = prev || ({} as MovieDetail);
             return {
               id: cachedData.id || apiData.id,
+              content_id: apiData.content_id ?? cachedData.content_id,
               internal_id: apiData.internal_id ?? cachedData.internal_id,
               title: cachedData.title || apiData.title,
               // 封面：缓存优先，但如果缓存是空的则用API的
@@ -446,6 +448,7 @@ export default function MovieDetailPage() {
           {/* 网盘资源 */}
           <PanResourceSection
             doubanId={doubanId}
+            contentId={movieDetail?.content_id}
             title={movieDetail?.title}
             internalId={movieDetail?.internal_id}
           />

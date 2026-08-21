@@ -45,6 +45,7 @@ function candidate(item: KkpanResource, contentId?: string, availability: CloudD
     providerId: KKPAN_PLUGIN_ID,
     externalId: String(item.id),
     title: cleanKkpanTitle(item.fileName),
+    sourceName: item.fileName,
     platform: {
       platformId: item.targetPlatform,
       brand: item.targetPlatform,
@@ -58,6 +59,18 @@ function candidate(item: KkpanResource, contentId?: string, availability: CloudD
     availability,
     provenance: provenance(item.shareLink),
   };
+}
+
+function consistency(result: {
+  rawCount: number;
+  rawIds: readonly number[];
+  fingerprint: string;
+}) {
+  return {
+    rawCount: result.rawCount,
+    rawIds: result.rawIds.map(String),
+    fingerprint: result.fingerprint,
+  } as const;
 }
 
 export const kkpanCloudDriveManifest: PluginManifest = {
@@ -108,6 +121,8 @@ export const kkpanCloudDrivePlugin: Plugin = {
           items: result.items.map((item) => candidate(item, request.content?.contentId)),
           hasMore,
           nextCursor: hasMore ? String(page + 1) : undefined,
+          total: result.total,
+          consistency: consistency(result),
         };
       },
       async incremental(context, request) {
@@ -126,6 +141,8 @@ export const kkpanCloudDrivePlugin: Plugin = {
           items: items.map((item) => candidate(item)),
           hasMore,
           nextCursor: hasMore ? String(page + 1) : undefined,
+          total: result.total,
+          consistency: consistency(result),
         };
       },
       async availability(context, request) {

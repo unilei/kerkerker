@@ -10,9 +10,6 @@
  */
 
 import {
-  listKkpanPageWithMeta,
-  searchKkpanResources,
-  searchKkpanResourcesWithMeta,
   cleanKkpanTitle,
   formatBytes,
   extractTitleCandidate,
@@ -21,6 +18,10 @@ import {
   type KkpanPageResult,
   type KkpanResource,
 } from "@/lib/kkpan";
+import {
+  listCloudDriveTaskPage,
+  searchCloudDriveTaskPage,
+} from "@/lib/pan/cloud-drive-task";
 import {
   getContentCatalog,
   searchContent,
@@ -123,6 +124,8 @@ export async function syncPanResourcesForMovie(input: {
   contentId?: string;
   title: string;
   year?: string;
+  shouldContinue?: SyncContinuation;
+  contentExecution?: ContentHostExecutionOptions;
 }): Promise<MoviePanSyncResult> {
   const identity = await resolveContentIdentity([
     { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: input.doubanId },
@@ -132,9 +135,11 @@ export async function syncPanResourcesForMovie(input: {
   }
   const contentId = identity.contentId;
   const catalog = await scanStablePages(
-    (page) => searchKkpanResourcesWithMeta(input.title, 50, page),
+    (page) =>
+      searchCloudDriveTaskPage(input.title, 50, page, input.contentExecution),
     50,
-    INCREMENTAL_MAX_PAGES
+    INCREMENTAL_MAX_PAGES,
+    input.shouldContinue
   );
   const existing = await getExistingPanKeysForCandidates({
     urls: catalog.items.map((item) => item.shareLink),
@@ -486,7 +491,8 @@ export async function runIncrementalSync(
       return stats;
     }
     catalog = await scanStablePages(
-      (page) => listKkpanPageWithMeta(page, INCREMENTAL_PAGE_SIZE),
+      (page) =>
+        listCloudDriveTaskPage(page, INCREMENTAL_PAGE_SIZE, contentExecution),
       INCREMENTAL_PAGE_SIZE,
       INCREMENTAL_MAX_PAGES,
       shouldContinue
@@ -612,7 +618,8 @@ export async function runIncrementalSync(
     const availability = await runAvailabilityPass(
       30,
       prevState?.last_availability_cursor,
-      shouldContinue
+      shouldContinue,
+      contentExecution
     );
     if (availability.cancelled) {
       stats.cancelled = true;
@@ -756,7 +763,9 @@ export async function runBackfillSync(
   for (const subject of bounded) {
     let items: KkpanResource[] = [];
     try {
-      items = await searchKkpanResources(subject.title, 20);
+      items = (
+        await searchCloudDriveTaskPage(subject.title, 20, 1, contentExecution)
+      ).items;
       searchAttempts++;
     } catch {
       searchErrors++;
@@ -820,7 +829,8 @@ export async function runBackfillSync(
 async function runAvailabilityPass(
   maxTitles = 30,
   cursor?: string,
-  shouldContinue?: SyncContinuation
+  shouldContinue?: SyncContinuation,
+  cloudDriveExecution: ContentHostExecutionOptions = {}
 ): Promise<{
   disabled: number;
   refreshed: number;
@@ -878,7 +888,8 @@ async function runAvailabilityPass(
     let hadAny = false;
     try {
       const scan = await scanStablePages(
-        (page) => searchKkpanResourcesWithMeta(title, pageSize, page),
+        (page) =>
+          searchCloudDriveTaskPage(title, pageSize, page, cloudDriveExecution),
         pageSize,
         maxPages,
         shouldContinue
