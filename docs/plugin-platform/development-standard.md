@@ -480,7 +480,7 @@ Sidecar v1 至少暴露以下受保护端点：
 - “立即运行”和定时运行走同一执行路径，只改变触发来源；
 - 插件停用、版本不兼容或画像移除时拒绝创建新运行。
 
-现有 [`lib/pan/scheduler.ts`](../../lib/pan/scheduler.ts) 的持久运行、事件、租约、停止和恢复行为是通用化的迁移基础；不得为每个插件复制同类状态机。
+现有 [`lib/pan/scheduler.ts`](../../lib/pan/scheduler.ts) 的持久运行、事件、租约、停止和恢复行为是通用化的迁移基础；[`lib/plugins/job-runner.ts`](../../lib/plugins/job-runner.ts) 提供供应商无关的状态、CAS 版本、租约、进度、取消、重试退避和幂等边界，持久化适配器必须实现 `PluginJobStore` 的原子更新；不得为每个插件复制同类状态机。
 
 ### 结构化日志
 

@@ -26,6 +26,12 @@ import {
 export const PAN_SYNC_TASKS = ["catalog", "incremental"] as const;
 export type PanSyncTask = (typeof PAN_SYNC_TASKS)[number];
 
+/**
+ * Keep the legacy persisted scheduler vocabulary stable while the generic
+ * runner adds `retry_waiting`. The compatibility adapter maps PanSyncRun
+ * snapshots into the broader PluginJobStatus union without widening Mongo
+ * queries or public scheduler responses.
+ */
 export const PAN_SYNC_RUN_STATUSES = [
   "queued",
   "running",
