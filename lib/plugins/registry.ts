@@ -129,8 +129,10 @@ export class PluginRegistry {
         path: "id",
       });
     }
-    for (const declaration of plugin.manifest.capabilities) {
-      assertCapabilityImplementation(plugin, declaration);
+    if (plugin.manifest.runtime.mode !== "remote") {
+      for (const declaration of plugin.manifest.capabilities) {
+        assertCapabilityImplementation(plugin, declaration);
+      }
     }
     this.plugins.set(plugin.manifest.id, plugin);
   }

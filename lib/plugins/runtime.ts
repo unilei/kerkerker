@@ -9,6 +9,7 @@ import type { PluginRegistry } from "@/lib/plugins/registry";
 import { pluginProfileRegistry as defaultProfileRegistry } from "@/lib/plugins/builtin-profiles";
 import type { PluginProfileRegistry } from "@/lib/plugins/profiles";
 import { checkPluginCompliance } from "@/lib/plugins/compliance";
+import { invokeRemoteSidecar } from "@/lib/plugins/sidecar";
 
 /** Operations are allow-listed; the host never executes a request-supplied method name. */
 const OPERATIONS_BY_CAPABILITY: Readonly<Record<PluginCapability, readonly PluginOperation[]>> = {
@@ -57,15 +58,6 @@ export async function invokePlugin<T>(options: InvokePluginOptions): Promise<T> 
     throw new PluginError("CONFIGURATION_ERROR", "插件注册状态不可用", { cause: error });
   }
 
-  const implementation = plugin.capabilities[capability];
-  if (!implementation) {
-    throw new PluginError(
-      "CAPABILITY_UNAVAILABLE",
-      `插件 ${options.pluginId} 未启用能力 ${capability}`,
-      { path: `capabilities.${capability}` }
-    );
-  }
-
   await checkPluginCompliance({
     pluginId: options.pluginId,
     pluginVersion: plugin.manifest.version,
@@ -78,6 +70,25 @@ export async function invokePlugin<T>(options: InvokePluginOptions): Promise<T> 
     // registries without weakening the static registration requirement.
     registered: Boolean(registry.get(options.pluginId)),
   });
+
+  if (plugin.manifest.runtime.mode === "remote") {
+    return invokeRemoteSidecar<T>({
+      manifest: plugin.manifest,
+      capability,
+      operation,
+      context,
+      request: options.request,
+    });
+  }
+
+  const implementation = plugin.capabilities[capability];
+  if (!implementation) {
+    throw new PluginError(
+      "CAPABILITY_UNAVAILABLE",
+      `插件 ${options.pluginId} 未启用能力 ${capability}`,
+      { path: `capabilities.${capability}` }
+    );
+  }
 
   const method = (implementation as Record<string, unknown>)[operation];
   if (typeof method !== "function") {
