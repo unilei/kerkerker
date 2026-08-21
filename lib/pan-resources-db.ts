@@ -476,7 +476,14 @@ export async function updatePanResourceInDB(
 
   const setDoc: Partial<PanResourceDoc> = { updated_at: now };
   const unsetDoc: Record<string, ""> = {};
-  if (updates.douban_id !== undefined) setDoc.douban_id = updates.douban_id;
+  if (updates.douban_id !== undefined) {
+    if (
+      typeof updates.douban_id !== "string" ||
+      !/^\d{1,20}$/.test(updates.douban_id)
+    ) {
+      throw new RangeError("douban_id 格式无效");
+    }
+  }
   if (updates.content_id !== undefined) {
     if (!CONTENT_ID_PATTERN.test(updates.content_id)) {
       throw new RangeError("content_id 必须是有效 UUID");
@@ -533,12 +540,37 @@ export async function updatePanResourceInDB(
   ) {
     throw new RangeError("douban_id 格式无效");
   }
-  const identity = await resolveContentIdentity([
-    { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: targetDoubanId },
-  ]);
-  if (updates.content_id !== undefined && updates.content_id !== identity.contentId) {
+  let identity: HostContentReference | null = null;
+  if (existingDoc.content_id) {
+    identity = await findContentIdentityById(existingDoc.content_id);
+    if (!identity) {
+      throw new RangeError("资源已有 content_id，但宿主身份不存在");
+    }
+    if (updates.content_id !== undefined && updates.content_id !== identity.contentId) {
+      throw new RangeError("content_id 与资源当前宿主身份不一致");
+    }
+  } else if (updates.content_id !== undefined) {
+    identity = await findContentIdentityById(updates.content_id);
+    if (!identity) {
+      throw new RangeError("content_id 尚未解析为宿主内容身份");
+    }
+  } else {
+    // Legacy rows are repaired on their first update, but the identity is
+    // still resolved from the exact external reference rather than copied
+    // from an untrusted request.
+    identity = await resolveContentIdentity([
+      { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: targetDoubanId },
+    ]);
+  }
+  const matchingDoubanRef = identity.externalRefs.find(
+    (ref) =>
+      ref.providerId === DOUBAN_CONTENT_PLUGIN_ID &&
+      ref.externalId === targetDoubanId
+  );
+  if (!matchingDoubanRef) {
     throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
   }
+  setDoc.douban_id = matchingDoubanRef.externalId;
   setDoc.content_id = identity.contentId;
 
   await enforceProviderWritePolicy(
