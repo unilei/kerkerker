@@ -39,7 +39,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 | 已完成 | 插件契约、Manifest 校验、错误模型和静态注册 | `lib/plugins/types.ts`、`validation.ts`、`registry.ts` |
 | 已完成 | 可发布的 v1 公共契约包和宿主兼容导出 | `packages/kerkerker-plugin-contract/`、`lib/plugins/types.ts` |
 | 已完成 | 受白名单、HTTPS、请求取消、响应大小限制、健康检查、协议协商和宿主密钥认证约束的远程 Sidecar 调用 | `lib/plugins/sidecar.ts`、`lib/plugins/runtime.ts`、`tests/plugin-sidecar.test.ts` |
-| 已完成 | 运行画像、上下文、超时和能力调用边界 | `lib/plugins/profiles.ts`、`invocation.ts`、`content-host.ts` |
+| 已完成 | 运行画像、上下文、超时、能力调用和仅限上游错误的有序回退边界 | `lib/plugins/profiles.ts`、`invocation.ts`、`content-host.ts` |
 | 已完成 | 首页、分类、浏览、详情和日历的宿主 API 边界 | `app/api/content/*`、对应 hooks/pages |
 | 已完成 | KKPAN 云盘适配器与 provider-neutral cloud-drive host bridge | `lib/plugins/adapters/kkpan-cloud-drive.ts`、`lib/plugins/resource-host.ts`、`lib/pan/cloud-drive-task.ts` |
 | 已完成 | 影片台账、批量同步、定时任务、租约、取消和运行日志 | `lib/pan/catalog-sync.ts`、`lib/pan/scheduler.ts` |
@@ -53,7 +53,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 
 1. 合规策略、审计事件、下架记录、公开资源过滤和后台操作面板已在本分支落地；生产仍处于 `audit` 迁移模式，必须完成每个插件的材料登记后再切换 `enforce`。
 2. 旧资源模型仍保留 `douban_id`、`source=kkpan` 和 `kkpan_id` 作为迁移兼容字段；资源 repository 已要求 `content_id`，后台资源/单片同步 API 已支持 content-only，但全量旧数据对账和“零旧写”证据尚未完成。
-3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 已支持健康检查、服务间认证和协议版本协商，健康摘除、熔断、重试上限和版本回退仍未完成。
+3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 已支持健康检查、服务间认证和协议版本协商，画像仅在上游错误时按声明顺序回退；健康摘除、熔断、重试上限仍未完成。
 4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；跨来源 `content_id` 精确映射、TMDB 图片 R2 持久化、英文 UI smoke 和运营审批仍未完成。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
 6. Go 服务刷新任务和 Web 网盘任务还没有共享完整的插件作业运行器；Web 网盘调度已经具备统一运行元数据和审计快照，跨仓租约、进度回报和恢复仍属于阶段 3/7。

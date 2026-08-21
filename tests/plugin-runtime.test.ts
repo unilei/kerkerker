@@ -151,6 +151,73 @@ test("profile invocation resolves the configured plugin and validates context", 
   );
 });
 
+test("profile invocation falls back only after an upstream failure", async () => {
+  const failingPlugin: Plugin = {
+    ...plugin,
+    manifest: { ...plugin.manifest, id: "example.upstream-failure" },
+    capabilities: {
+      "content.detail": {
+        async detail() {
+          throw new PluginError("UPSTREAM_ERROR", "上游暂时不可用");
+        },
+      },
+    },
+  };
+  const fallbackRegistry = createPluginRegistry([failingPlugin, plugin]);
+  const fallbackProfiles = createPluginProfileRegistry(fallbackRegistry, [{
+    id: "fallback-test",
+    locale: "zh-CN",
+    region: "CN",
+    capabilities: {
+      "content.detail": ["example.upstream-failure", "example.runtime"],
+    },
+  }]);
+
+  const result = await invokeProfilePlugin<{ titles: readonly { value: string }[] }>({
+    profileRegistry: fallbackProfiles,
+    profileId: "fallback-test",
+    capability: "content.detail",
+    operation: "detail",
+    context: { ...context(new AbortController().signal), profile: "fallback-test" },
+    request: { value: "fallback-result" },
+  });
+  assert.equal(result.titles[0]?.value, "fallback-result");
+});
+
+test("profile invocation does not fall back across configuration or cancellation errors", async () => {
+  const cancelledPlugin: Plugin = {
+    ...plugin,
+    manifest: { ...plugin.manifest, id: "example.cancelled" },
+    capabilities: {
+      "content.detail": {
+        async detail() {
+          throw new PluginError("EXECUTION_CANCELLED", "调用已取消");
+        },
+      },
+    },
+  };
+  const fallbackRegistry = createPluginRegistry([cancelledPlugin, plugin]);
+  const fallbackProfiles = createPluginProfileRegistry(fallbackRegistry, [{
+    id: "cancelled-test",
+    locale: "zh-CN",
+    region: "CN",
+    capabilities: {
+      "content.detail": ["example.cancelled", "example.runtime"],
+    },
+  }]);
+  await assert.rejects(
+    () => invokeProfilePlugin({
+      profileRegistry: fallbackProfiles,
+      profileId: "cancelled-test",
+      capability: "content.detail",
+      operation: "detail",
+      context: { ...context(new AbortController().signal), profile: "cancelled-test" },
+      request: {},
+    }),
+    (error: unknown) => error instanceof PluginError && error.code === "EXECUTION_CANCELLED"
+  );
+});
+
 test("host context derives locale and region from the selected profile", () => {
   const context = createPluginContext({
     profileId: "cn-default",

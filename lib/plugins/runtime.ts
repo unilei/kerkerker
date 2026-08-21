@@ -1,4 +1,5 @@
 import { PluginError, isPluginError } from "@/lib/plugins/errors";
+import { recordAudit } from "@/lib/compliance-db";
 import type {
   PluginCapability,
   PluginContext,
@@ -124,6 +125,45 @@ export interface InvokeProfilePluginOptions
   readonly profileRegistry?: PluginProfileRegistry;
 }
 
+async function recordPluginFallback(
+  context: PluginContext,
+  capability: PluginCapability,
+  fromPluginId: string,
+  toPluginId: string,
+  fromVersion?: string,
+  toVersion?: string
+): Promise<void> {
+  try {
+    await recordAudit({
+      idempotencyKey: `${context.requestId}:plugin-fallback:${fromPluginId}:${toPluginId}:${capability}`,
+      actor: { type: "system", id: "plugin-runtime" },
+      action: "plugin.fallback",
+      target: { type: "plugin", id: toPluginId, pluginId: toPluginId },
+      pluginId: toPluginId,
+      pluginVersion: toVersion,
+      capability,
+      profile: context.profile,
+      region: context.region,
+      requestId: context.requestId,
+      runId: context.runId,
+      reason: "前序插件返回上游错误，按画像优先级回退",
+      metadata: {
+        from_plugin_id: fromPluginId,
+        from_plugin_version: fromVersion,
+        to_plugin_id: toPluginId,
+        to_plugin_version: toVersion,
+      },
+    });
+  } catch (auditError) {
+    context.logger.warn("plugin.fallback.audit_unavailable", {
+      fromPluginId,
+      toPluginId,
+      capability,
+      error: auditError instanceof Error ? auditError.message : String(auditError),
+    });
+  }
+}
+
 /** Resolve the first plugin selected by a deployment profile, then invoke it. */
 export async function invokeProfilePlugin<T>(
   options: InvokeProfilePluginOptions
@@ -142,16 +182,43 @@ export async function invokeProfilePlugin<T>(
     );
   }
   const pluginIds = profiles.getPluginIds(options.profileId, options.capability);
-  const pluginId = pluginIds[0];
-  if (!pluginId) {
+  if (pluginIds.length === 0) {
     throw new PluginError(
       "CAPABILITY_UNAVAILABLE",
       `画像 ${profile.id} 未配置能力：${options.capability}`
     );
   }
-  return invokePlugin<T>({
-    ...options,
-    registry: profiles.getPluginRegistry(),
-    pluginId,
-  });
+
+  let lastUpstreamError: PluginError | undefined;
+  for (let index = 0; index < pluginIds.length; index += 1) {
+    const pluginId = pluginIds[index];
+    try {
+      return await invokePlugin<T>({
+        ...options,
+        registry: profiles.getPluginRegistry(),
+        pluginId,
+      });
+    } catch (error) {
+      // A profile's order is an explicit failover policy. Only an upstream
+      // failure is retryable; auth, compliance, configuration, cancellation,
+      // and execution errors must remain visible and must not cross sources.
+      if (!(error instanceof PluginError) || error.code !== "UPSTREAM_ERROR") {
+        throw error;
+      }
+      const nextPluginId = pluginIds[index + 1];
+      if (nextPluginId) {
+        const registry = profiles.getPluginRegistry();
+        await recordPluginFallback(
+          options.context,
+          options.capability,
+          pluginId,
+          nextPluginId,
+          registry.get(pluginId)?.manifest.version,
+          registry.get(nextPluginId)?.manifest.version
+        );
+      }
+      lastUpstreamError = error;
+    }
+  }
+  throw lastUpstreamError || new PluginError("UPSTREAM_ERROR", "画像中的插件均不可用");
 }

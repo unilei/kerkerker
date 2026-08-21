@@ -400,6 +400,8 @@ const registry = createPluginRegistry([
 
 发布画像使用 `PluginProfile` 固定 `id`、`locale`、`region` 和能力到插件 ID 的有序绑定。画像注册必须在插件注册之后完成；每个绑定都要通过能力声明、locale、region 和重复 ID 校验。请求只能选择部署配置中存在的画像，不能提交任意插件 ID 或 Sidecar 地址。
 
+能力绑定数组是明确的优先级和故障回退顺序。宿主只允许在插件返回标准 `UPSTREAM_ERROR` 时尝试下一个已注册且已批准的插件；`CONFIGURATION_ERROR`、合规拒绝、取消、输入错误和执行错误必须立即返回，不能借回退隐藏权限或数据问题。每次回退都应记录插件 ID、画像、版本和请求 ID。
+
 [`app/`](../../app/) 和 [`components/`](../../components/) 只能调用宿主编排服务，不得导入具体适配器。任何 `if (pluginId === "...")`、供应商专用路由或供应商字段分支都必须留在迁移兼容层，并有移除阶段。
 
 ### 画像与选择策略
