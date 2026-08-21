@@ -17,6 +17,8 @@ import {
   type PluginPage as PublicPluginPage,
   type PluginPageConsistency as PublicPluginPageConsistency,
   type PluginRuntime as PublicPluginRuntime,
+  type PluginRuntimeAuth as PublicPluginRuntimeAuth,
+  type PluginRuntimeHealth as PublicPluginRuntimeHealth,
   type PluginRuntimeMode as PublicPluginRuntimeMode,
 } from "@/packages/kerkerker-plugin-contract/src/index";
 
@@ -51,6 +53,10 @@ export const CLOUD_DRIVE_FEATURES: readonly CloudDriveFeature[] = [
 ] as const;
 
 export type PluginRuntimeMode = PublicPluginRuntimeMode;
+
+export type PluginRuntimeHealth = PublicPluginRuntimeHealth;
+
+export type PluginRuntimeAuth = PublicPluginRuntimeAuth;
 
 /** The entry is a module specifier for local runtimes and an HTTP(S) URL for a remote runtime. */
 export type PluginRuntime = PublicPluginRuntime;

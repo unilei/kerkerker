@@ -18,6 +18,9 @@ const CONTRACT_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?
 const LOCALE_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const CONFIG_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]*$/;
 const SECRET_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]*$/;
+const AUTH_HEADER_PATTERN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/;
+const HEALTH_PATH_PATTERN = /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@%\/-]{0,255})$/;
+const MAX_PROTOCOL_VERSIONS = 8;
 const STORAGE_PERMISSIONS = new Set([
   "none",
   "ephemeral",
@@ -62,6 +65,138 @@ function isContractVersion(value: unknown): value is string {
   return typeof value === "string" && CONTRACT_VERSION_PATTERN.test(value);
 }
 
+function validateRemoteRuntimeOptions(
+  runtime: Record<string, unknown>,
+  mode: unknown,
+  issues: PluginValidationIssue[]
+): void {
+  const optionalKeys = ["protocolVersions", "health", "auth"] as const;
+  if (mode !== "remote") {
+    for (const key of optionalKeys) {
+      if (runtime[key] !== undefined) {
+        addIssue(
+          issues,
+          "INVALID_RUNTIME",
+          `runtime.${key}`,
+          `${key} is only supported for remote runtimes`
+        );
+      }
+    }
+    return;
+  }
+
+  const protocolVersions = runtime.protocolVersions;
+  if (protocolVersions !== undefined) {
+    if (
+      !Array.isArray(protocolVersions) ||
+      protocolVersions.length === 0 ||
+      protocolVersions.length > MAX_PROTOCOL_VERSIONS
+    ) {
+      addIssue(
+        issues,
+        "INVALID_RUNTIME",
+        "runtime.protocolVersions",
+        `protocolVersions must contain 1-${MAX_PROTOCOL_VERSIONS} versions`
+      );
+    } else {
+      const seen = new Set<string>();
+      protocolVersions.forEach((version, index) => {
+        const path = `runtime.protocolVersions[${index}]`;
+        if (!isContractVersion(version) || !version.startsWith("1.")) {
+          addIssue(
+            issues,
+            "UNSUPPORTED_CONTRACT_VERSION",
+            path,
+            "remote protocol versions must be supported v1 contract versions"
+          );
+        }
+        if (typeof version === "string") {
+          if (seen.has(version)) {
+            addIssue(issues, "INVALID_RUNTIME", path, "duplicate protocol version");
+          }
+          seen.add(version);
+        }
+      });
+    }
+  }
+
+  const health = runtime.health;
+  if (health !== undefined) {
+    if (!isRecord(health)) {
+      addIssue(issues, "INVALID_RUNTIME", "runtime.health", "health must be an object");
+    } else {
+      if (
+        typeof health.path !== "string" ||
+        !HEALTH_PATH_PATTERN.test(health.path) ||
+        health.path.includes("//") ||
+        health.path.split("/").some((segment) => segment === "..")
+      ) {
+        addIssue(
+          issues,
+          "INVALID_RUNTIME",
+          "runtime.health.path",
+          "health.path must be a safe absolute path without query, fragment, or parent traversal"
+        );
+      }
+      if (
+        health.timeoutMs !== undefined &&
+        (typeof health.timeoutMs !== "number" ||
+          !Number.isSafeInteger(health.timeoutMs) ||
+          health.timeoutMs < 100 ||
+          health.timeoutMs > 30_000)
+      ) {
+        addIssue(
+          issues,
+          "INVALID_RUNTIME",
+          "runtime.health.timeoutMs",
+          "health.timeoutMs must be an integer from 100ms to 30s"
+        );
+      }
+    }
+  }
+
+  const auth = runtime.auth;
+  if (auth !== undefined) {
+    if (!isRecord(auth)) {
+      addIssue(issues, "INVALID_RUNTIME", "runtime.auth", "auth must be an object");
+    } else {
+      if (auth.type !== "bearer" && auth.type !== "header") {
+        addIssue(
+          issues,
+          "INVALID_RUNTIME",
+          "runtime.auth.type",
+          "auth.type must be bearer or header"
+        );
+      }
+      if (typeof auth.secret !== "string" || !SECRET_NAME_PATTERN.test(auth.secret)) {
+        addIssue(
+          issues,
+          "INVALID_RUNTIME",
+          "runtime.auth.secret",
+          "auth.secret must be a valid host secret name"
+        );
+      }
+      if (auth.type === "header") {
+        if (typeof auth.header !== "string" || !AUTH_HEADER_PATTERN.test(auth.header)) {
+          addIssue(
+            issues,
+            "INVALID_RUNTIME",
+            "runtime.auth.header",
+            "header auth requires a valid HTTP header name"
+          );
+        }
+      } else if (auth.header !== undefined) {
+        addIssue(
+          issues,
+          "INVALID_RUNTIME",
+          "runtime.auth.header",
+          "bearer auth must not declare a custom header"
+        );
+      }
+    }
+  }
+}
+
 function validateRuntime(
   runtime: unknown,
   issues: PluginValidationIssue[]
@@ -90,6 +225,8 @@ function validateRuntime(
     );
     return;
   }
+
+  validateRemoteRuntimeOptions(runtime, mode, issues);
 
   if (mode === "remote") {
     try {
@@ -519,6 +656,25 @@ export function getPluginManifestIssues(value: unknown): readonly PluginValidati
   validateConfig(value.config, issues);
   validateCompliance(value.compliance, issues);
   validatePermissions(value.permissions, issues);
+
+  const runtime = value.runtime;
+  const permissions = value.permissions;
+  if (
+    isRecord(runtime) &&
+    runtime.mode === "remote" &&
+    isRecord(runtime.auth) &&
+    typeof runtime.auth.secret === "string" &&
+    isRecord(permissions) &&
+    Array.isArray(permissions.secrets) &&
+    !permissions.secrets.includes(runtime.auth.secret)
+  ) {
+    addIssue(
+      issues,
+      "INVALID_PERMISSION",
+      "runtime.auth.secret",
+      "remote auth secret must be declared in permissions.secrets"
+    );
+  }
   return issues;
 }
 

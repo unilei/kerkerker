@@ -162,6 +162,46 @@ test("requires secret config fields to be explicitly marked and typed", () => {
   assert.ok(getPluginManifestIssues(wrongType).some((issue) => issue.code === "INVALID_PERMISSION"));
 });
 
+test("validates optional remote health, protocol, and host-auth declarations", () => {
+  const remote = manifest({
+    runtime: {
+      mode: "remote",
+      entry: "https://api.example.com/plugin",
+      protocolVersions: ["1.0.0"],
+      health: { path: "/healthz", timeoutMs: 5000 },
+      auth: { type: "header", header: "x-plugin-token", secret: "catalog.token" },
+    },
+  });
+  assert.equal(validatePluginManifest(remote), true);
+
+  const missingSecretPermission = manifest({
+    runtime: {
+      mode: "remote",
+      entry: "https://api.example.com/plugin",
+      auth: { type: "bearer", secret: "remote.token" },
+    },
+  });
+  assert.ok(getPluginManifestIssues(missingSecretPermission).some((issue) =>
+    issue.path === "runtime.auth.secret" && issue.code === "INVALID_PERMISSION"
+  ));
+
+  const unsafeHealth = manifest({
+    runtime: {
+      mode: "remote",
+      entry: "https://api.example.com/plugin",
+      health: { path: "https://other.example/health" },
+    },
+  });
+  assert.ok(getPluginManifestIssues(unsafeHealth).some((issue) => issue.path === "runtime.health.path"));
+
+  const localHealth = manifest({
+    runtime: { mode: "built-in", entry: "./plugins/example", health: { path: "/healthz" } },
+  });
+  assert.ok(getPluginManifestIssues(localHealth).some((issue) =>
+    issue.path === "runtime.health" && issue.code === "INVALID_RUNTIME"
+  ));
+});
+
 test("keeps provider/source attribution separate from platform/brand data", () => {
   const candidate = {
     contentId: "content_01",

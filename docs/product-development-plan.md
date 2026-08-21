@@ -38,7 +38,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 | --- | --- | --- |
 | 已完成 | 插件契约、Manifest 校验、错误模型和静态注册 | `lib/plugins/types.ts`、`validation.ts`、`registry.ts` |
 | 已完成 | 可发布的 v1 公共契约包和宿主兼容导出 | `packages/kerkerker-plugin-contract/`、`lib/plugins/types.ts` |
-| 已完成 | 受白名单、HTTPS、请求取消和响应大小限制的远程 Sidecar 调用 | `lib/plugins/sidecar.ts`、`lib/plugins/runtime.ts`、`tests/plugin-sidecar.test.ts` |
+| 已完成 | 受白名单、HTTPS、请求取消、响应大小限制、健康检查、协议协商和宿主密钥认证约束的远程 Sidecar 调用 | `lib/plugins/sidecar.ts`、`lib/plugins/runtime.ts`、`tests/plugin-sidecar.test.ts` |
 | 已完成 | 运行画像、上下文、超时和能力调用边界 | `lib/plugins/profiles.ts`、`invocation.ts`、`content-host.ts` |
 | 已完成 | 首页、分类、浏览、详情和日历的宿主 API 边界 | `app/api/content/*`、对应 hooks/pages |
 | 已完成 | KKPAN 云盘适配器与 provider-neutral cloud-drive host bridge | `lib/plugins/adapters/kkpan-cloud-drive.ts`、`lib/plugins/resource-host.ts`、`lib/pan/cloud-drive-task.ts` |
@@ -53,7 +53,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 
 1. 合规策略、审计事件、下架记录、公开资源过滤和后台操作面板已在本分支落地；生产仍处于 `audit` 迁移模式，必须完成每个插件的材料登记后再切换 `enforce`。
 2. 旧资源模型仍保留 `douban_id`、`source=kkpan` 和 `kkpan_id` 作为迁移兼容字段；资源 repository 已要求 `content_id`，后台资源/单片同步 API 已支持 content-only，但全量旧数据对账和“零旧写”证据尚未完成。
-3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 基础调用已落地，但健康检查、服务间认证、熔断、版本协商和版本回退仍未完成。
+3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 已支持健康检查、服务间认证和协议版本协商，健康摘除、熔断、重试上限和版本回退仍未完成。
 4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；跨来源 `content_id` 精确映射、TMDB 图片 R2 持久化、英文 UI smoke 和运营审批仍未完成。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
 6. Go 服务刷新任务和 Web 网盘任务还没有共享完整的插件作业运行器；Web 网盘调度已经具备统一运行元数据和审计快照，跨仓租约、进度回报和恢复仍属于阶段 3/7。
@@ -149,7 +149,7 @@ flowchart LR
 - 当前网盘调度已先落地兼容的运行元数据层：新运行记录固定保存 `plugin_id`、插件版本、`profile_id`、配置版本、actor 和幂等键，事件与审计继承同一快照；历史记录读取使用明确的 legacy 默认值。下一步把这组字段和生命周期抽到真正的通用 runner，而不是复制网盘专用状态机。
 - 建立独立的 `kerkerker-plugin-contract` 包/仓库，发布 Manifest、能力接口、DTO、错误码、JSON Schema、兼容性测试包和 TypeScript SDK；当前仓内发布骨架和 CI 检查已完成。
 - 将 Douban、KKPAN 适配器拆成独立插件包；私有实现可以使用受控 package 或 Sidecar 镜像，宿主只通过注册表和版本化契约调用。
-- 实现 Sidecar HTTP 协议：当前已完成 HTTPS、精确出站主机白名单、请求 ID、超时/取消、能力/操作 allowlist 和响应大小限制；服务间认证、健康检查、熔断、重试上限、版本协商仍是本阶段剩余工作。
+- 实现 Sidecar HTTP 协议：当前已完成 HTTPS、精确出站主机白名单、请求 ID、超时/取消、能力/操作 allowlist、响应大小限制、可选健康检查、宿主密钥认证和 v1 协议协商；健康失败的注册表摘除、熔断、重试上限和版本回退仍是本阶段剩余工作。
 - 注册表支持优先级、健康摘除、明确回退和配置版本；不允许管理员上传代码或任意 endpoint。
 
 **验收**：任务在多实例、重启和取消场景下不重复执行；新增一个示例插件只改插件仓库、部署注册和测试，不改宿主业务路由；Sidecar 不可用时有可观测的失败或批准的回退；契约破坏性变更会阻止构建。

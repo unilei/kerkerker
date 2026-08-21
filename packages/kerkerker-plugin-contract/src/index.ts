@@ -37,9 +37,30 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapabilityId[] = [
 
 export type PluginRuntimeMode = "built-in" | "package" | "remote";
 
+/** Optional remote runtime health probe configuration. */
+export interface PluginRuntimeHealth {
+  /** Absolute path on the declared remote origin, for example `/healthz`. */
+  readonly path: string;
+  /** Host-side probe deadline in milliseconds. */
+  readonly timeoutMs?: number;
+}
+
+/** Optional remote runtime authentication declaration. Values are host secrets. */
+export interface PluginRuntimeAuth {
+  /** `bearer` uses Authorization; `header` uses the declared header name. */
+  readonly type: "bearer" | "header";
+  /** Name of a secret declared in `permissions.secrets`; never a secret value. */
+  readonly secret: string;
+  readonly header?: string;
+}
+
 export interface PluginRuntime {
   readonly mode: PluginRuntimeMode;
   readonly entry: string;
+  /** Supported wire contract versions for remote protocol negotiation. */
+  readonly protocolVersions?: readonly PluginContractVersion[];
+  readonly health?: PluginRuntimeHealth;
+  readonly auth?: PluginRuntimeAuth;
 }
 
 export interface PluginCapabilityDeclaration {

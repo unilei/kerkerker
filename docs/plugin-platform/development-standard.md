@@ -130,6 +130,7 @@ Manifest 规则：
 - `locales` 使用 BCP 47；`compliance.regions` 使用 ISO 3166-1 alpha-2 大写码或经过审核的部署区域标签。
 - `config.version` 使用 `major.minor` 或 `major.minor.patch`；`config.fields` 的 key 在插件内唯一，`secret: true` 的值不得通过读取配置 API 返回。
 - `networkHosts` 是精确主机名，不接受 `*`；确需子域时由宿主支持受审的后缀规则。
+- `runtime.mode=remote` 可以声明 `protocolVersions`、`health` 和 `auth`：健康路径必须是同一 HTTPS origin 下的绝对路径；协议响应必须返回宿主支持的 v1 兼容版本；`auth.secret` 只能引用 `permissions.secrets` 中的密钥名，认证值由宿主运行时注入，禁止写入 Manifest、日志或请求体。
 - `compliance` 必须能让运营方定位法律依据、内容范围、地区和数据分类；许可证与维护入口写入插件发布元数据。
 
 ### 能力实现接口
