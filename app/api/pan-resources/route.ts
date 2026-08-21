@@ -14,9 +14,17 @@ import {
   type PanBrand,
   type PanResourceInput,
 } from '@/types/pan-resource';
-import { isValidContentId, resolveContentIdentity } from '@/lib/content-identity-db';
+import {
+  findContentIdentityByExternalRef,
+  isValidContentId,
+  resolveContentIdentity,
+} from '@/lib/content-identity-db';
 import { DOUBAN_CONTENT_PLUGIN_ID } from '@/lib/plugins/adapters/douban-content';
 import { KKPAN_PLUGIN_ID } from '@/lib/plugins/adapters/kkpan-cloud-drive';
+import {
+  filterPublicPanResources,
+  recordPanResourceMutation,
+} from '@/lib/pan/resource-audit';
 
 // 校验分享链接格式（仅允许 http/https，链接仅作存储与跳转，不发起服务端请求）
 function isValidPanUrl(url: string): boolean {
@@ -136,7 +144,7 @@ export async function GET(request: NextRequest) {
 
     if (!doubanId && !contentId) {
       return NextResponse.json(
-        { code: 400, message: '缺少 douban_id 参数', data: null },
+        { code: 400, message: '缺少 douban_id 或 content_id 参数', data: null },
         { status: 400 }
       );
     }
@@ -147,6 +155,26 @@ export async function GET(request: NextRequest) {
     if (resources.length === 0 && contentId && doubanId) {
       resources = await getPanResourcesByDoubanId(doubanId);
     }
+    let policyContentId =
+      contentId || resources.find((resource) => resource.content_id)?.content_id;
+    // Legacy rows may have only douban_id. Resolve the existing identity for
+    // policy filtering without creating a new identity during a public read.
+    if (!policyContentId && /^\d{1,20}$/.test(doubanId)) {
+      try {
+        policyContentId = (
+          await findContentIdentityByExternalRef({
+            providerId: DOUBAN_CONTENT_PLUGIN_ID,
+            externalId: doubanId,
+          })
+        )?.contentId;
+      } catch (error) {
+        if (process.env.KERKERKER_COMPLIANCE_MODE === 'enforce') throw error;
+        console.warn('读取历史资源身份失败，审计模式保留兼容读取:', error);
+      }
+    }
+    resources = await filterPublicPanResources(resources, undefined, {
+      contentId: policyContentId,
+    });
     return NextResponse.json({
       code: 200,
       message: '获取成功',
@@ -256,6 +284,7 @@ export async function POST(request: NextRequest) {
       title,
       url,
     });
+    await recordPanResourceMutation(request, 'create', resource);
 
     return NextResponse.json({
       code: 200,
@@ -450,6 +479,9 @@ export async function PUT(request: NextRequest) {
       { code: 404, message: '资源不存在', data: null },
       { status: 404 }
     );
+    await recordPanResourceMutation(request, 'update', resource, {
+      before: existingResource,
+    });
 
     return NextResponse.json({
       code: 200,
@@ -486,6 +518,14 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
+    const existingResource = await getPanResourceById(id);
+    if (!existingResource) {
+      return NextResponse.json(
+        { code: 404, message: '资源不存在', data: null },
+        { status: 404 }
+      );
+    }
+
     const success = await deletePanResourceFromDB(id);
     if (!success) {
       return NextResponse.json(
@@ -493,6 +533,9 @@ export async function DELETE(request: NextRequest) {
         { status: 404 }
       );
     }
+    await recordPanResourceMutation(request, 'delete', existingResource, {
+      before: existingResource,
+    });
 
     return NextResponse.json({
       code: 200,

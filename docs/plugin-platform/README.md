@@ -101,7 +101,7 @@ flowchart LR
 
 宿主运行配置由 [`lib/plugins/invocation.ts`](../../lib/plugins/invocation.ts) 集中注入并按 Manifest 的必填字段、URL 类型和精确网络主机权限校验；API 路由和后台任务不得自行读取供应商环境变量。服务端页面之外的目录发现、搜索和日历任务统一通过 [`lib/plugins/content-host.ts`](../../lib/plugins/content-host.ts) 调用活动画像，`run_id`、超时和取消信号沿同一上下文传播，不通过内部 HTTP 绕回 API 路由。
 
-生产部署通过 `KERKERKER_PLUGIN_PROFILE` 选择活动画像（默认 `cn-default`）。画像不是公开请求参数；同一镜像在中文部署和英文部署中只需改变部署环境与画像配置，页面和宿主 DTO 保持不变。
+生产部署通过 `KERKERKER_PLUGIN_PROFILE` 选择活动画像（默认 `cn-default`），通过 `KERKERKER_PLUGIN_REGION` 选择策略区域（默认 `CN`）。合规门禁由 `KERKERKER_COMPLIANCE_MODE` 控制：迁移期使用 `audit` 记录缺失审批但保持兼容调用，完成策略登记后切换为 `enforce`；下架记录在两种模式下都立即阻断公开读取和插件回源。画像、区域和合规模式都不是公开请求参数；同一镜像在中文部署和英文部署中只需改变部署环境与画像配置，页面和宿主 DTO 保持不变。
 
 宿主身份层位于 [`lib/content-identity-db.ts`](../../lib/content-identity-db.ts)，集合为 `content_identities`。它只接受精确的 `(provider_id, external_id)` 引用，以宿主 UUID 生成不可变 `content_id`；同一请求发现引用指向多个身份时会报冲突，禁止标题模糊合并。网盘资源和影片同步台账在迁移期双写 `content_id` 与旧 `douban_id`，旧 API 仍保持兼容。
 

@@ -14,6 +14,10 @@ services:
       - CRON_SECRET=${CRON_SECRET}
       - MONGODB_URI=mongodb://mongodb:27017/kerkerker
       - NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
+      - KERKERKER_PLUGIN_PROFILE=${KERKERKER_PLUGIN_PROFILE:-cn-default}
+      - KERKERKER_PLUGIN_REGION=${KERKERKER_PLUGIN_REGION:-CN}
+      - KERKERKER_COMPLIANCE_MODE=${KERKERKER_COMPLIANCE_MODE:-audit}
+      - ADMIN_AUDIT_ACTOR_ID=${ADMIN_AUDIT_ACTOR_ID:-admin-session}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

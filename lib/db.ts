@@ -1,5 +1,6 @@
 import { MongoClient, Db } from 'mongodb';
 import { COLLECTIONS } from './constants/db';
+import { ensureComplianceIndexes } from './compliance-types';
 
 // MongoDB 连接池配置
 const MONGO_OPTIONS = {
@@ -276,6 +277,11 @@ async function initializeDatabase(db: Db) {
     );
     await panSyncRunEventsCollection.createIndex({ run_id: 1, created_at: 1 });
     await panSyncRunEventsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
+
+    // Phase 1 compliance data layer. Index creation is idempotent; retention
+    // is enforced by TTL indexes while policy and takedown records remain
+    // queryable for operational review.
+    await ensureComplianceIndexes(db);
 
     globalForMongo.initialized = true;
     console.log('✅ MongoDB 数据库初始化完成');

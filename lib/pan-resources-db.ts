@@ -12,6 +12,11 @@ import {
   resolveContentIdentity,
 } from "@/lib/content-identity-db";
 import { DOUBAN_CONTENT_PLUGIN_ID } from "@/lib/plugins/adapters/douban-content";
+import { KKPAN_PLUGIN_ID } from "@/lib/plugins/adapters/kkpan-cloud-drive";
+import {
+  complianceModeFromEnvironment,
+  ensurePluginAllowed,
+} from "@/lib/compliance-db";
 
 const CONTENT_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -32,6 +37,33 @@ function validateProviderRef(providerId?: string, providerResourceId?: string): 
     /[\u0000-\u001f]/.test(providerResourceId)
   ) {
     throw new RangeError("provider_resource_id 格式无效");
+  }
+}
+
+async function enforceProviderWritePolicy(
+  providerId: string | undefined,
+  providerResourceId: string | undefined,
+  options: { allowDisable?: boolean; contentId?: string } = {}
+): Promise<void> {
+  if (!providerId || !providerResourceId || options.allowDisable) return;
+  try {
+    const decision = await ensurePluginAllowed({
+      pluginId: providerId,
+      capability: "resource.cloud-drive",
+      profile: process.env.KERKERKER_PLUGIN_PROFILE?.trim() || "cn-default",
+      region: process.env.KERKERKER_PLUGIN_REGION?.trim() || "CN",
+      ...(options.contentId ? { contentId: options.contentId } : {}),
+    });
+    if (!decision.allowed) {
+      throw new RangeError(`来源插件未通过合规策略：${decision.reason}`);
+    }
+  } catch (error) {
+    // Audit mode is deliberately transitional for existing installations. A
+    // missing Mongo policy store must not turn a legacy manual/admin workflow
+    // into a silent success, but enforce mode always fails closed.
+    if (complianceModeFromEnvironment() === "enforce") throw error;
+    if (error instanceof RangeError) throw error;
+    console.warn("来源插件合规策略暂不可用，保留审计模式写入", error);
   }
 }
 
@@ -312,6 +344,12 @@ export async function createPanResourceInDB(
     throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
   }
 
+  await enforceProviderWritePolicy(
+    providerId || (hasKkpanId ? KKPAN_PLUGIN_ID : undefined),
+    providerResourceId || (hasKkpanId ? String(input.kkpan_id) : undefined),
+    { contentId: identity.contentId }
+  );
+
   // 手工录入时省略 kkpan_id 字段，避免 undefined→null 触发唯一索引语义歧义
   const doc: Omit<PanResourceDoc, "_id"> = {
     douban_id: input.douban_id,
@@ -488,6 +526,12 @@ export async function updatePanResourceInDB(
     throw new RangeError("content_id 与 douban_id 的宿主身份不一致");
   }
   setDoc.content_id = identity.contentId;
+
+  await enforceProviderWritePolicy(
+    setDoc.provider_id || existingDoc.provider_id,
+    setDoc.provider_resource_id || existingDoc.provider_resource_id,
+    { allowDisable: updates.enabled === false, contentId: identity.contentId }
+  );
 
   const update: {
     $set: Partial<PanResourceDoc>;

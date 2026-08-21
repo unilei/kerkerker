@@ -16,6 +16,8 @@ import {
   type PanSyncTarget,
 } from "@/lib/pan/catalog-sync";
 import { runIncrementalSync, type SyncStats } from "@/lib/pan/sync";
+import { recordAudit } from "@/lib/compliance-db";
+import { KKPAN_PLUGIN_ID } from "@/lib/plugins/adapters/kkpan-cloud-drive";
 
 export const PAN_SYNC_TASKS = ["catalog", "incremental"] as const;
 export type PanSyncTask = (typeof PAN_SYNC_TASKS)[number];
@@ -627,6 +629,50 @@ async function appendRunEvent(
   await (await eventCollection()).insertOne(event);
 }
 
+async function recordSchedulerAudit(
+  action: "sync.run.enqueue" | "sync.run.finish",
+  input: {
+    runId: string;
+    task: PanSyncTask;
+    trigger?: PanSyncRunTrigger;
+    status?: PanSyncRunStatus;
+    reason?: string;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  try {
+    await recordAudit({
+      idempotencyKey: `pan-sync:${input.runId}:${action}`,
+      actor: { type: "system", id: "pan-scheduler" },
+      action,
+      target: {
+        type: "pan-sync-run",
+        id: input.runId,
+        pluginId: KKPAN_PLUGIN_ID,
+      },
+      pluginId: KKPAN_PLUGIN_ID,
+      providerId: KKPAN_PLUGIN_ID,
+      profile: process.env.KERKERKER_PLUGIN_PROFILE?.trim() || "cn-default",
+      region: process.env.KERKERKER_PLUGIN_REGION?.trim() || "CN",
+      runId: input.runId,
+      reason:
+        input.reason ||
+        `网盘${input.task}任务${action === "sync.run.enqueue" ? "入队" : "结束"}`,
+      metadata: {
+        task: input.task,
+        ...(input.trigger ? { trigger: input.trigger } : {}),
+        ...(input.status ? { status: input.status } : {}),
+        ...(input.metadata || {}),
+      },
+    });
+  } catch (error) {
+    // The run record and operator-facing event remain authoritative. Do not
+    // turn a completed sync into a failed one merely because audit storage is
+    // temporarily unavailable; the warning is visible in server logs.
+    console.warn(`网盘任务审计写入失败（${action}）:`, error);
+  }
+}
+
 export async function requestPanSyncRunCancel(runId: string): Promise<boolean> {
   const coll = await runCollection();
   const now = new Date().toISOString();
@@ -704,6 +750,13 @@ async function finishRun(
           : "任务失败",
     error ? { error: truncateError(error) } : undefined
   );
+  const finishedRun = await getRunDoc(runId);
+  await recordSchedulerAudit("sync.run.finish", {
+    runId,
+    task: finishedRun?.task || "catalog",
+    status,
+    ...(error ? { reason: truncateError(error) } : {}),
+  });
 }
 
 async function executeCatalogRun(
@@ -976,6 +1029,12 @@ export async function enqueuePanSyncRun(options: {
       maxBatches,
       owner,
     });
+    await recordSchedulerAudit("sync.run.enqueue", {
+      runId: run.run_id,
+      task: run.task,
+      trigger: run.trigger,
+      metadata: { batch_limit: run.batch_limit, max_batches: run.max_batches },
+    });
     launchRun(run.run_id, owner);
     return run;
   } catch (error) {
@@ -1142,6 +1201,12 @@ async function schedulerTick(): Promise<void> {
           maxBatches: schedule.max_batches,
           owner,
           scheduleSlot: `${task}:${parts.date}`,
+        });
+        await recordSchedulerAudit("sync.run.enqueue", {
+          runId: run.run_id,
+          task: run.task,
+          trigger: run.trigger,
+          metadata: { schedule_slot: `${task}:${parts.date}` },
         });
         launchRun(run.run_id, owner);
         // 启动本地执行后再清理认领标记。若进程恰好在两步之间退出，

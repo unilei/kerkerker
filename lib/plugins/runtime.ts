@@ -8,6 +8,7 @@ import { pluginRegistry as defaultRegistry } from "@/lib/plugins/builtin";
 import type { PluginRegistry } from "@/lib/plugins/registry";
 import { pluginProfileRegistry as defaultProfileRegistry } from "@/lib/plugins/builtin-profiles";
 import type { PluginProfileRegistry } from "@/lib/plugins/profiles";
+import { checkPluginCompliance } from "@/lib/plugins/compliance";
 
 /** Operations are allow-listed; the host never executes a request-supplied method name. */
 const OPERATIONS_BY_CAPABILITY: Readonly<Record<PluginCapability, readonly PluginOperation[]>> = {
@@ -64,6 +65,19 @@ export async function invokePlugin<T>(options: InvokePluginOptions): Promise<T> 
       { path: `capabilities.${capability}` }
     );
   }
+
+  await checkPluginCompliance({
+    pluginId: options.pluginId,
+    pluginVersion: plugin.manifest.version,
+    capability,
+    profile: context.profile,
+    context,
+    // The caller's registry is the trust boundary for this invocation. The
+    // compliance repository also checks the built-in registry by default, so
+    // pass the already-validated membership explicitly for package/fixture
+    // registries without weakening the static registration requirement.
+    registered: Boolean(registry.get(options.pluginId)),
+  });
 
   const method = (implementation as Record<string, unknown>)[operation];
   if (typeof method !== "function") {
