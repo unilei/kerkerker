@@ -105,7 +105,7 @@ flowchart LR
 
 宿主身份层位于 [`lib/content-identity-db.ts`](../../lib/content-identity-db.ts)，集合为 `content_identities`。它只接受精确的 `(provider_id, external_id)` 引用，以宿主 UUID 生成不可变 `content_id`；同一请求发现引用指向多个身份时会报冲突，禁止标题模糊合并。网盘资源和影片同步台账在迁移期双写 `content_id` 与旧 `douban_id`，旧 API 仍保持兼容。
 
-通用作业的管理员只读入口为 `GET /api/plugins/jobs`。它只查询已写入 `plugin_jobs` 的通用作业，支持 `status`、`run_id` 和 `limit`，响应明确标记 `writable=false`；单次运行的持久事件时间线通过 `GET /api/plugins/jobs/events?run_id=<run_id>` 查询，支持 `after_sequence` 和 `limit` 正向分页，即使当前已到末尾也返回可继续轮询的序号。两个入口都使用显式管理员 DTO，不返回幂等键、执行 cursor、自由 metadata、事件内容摘要、内部 outbox 或 TTL 字段。旧 Pan 调度的 `runs`/`plugin_runs` 仍由 `/api/pan-resources/scheduler` 提供，不能通过这些入口修改或重试。
+通用作业的管理员查询入口为 `GET /api/plugins/jobs`。它只查询已写入 `plugin_jobs` 的通用作业，支持 `status`、`run_id` 和 `limit`，响应明确标记 `writable=false`；单次运行的持久事件时间线通过 `GET /api/plugins/jobs/events?run_id=<run_id>` 查询，支持 `after_sequence` 和 `limit` 正向分页，即使当前已到末尾也返回可继续轮询的序号。通用宿主任务的生命周期操作使用受保护的 `POST /api/plugins/jobs/<run_id>`，请求体只接受 `{ "action": "cancel" | "retry", "reason"? }`：取消仅允许排队/运行/退避中的 host 任务，重试仅允许未取消的 `failed`/`partial` 任务；每次成功变更都会写入 `plugin.job.cancel` 或 `plugin.job.retry` 审计事件。影子投影、`external-report` 和 `metadata.source=pan-scheduler` 的迁移任务会被拒绝，必须走各自的 fencing/迁移控制路径。所有入口都使用显式管理员 DTO，不返回幂等键、执行 cursor、自由 metadata、事件内容摘要、内部 outbox 或 TTL 字段。旧 Pan 调度的 `runs`/`plugin_runs` 仍由 `/api/pan-resources/scheduler` 提供，不能通过通用生命周期入口修改。
 
 通用宿主执行器位于 [`lib/plugins/job-executor.ts`](../../lib/plugins/job-executor.ts)。它只接受构建期静态注册的 `job_id`，使用 `PluginJobRunner` 的原子领取、租约心跳、取消检查和 fencing 写入；心跳、进度、游标与终态更新在单次执行内串行化，租约失效会中止回调且不使用旧 token 写终态。执行器默认不启动，也不会领取未注册任务。
 
@@ -233,6 +233,16 @@ interface ContentIdentity {
 3. 跨供应商的自动合并只能使用可解释的强证据；标题相似只能产生待审候选，不能直接合并。
 4. 合并必须保留别名、原外部引用、操作者、证据和时间，且支持审计回滚。
 5. 网盘、播放、弹幕、图片和推荐记录只持久化 `content_id` 与自身 `provider_id/external_id`；`douban_id` 仅作为迁移期兼容字段。
+
+跨来源的人工精确映射使用管理员接口
+[`POST /api/plugins/identity-links`](../../app/api/plugins/identity-links/route.ts)：请求必须
+携带已经存在的 `content_id`、已注册内容插件的 `provider_id/external_id`、操作理由和
+`evidence_ref`。接口在 `enforce` 策略下执行来源审批，底层只做条件追加，不会因为
+TMDB ID、标题或年份不匹配而创建新身份；外部引用已经属于其他 `content_id` 时返回
+409 并保留冲突身份列表。重复提交同一引用是幂等读取，成功变更写入不可覆盖的
+`content.identity.link` 审计事件。管理员可用
+[`GET /api/plugins/identity-links?content_id=...`](../../app/api/plugins/identity-links/route.ts)
+查看当前精确引用集合。
 
 当前 [`types/pan-resource.ts`](../../types/pan-resource.ts) 仍保留必需的 `douban_id` 兼容字段，并将来源固定为 `manual | kkpan`；资源 API 已支持优先按 `content_id` 读取，详情页和旧查询仍以豆瓣 ID 兼容。来源插件的 `provider_id/provider_resource_id` 与旧 `kkpan_id` 一旦入库不可由普通编辑改绑，避免后续同步重新导入旧来源对象。以上均属于迁移对象。豆瓣服务已有的 `internal_id` 可作为 `provider_id=kerkerker.douban-service` 的外部引用或迁移映射依据，但不能成为全平台最终主键。
 

@@ -55,7 +55,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 1. 合规策略、审计事件、下架记录、公开资源过滤和后台操作面板已在本分支落地；生产仍处于 `audit` 迁移模式，必须完成每个插件的材料登记后再切换 `enforce`。
 2. 旧资源模型仍保留 `douban_id`、`source=kkpan` 和 `kkpan_id` 作为迁移兼容字段；资源 repository 已要求 `content_id`，后台资源/单片同步 API 已支持 content-only；只读身份审计命令已交付，但生产全量报告、冲突处理和“零旧写”证据尚未完成。
 3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 已支持健康检查、服务间认证、协议版本协商、进程内熔断，画像仅在上游错误时按声明顺序回退；跨实例健康状态、重试上限和集中式健康摘除仍未完成。
-4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；跨来源 `content_id` 精确映射、TMDB 图片 R2 持久化、英文 UI smoke 和运营审批仍未完成。
+4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；管理员精确跨来源 `content_id` 映射入口已交付，TMDB 图片 R2 持久化、英文 UI smoke 和运营审批仍未完成。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
 6. Go 刷新器已能通过可选 stdout/HTTPS `kerkerker.plugin-job.v1` 协议把有序进度和追加式事件时间线写入宿主，但尚未由宿主租约驱动，也没有 worker 侧持久 spool、远程取消和断点恢复；Web 网盘任务仍由旧调度器写入。通用宿主执行器壳层已经交付，按静态 `job_id` 注册表领取、心跳、取消和 fencing 写入，但默认不接管旧 Pan 任务；后台已有只读 `plugin_runs` 兼容视图，完整双写、事件接入和执行器迁移仍属于阶段 3/7。
 
@@ -85,7 +85,7 @@ flowchart LR
 | 1 | 合规审批、审计、下架 | 本轮基础已完成，生产收口中 | 1–2 周 | 0 | 策略数据层/API/UI/运行时门禁已交付；待运营填写材料并切换 enforce |
 | 2 | 内容身份和旧字段迁移 | P0 | 2–3 周 | 1 | 资源/台账新写入已用 `content_id`；已提供只读审计，待完成生产全量对账、备份回滚演练和零旧写指标 |
 | 3 | 统一作业基础与独立契约包 | 契约、Sidecar 熔断、Mongo CAS、跨仓事件接收和宿主执行器壳层已完成，迁移收口中 | 3–5 周 | 2 | 任务和插件都使用版本化运行边界；待完成 Pan 执行器迁移、集中式健康摘除和重试上限 |
-| 4 | TMDB 内容插件与英文画像 | 本轮最小读路径已完成，生产收口中 | 2–4 周 | 3 | 英文画像不依赖 Douban 回源；待完成身份映射、R2 和运营审批 |
+| 4 | TMDB 内容插件与英文画像 | 本轮最小读路径已完成，生产收口中 | 2–4 周 | 3 | 英文画像不依赖 Douban 回源；身份映射入口已交付，待完成 R2、英文 UI smoke 和运营审批 |
 | 5 | 通用云盘插件与资源中心 | P1 | 2–3 周 | 2、3 | 新云盘来源无需改宿主路由 |
 | 6 | 播放、弹幕、图片、推荐插件 | P1 | 3–5 周 | 3、4 | 每项能力有标准 DTO 和策略门禁 |
 | 7 | 统一作业、调度、日志和告警 | P1 | 2–4 周 | 1、3、5、6 | 任务可取消、恢复、审计和告警 |
@@ -149,7 +149,7 @@ flowchart LR
 **实现内容**：
 
 - 从 `lib/pan/scheduler.ts` 提取通用 `PluginJobRunner`，统一 `run_id`、租约、心跳、取消、恢复、幂等键、游标、重试退避和配置快照；当前已交付无供应商依赖的生命周期、CAS 版本、租约、进度、取消和退避边界，并提供 Mongo `PluginJobStore` 与只读 Pan 调度兼容适配器。调度 API 的 `plugin_runs` 只读投影不具备写入能力，`revision=0` 和 `maxAttempts=1` 明确表示旧状态机尚未完成双写迁移；下一步接入实际作业执行和跨仓刷新。
-- 管理员只读入口 `GET /api/plugins/jobs` 已接入 `plugin_jobs` Mongo 存储，可按状态或 `run_id` 查看通用作业进度；它明确标记为不可写，旧 Pan scheduler 仍是唯一写入真源，避免两个状态机互相覆盖。
+- 管理员查询入口 `GET /api/plugins/jobs` 已接入 `plugin_jobs` Mongo 存储，可按状态或 `run_id` 查看通用作业进度；通用宿主任务另有受保护的 `POST /api/plugins/jobs/<run_id>` 生命周期入口，严格区分 `cancel` 与 `retry` 的允许状态并写入审计事件。影子投影、外部上报和 Pan 迁移记录不能通过该入口修改，旧 Pan scheduler 仍保留独立的 fencing 控制路径。
 - 受控 worker 写入口 `POST /api/plugins/jobs/report` 已实现独立 Bearer 鉴权、64 KiB 流式限额、注册插件/版本/画像校验、确定性事件 ID、单调 sequence、内容摘要去重和 Mongo revision CAS；Go 刷新器支持 `stdout|http|both`，默认关闭。它当前只负责状态可见性，不宣称已经具备宿主租约、远程取消或持久重放。
 - 已接受的 worker 事件追加写入 `plugin_job_events`，按 `event_id` 和 `(run_id, sequence)` 双重唯一并与运行快照同周期保留；管理员可通过 `GET /api/plugins/jobs/events` 使用连续游标正向分页查看。非事务 Mongo 在状态 CAS 内保存脱敏 outbox，追加失败时阻断下一序号并由重放/后续请求排空；终态 pending 收据仍进入时间线 DTO，不把迟到旧事件误当作已确认历史。
 - 通用任务身份固定为 `run_id + job_id + control_mode`：宿主任务由原子 `claimNext` 领取，外部上报任务永不进入宿主执行队列；每次领取生成随机 token 并递增 fencing 序号，所有运行中写入同时校验 token、fence、revision 和租约有效期，阻断重启或接管后的旧 worker 写入。事件 v1 在迁移窗口内兼容缺失 `job_id` 的旧 worker，并映射到只读 legacy 身份。
@@ -173,7 +173,7 @@ flowchart LR
 
 - 实现 `kerkerker.tmdb-content` 的 catalog、detail、search、calendar 和 image 能力；Manifest 声明 `en-US`、地区、条款和配置密钥；当前已由聚焦契约测试覆盖。
 - 新增 `en-default` 画像，页面和 API 只读取画像上下文，不在代码中判断 Douban/TMDB；TMDB 密钥只通过服务端运行配置注入。
-- TMDB 外部引用必须通过精确映射进入既有 `content_id`；无法确定的跨来源匹配进入人工审核队列，禁止仅凭标题自动合并。
+- TMDB 外部引用必须通过精确映射进入既有 `content_id`；当前由管理员精确映射接口要求理由、证据引用和已批准来源策略，无法确定的跨来源匹配仍须进入人工审核队列，禁止仅凭标题自动合并。
 - 图片走统一 image host 和 R2 策略，记录原始 URL、镜像 URL、尺寸、抓取时间和失效状态；英文画像测试不得意外请求 Douban。
 
 **验收**：同一宿主镜像切换画像即可得到中文或英文目录；详情、分类、搜索、日历、图片和错误 DTO 一致；上游限流和缺失数据有降级策略；跨源身份冲突可审计处理。当前已验证 TMDB 适配器 5 个聚焦测试、英文日历路由和部署 Verify/Build/Deploy 全部通过；正式启用仍以授权、R2 和英文 UI 闸门为准。
