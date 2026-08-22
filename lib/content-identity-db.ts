@@ -33,6 +33,86 @@ export class ContentIdentityConflictError extends Error {
   }
 }
 
+/**
+ * Attach an exact provider reference to an identity that already exists.
+ *
+ * This is intentionally separate from `resolveContentIdentity`: cross-source
+ * linking is an operator-approved operation and must never create a new host
+ * identity as a side effect. The conditional update plus duplicate-key retry
+ * keeps concurrent approvals idempotent while failing closed when another
+ * content identity claims the reference first.
+ */
+export async function linkExternalReferenceToContentIdentity(
+  contentId: string,
+  ref: ExternalReference
+): Promise<HostContentReference> {
+  if (!isValidContentId(contentId)) {
+    throw new RangeError("content_id 格式无效");
+  }
+  const normalized = normalizeExternalRef(ref);
+  const coll = await collection();
+  const referenceFilter = externalRefFilter([normalized]);
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const target = await coll.findOne({ content_id: contentId });
+    if (!target) {
+      throw new RangeError("目标 content_id 尚未解析为宿主内容身份");
+    }
+
+    const owner = assertSingleIdentity(await coll.find(referenceFilter).toArray());
+    if (owner && owner.content_id !== contentId) {
+      throw new ContentIdentityConflictError([contentId, owner.content_id]);
+    }
+    if (owner) {
+      return toHostReference(owner);
+    }
+
+    try {
+      const updated = await coll.findOneAndUpdate(
+        {
+          content_id: contentId,
+          external_refs: {
+            $not: {
+              $elemMatch: {
+                provider_id: normalized.provider_id,
+                external_id: normalized.external_id,
+              },
+            },
+          },
+        } as Filter<ContentIdentityDoc>,
+        {
+          $push: { external_refs: normalized },
+          $set: { updated_at: new Date().toISOString() },
+        },
+        { returnDocument: "after" }
+      );
+      if (updated) return toHostReference(updated);
+    } catch (error) {
+      if (!isDuplicateKey(error)) throw error;
+      // A concurrent approval may have won the unique external-reference
+      // index. Re-read and report the winning identity rather than guessing.
+    }
+
+    const current = await coll.findOne({ content_id: contentId });
+    if (!current) {
+      throw new RangeError("目标 content_id 尚未解析为宿主内容身份");
+    }
+    const currentRef = current.external_refs.some(
+      (candidate) =>
+        candidate.provider_id === normalized.provider_id &&
+        candidate.external_id === normalized.external_id
+    );
+    if (currentRef) return toHostReference(current);
+
+    const winner = assertSingleIdentity(await coll.find(referenceFilter).toArray());
+    if (winner && winner.content_id !== contentId) {
+      throw new ContentIdentityConflictError([contentId, winner.content_id]);
+    }
+  }
+
+  throw new Error("内容身份引用并发更新过于频繁，请重试");
+}
+
 export function isValidContentId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
