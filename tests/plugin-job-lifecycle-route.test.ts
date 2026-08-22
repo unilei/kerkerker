@@ -209,6 +209,7 @@ test("lifecycle endpoint rejects shadow, external-report, Pan migration, and inv
 
   const cases: Array<{ label: string; run: PluginJobRun; action: "cancel" | "retry" }> = [
     { label: "shadow", run: { ...base, host_claimable: false }, action: "cancel" },
+    { label: "invalid job id", run: { ...base, job_id: "Bad Job" }, action: "cancel" },
     { label: "external", run: { ...base, control_mode: "external-report" }, action: "cancel" },
     { label: "pan", run: { ...base, metadata: { source: "pan-scheduler" }, host_claimable: true }, action: "cancel" },
     { label: "succeeded cancel", run: { ...base, status: "succeeded" }, action: "cancel" },
