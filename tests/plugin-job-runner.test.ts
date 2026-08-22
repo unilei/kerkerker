@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  createInMemoryPluginJobRunner,
+  InMemoryPluginJobStore,
+  PluginJobRunner as PluginJobRunnerImplementation,
   PluginJobError,
   PLUGIN_JOB_ERROR_CODES,
+  type PluginJobLeaseCredential,
+  type PluginJobRun,
   type PluginJobRunner,
 } from "@/lib/plugins/job-runner";
 import {
@@ -14,6 +17,7 @@ import {
 function input(overrides: Record<string, unknown> = {}) {
   return {
     pluginId: "example.cloud-drive",
+    jobId: "resource.cloud-drive.sync",
     pluginVersion: "1.0.0",
     profileId: "cn-default",
     profile: "cn-default",
@@ -25,15 +29,26 @@ function input(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function leaseCredential(run: PluginJobRun): PluginJobLeaseCredential {
+  assert.ok(run.lease);
+  return {
+    owner: run.lease.owner,
+    token: run.lease.token,
+    fence: run.lease.fence,
+  };
+}
+
 function makeRunner() {
   let now = new Date("2026-08-21T00:00:00.000Z");
-  const runner = createInMemoryPluginJobRunner({
+  const store = new InMemoryPluginJobStore();
+  const runner = new PluginJobRunnerImplementation(store, {
     now: () => now,
     defaultLeaseTtlMs: 1_000,
     defaultRetryPolicy: { maxAttempts: 3, baseDelayMs: 100, maxDelayMs: 500 },
   });
   return {
     runner,
+    store,
     advance(ms: number) {
       now = new Date(now.getTime() + ms);
     },
@@ -74,6 +89,31 @@ test("job runner keeps idempotent metadata snapshots", async () => {
       error instanceof PluginJobError &&
       error.code === PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT
   );
+  await assert.rejects(
+    () => enqueue(runner, { jobId: "resource.cloud-drive.refresh" }),
+    (error: unknown) =>
+      error instanceof PluginJobError &&
+      error.code === PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT
+  );
+});
+
+test("concurrent enqueue rejects a conflicting idempotency identity", async () => {
+  const { runner } = makeRunner();
+  const results = await Promise.allSettled([
+    enqueue(runner, {
+      idempotencyKey: "concurrent:identity",
+      jobId: "content.catalog.daily",
+    }),
+    enqueue(runner, {
+      idempotencyKey: "concurrent:identity",
+      jobId: "content.catalog.manual",
+    }),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  const rejected = results.find((result) => result.status === "rejected");
+  assert.ok(rejected && rejected.status === "rejected");
+  assert.ok(rejected.reason instanceof PluginJobError);
+  assert.equal(rejected.reason.code, PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT);
 });
 
 test("job runner owns a lease and keeps progress and cursor monotonic", async () => {
@@ -83,6 +123,9 @@ test("job runner owns a lease and keeps progress and cursor monotonic", async ()
   assert.equal(running.status, "running");
   assert.equal(running.attempt, 1);
   assert.equal(running.lease?.owner, "worker-a");
+  assert.equal(running.lease?.fence, 1);
+  assert.equal(running.lease_fence, 1);
+  const credential = leaseCredential(running);
 
   await assert.rejects(
     () => runner.start({ runId: queued.run_id, owner: "worker-b" }),
@@ -90,7 +133,7 @@ test("job runner owns a lease and keeps progress and cursor monotonic", async ()
       error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.LEASE_BUSY
   );
 
-  const progressed = await runner.reportProgress(running.run_id, "worker-a", {
+  const progressed = await runner.reportProgress(running.run_id, credential, {
     total: 10,
     processed: 3,
     created: 2,
@@ -103,20 +146,20 @@ test("job runner owns a lease and keeps progress and cursor monotonic", async ()
     failed: 0,
     skipped: 1,
   });
-  await runner.setCursor(running.run_id, "worker-a", "cursor-3");
+  await runner.setCursor(running.run_id, credential, "cursor-3");
 
   await assert.rejects(
-    () => runner.reportProgress(running.run_id, "worker-a", { processed: 2 }),
+    () => runner.reportProgress(running.run_id, credential, { processed: 2 }),
     (error: unknown) =>
       error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.INVALID_PROGRESS
   );
 
   advance(500);
-  const heartbeated = await runner.heartbeat(running.run_id, "worker-a");
+  const heartbeated = await runner.heartbeat(running.run_id, credential);
   assert.equal(heartbeated.cursor, "cursor-3");
   assert.equal(heartbeated.heartbeat_at, "2026-08-21T00:00:00.500Z");
 
-  const finished = await runner.finish(running.run_id, "worker-a", { status: "succeeded" });
+  const finished = await runner.finish(running.run_id, credential, { status: "succeeded" });
   assert.equal(finished.status, "succeeded");
   assert.equal(finished.lease, undefined);
   assert.equal(finished.finished_at, "2026-08-21T00:00:00.500Z");
@@ -130,17 +173,64 @@ test("queued and running jobs have cooperative cancellation", async () => {
   assert.equal(await runner.isCancellationRequested(queued.run_id), true);
 
   const active = await enqueue(runner, { idempotencyKey: "cancel:running" });
-  await runner.start({ runId: active.run_id, owner: "worker-a" });
+  const running = await runner.start({ runId: active.run_id, owner: "worker-a" });
+  const credential = leaseCredential(running);
   const requested = await runner.requestCancel(active.run_id);
   assert.equal(requested?.status, "running");
   assert.equal(requested?.cancel_requested, true);
   await assert.rejects(
-    () => runner.finish(active.run_id, "worker-a", { status: "succeeded" }),
+    () => runner.finish(active.run_id, credential, { status: "succeeded" }),
     (error: unknown) =>
       error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.INVALID_STATE
   );
-  const stopped = await runner.finish(active.run_id, "worker-a", { status: "cancelled" });
+  const stopped = await runner.finish(active.run_id, credential, { status: "cancelled" });
   assert.equal(stopped.status, "cancelled");
+});
+
+test("cancellation retries when a queued run is claimed concurrently", async () => {
+  const { runner, store } = makeRunner();
+  const queued = await enqueue(runner, { idempotencyKey: "cancel:claim-race" });
+  const update = store.update.bind(store);
+  let injected = false;
+  store.update = async (...args) => {
+    if (!injected) {
+      injected = true;
+      const claimed = await runner.claimNext({ owner: "worker-race" });
+      assert.equal(claimed?.status, "running");
+      return null;
+    }
+    return update(...args);
+  };
+
+  const cancelled = await runner.requestCancel(queued.run_id);
+  assert.equal(injected, true);
+  assert.equal(cancelled?.status, "running");
+  assert.equal(cancelled?.cancel_requested, true);
+  assert.equal(cancelled?.lease?.owner, "worker-race");
+});
+
+test("cancellation retries when a heartbeat wins the first CAS", async () => {
+  const { runner, store } = makeRunner();
+  const queued = await enqueue(runner, { idempotencyKey: "cancel:heartbeat-race" });
+  const running = await runner.start({ runId: queued.run_id, owner: "worker-race" });
+  const credential = leaseCredential(running);
+  const update = store.update.bind(store);
+  let injected = false;
+  store.update = async (...args) => {
+    if (!injected) {
+      injected = true;
+      const heartbeated = await runner.heartbeat(running.run_id, credential);
+      assert.equal(heartbeated.revision, running.revision + 1);
+      return null;
+    }
+    return update(...args);
+  };
+
+  const cancelled = await runner.requestCancel(running.run_id);
+  assert.equal(injected, true);
+  assert.equal(cancelled?.status, "running");
+  assert.equal(cancelled?.cancel_requested, true);
+  assert.equal(cancelled?.revision, running.revision + 2);
 });
 
 test("retry uses exponential backoff and enforces max attempts", async () => {
@@ -149,8 +239,8 @@ test("retry uses exponential backoff and enforces max attempts", async () => {
     idempotencyKey: "retry:1",
     retryPolicy: { maxAttempts: 3, baseDelayMs: 100, maxDelayMs: 500 },
   });
-  await runner.start({ runId: queued.run_id, owner: "worker-a" });
-  await runner.finish(queued.run_id, "worker-a", {
+  let running = await runner.start({ runId: queued.run_id, owner: "worker-a" });
+  await runner.finish(queued.run_id, leaseCredential(running), {
     status: "failed",
     error: { code: "UPSTREAM_ERROR", message: "temporary", retryable: true },
   });
@@ -165,14 +255,14 @@ test("retry uses exponential backoff and enforces max attempts", async () => {
   );
 
   advance(100);
-  await runner.start({ runId: queued.run_id, owner: "worker-a" });
-  await runner.finish(queued.run_id, "worker-a", { status: "partial" });
+  running = await runner.start({ runId: queued.run_id, owner: "worker-a" });
+  await runner.finish(queued.run_id, leaseCredential(running), { status: "partial" });
   const secondRetry = await runner.retry(queued.run_id);
   assert.equal(secondRetry.next_retry_at, "2026-08-21T00:00:00.300Z");
 
   advance(200);
-  await runner.start({ runId: queued.run_id, owner: "worker-a" });
-  await runner.finish(queued.run_id, "worker-a", { status: "failed" });
+  running = await runner.start({ runId: queued.run_id, owner: "worker-a" });
+  await runner.finish(queued.run_id, leaseCredential(running), { status: "failed" });
   await assert.rejects(
     () => runner.retry(queued.run_id),
     (error: unknown) =>
@@ -183,17 +273,91 @@ test("retry uses exponential backoff and enforces max attempts", async () => {
 test("expired leases cannot write progress and can be explicitly reclaimed", async () => {
   const { runner, advance } = makeRunner();
   const queued = await enqueue(runner, { idempotencyKey: "lease:1" });
-  await runner.start({ runId: queued.run_id, owner: "worker-a", leaseTtlMs: 1_000 });
+  const first = await runner.start({ runId: queued.run_id, owner: "worker-a", leaseTtlMs: 1_000 });
+  const staleCredential = leaseCredential(first);
   advance(1_001);
   await assert.rejects(
-    () => runner.reportProgress(queued.run_id, "worker-a", { processed: 1 }),
+    () => runner.reportProgress(queued.run_id, staleCredential, { processed: 1 }),
     (error: unknown) =>
       error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.LEASE_REQUIRED
   );
-  const reclaimed = await runner.start({ runId: queued.run_id, owner: "worker-b" });
+  const reclaimed = await runner.start({ runId: queued.run_id, owner: "worker-a" });
   assert.equal(reclaimed.status, "running");
   assert.equal(reclaimed.attempt, 2);
-  assert.equal(reclaimed.lease?.owner, "worker-b");
+  assert.equal(reclaimed.lease?.owner, "worker-a");
+  assert.equal(reclaimed.lease?.fence, 2);
+  assert.notEqual(reclaimed.lease?.token, first.lease?.token);
+  await assert.rejects(
+    () => runner.reportProgress(queued.run_id, staleCredential, { processed: 1 }),
+    (error: unknown) =>
+      error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.LEASE_REQUIRED
+  );
+  await assert.rejects(
+    () => runner.finish(queued.run_id, staleCredential, { status: "succeeded" }),
+    (error: unknown) =>
+      error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.LEASE_REQUIRED
+  );
+});
+
+test("claimNext is single-winner and excludes cancelled, future, and external runs", async () => {
+  const { runner, store } = makeRunner();
+  await enqueue(runner, { idempotencyKey: "claim:single" });
+  const claims = await Promise.all(
+    Array.from({ length: 20 }, () => runner.claimNext({ owner: "worker-shared" }))
+  );
+  const winners = claims.filter((run): run is PluginJobRun => Boolean(run));
+  assert.equal(winners.length, 1);
+  assert.equal(winners[0].lease?.fence, 1);
+  assert.equal(await runner.claimNext({ owner: "worker-shared" }), null);
+
+  const cancelled = await enqueue(runner, { idempotencyKey: "claim:cancelled" });
+  await runner.requestCancel(cancelled.run_id);
+
+  const waiting = await enqueue(runner, {
+    idempotencyKey: "claim:future",
+    retryPolicy: { maxAttempts: 2, baseDelayMs: 100, maxDelayMs: 100 },
+  });
+  const waitingRun = await runner.start({ runId: waiting.run_id, owner: "worker-wait" });
+  await runner.finish(waiting.run_id, leaseCredential(waitingRun), { status: "failed" });
+  await runner.retry(waiting.run_id);
+
+  const externalTemplate = await enqueue(runner, { idempotencyKey: "claim:external-template" });
+  await runner.requestCancel(externalTemplate.run_id);
+  await store.create({
+    ...externalTemplate,
+    run_id: "external-run",
+    idempotency_key: "claim:external",
+    job_id: "content.refresh.daily",
+    control_mode: "external-report",
+    status: "running",
+    attempt: 1,
+  });
+
+  assert.equal(await runner.claimNext({ owner: "worker-next" }), null);
+});
+
+test("expired cancelled and exhausted runs converge to terminal states", async () => {
+  const { runner, advance } = makeRunner();
+  const cancelled = await enqueue(runner, { idempotencyKey: "recover:cancelled" });
+  await runner.start({ runId: cancelled.run_id, owner: "worker-cancel", leaseTtlMs: 1_000 });
+  await runner.requestCancel(cancelled.run_id);
+  advance(1_001);
+  assert.equal(await runner.claimNext({ owner: "worker-recovery" }), null);
+  const cancelledSnapshot = await runner.get(cancelled.run_id);
+  assert.equal(cancelledSnapshot?.status, "cancelled");
+  assert.equal(cancelledSnapshot?.lease, undefined);
+
+  const exhausted = await enqueue(runner, {
+    idempotencyKey: "recover:exhausted",
+    retryPolicy: { maxAttempts: 1 },
+  });
+  await runner.start({ runId: exhausted.run_id, owner: "worker-exhausted", leaseTtlMs: 1_000 });
+  advance(1_001);
+  assert.equal(await runner.claimNext({ owner: "worker-recovery" }), null);
+  const failedSnapshot = await runner.get(exhausted.run_id);
+  assert.equal(failedSnapshot?.status, "failed");
+  assert.equal(failedSnapshot?.lease, undefined);
+  assert.equal(failedSnapshot?.error?.code, PLUGIN_JOB_ERROR_CODES.RETRY_EXHAUSTED);
 });
 
 test("legacy pan scheduler snapshots map to the generic job contract", () => {
@@ -231,6 +395,8 @@ test("legacy pan scheduler snapshots map to the generic job contract", () => {
     finished_at: "2026-08-21T00:01:00.000Z",
   });
   assert.equal(generic.run_id, "pan-run-1");
+  assert.equal(generic.job_id, "legacy.pan.catalog");
+  assert.equal(generic.control_mode, "host");
   assert.equal(generic.status, "partial");
   assert.deepEqual(generic.progress, {
     total: 12,

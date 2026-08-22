@@ -27,6 +27,8 @@ function toAdminJob(job: PluginJobRun) {
     : undefined;
   return {
     run_id: job.run_id,
+    job_id: job.job_id,
+    control_mode: job.control_mode,
     plugin_id: job.plugin_id,
     plugin_version: job.plugin_version,
     profile_id: job.profile_id,
@@ -45,6 +47,7 @@ function toAdminJob(job: PluginJobRun) {
       ? {
           lease: {
             owner: job.lease.owner,
+            fence: job.lease.fence,
             acquired_at: job.lease.acquired_at,
             heartbeat_at: job.lease.heartbeat_at,
             expires_at: job.lease.expires_at,

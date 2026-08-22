@@ -34,6 +34,8 @@ export function adaptPanSyncRunToPluginJobRun(run: PanSyncRun): PluginJobRun {
   const attempt = run.status === "queued" ? 0 : 1;
   return {
     run_id: run.run_id,
+    job_id: `legacy.pan.${run.task}`,
+    control_mode: "host",
     plugin_id: run.plugin_id,
     plugin_version: run.plugin_version,
     profile_id: run.profile_id,
@@ -44,6 +46,7 @@ export function adaptPanSyncRunToPluginJobRun(run: PanSyncRun): PluginJobRun {
     status: run.status,
     attempt,
     retry_policy: COMPAT_RETRY_POLICY,
+    lease_fence: 0,
     cancel_requested: run.cancel_requested,
     progress,
     ...(run.last_error

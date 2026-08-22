@@ -10,6 +10,8 @@ import type { PluginJobRun } from "@/lib/plugins/job-runner";
 const jobs: PluginJobRun[] = [
   {
     run_id: "run-1",
+    job_id: "content.catalog.sync",
+    control_mode: "host",
     plugin_id: "kerkerker.example",
     plugin_version: "1.0.0",
     profile_id: "cn-default",
@@ -20,6 +22,15 @@ const jobs: PluginJobRun[] = [
     status: "running",
     attempt: 1,
     retry_policy: { maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 5000 },
+    lease_fence: 1,
+    lease: {
+      owner: "worker-a",
+      token: "must-not-leak-lease-token",
+      fence: 1,
+      acquired_at: "2026-08-21T00:00:00.000Z",
+      heartbeat_at: "2026-08-21T00:01:00.000Z",
+      expires_at: "2026-08-21T00:06:00.000Z",
+    },
     cancel_requested: false,
     cursor: "opaque?token=must-not-leak",
     progress: { total: 10, processed: 4, created: 2, failed: 0, skipped: 2 },
@@ -36,6 +47,8 @@ const jobs: PluginJobRun[] = [
 function jobsPlaceholder(): PluginJobRun {
   return {
     run_id: "run-2",
+    job_id: "content.catalog.sync",
+    control_mode: "host",
     plugin_id: "kerkerker.example",
     plugin_version: "1.0.0",
     profile_id: "en-default",
@@ -46,6 +59,7 @@ function jobsPlaceholder(): PluginJobRun {
     status: "failed",
     attempt: 3,
     retry_policy: { maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 5000 },
+    lease_fence: 3,
     cancel_requested: false,
     progress: { total: 10, processed: 10, created: 8, failed: 2, skipped: 0 },
     error: {
@@ -122,6 +136,10 @@ test("plugin jobs endpoint forwards status and bounded limit and marks view read
     assert.equal(internalField in body.data.jobs[0], false, internalField);
   }
   assert.equal(body.data.jobs[0].timeline_pending, false);
+  assert.equal(body.data.jobs[0].job_id, "content.catalog.sync");
+  assert.equal(body.data.jobs[0].control_mode, "host");
+  assert.equal(body.data.jobs[0].lease.fence, 1);
+  assert.equal("token" in body.data.jobs[0].lease, false);
 
   const listResponse = await handlers.GET(
     authenticatedRequest("http://localhost/api/plugins/jobs?status=running&limit=1")

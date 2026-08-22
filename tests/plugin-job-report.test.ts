@@ -25,6 +25,7 @@ const base = {
   occurred_at: "2026-08-21T00:00:00Z",
   metadata: {
     run_id: "refresh-1",
+    job_id: "content.refresh.daily",
     plugin_id: "kerkerker.douban-content",
     plugin_version: "1.0.0",
     profile_id: "cn-default",
@@ -155,6 +156,9 @@ test("job report ingestion creates, deduplicates, advances, and seals a run", as
   const store = makeStore();
   const started = await ingestPluginJobReport(event(), store);
   assert.equal(started.revision, 1);
+  assert.equal(started.job_id, "content.refresh.daily");
+  assert.equal(started.control_mode, "external-report");
+  assert.equal(started.lease_fence, 0);
   assert.equal(started.metadata.last_sequence, 0);
 
   const duplicateStart = await ingestPluginJobReport(event(), store);
@@ -312,6 +316,14 @@ test("job report ingestion rejects mutated duplicates and identity changes", asy
     () => ingestPluginJobReport(event({ metadata: { actor: "system/other" } }), store),
     (error: unknown) => error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT
   );
+  await assert.rejects(
+    () => ingestPluginJobReport(event({
+      kind: "progress",
+      sequence: 1,
+      metadata: { job_id: "content.refresh.manual" },
+    }), store),
+    (error: unknown) => error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT
+  );
   const clockAdjusted = await ingestPluginJobReport(event({
     kind: "progress",
     sequence: 1,
@@ -328,6 +340,23 @@ test("job report ingestion rejects mutated duplicates and identity changes", asy
       occurred_at: "2026-08-20T23:59:59.000000001Z",
     }), store),
     (error: unknown) => error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT
+  );
+});
+
+test("legacy v1 reports without job_id use a non-executable compatibility identity", async () => {
+  const store = makeStore();
+  const legacy = event({ metadata: { job_id: undefined } });
+  assert.equal(legacy.metadata.job_id, undefined);
+  const run = await ingestPluginJobReport(legacy, store);
+  assert.equal(run.job_id, "legacy.external-report");
+  assert.equal(run.control_mode, "external-report");
+  assert.throws(
+    () => event({
+      kind: "progress",
+      sequence: 1,
+      metadata: { job_id: "legacy.external-report" },
+    }),
+    /保留兼容值/
   );
 });
 

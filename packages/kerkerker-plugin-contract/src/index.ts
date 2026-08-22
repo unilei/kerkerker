@@ -9,6 +9,7 @@
 export const PLUGIN_CONTRACT_VERSION = "1.0.0" as const;
 
 export const PLUGIN_JOB_EVENT_SCHEMA = "kerkerker.plugin-job.v1" as const;
+export const LEGACY_EXTERNAL_REPORT_JOB_ID = "legacy.external-report" as const;
 export const PLUGIN_JOB_EVENT_KINDS = ["started", "progress", "finished"] as const;
 export const PLUGIN_JOB_EVENT_STATUSES = ["running", "succeeded", "partial", "failed"] as const;
 
@@ -17,6 +18,8 @@ export type PluginJobEventStatus = (typeof PLUGIN_JOB_EVENT_STATUSES)[number];
 
 export interface PluginJobEventMetadata {
   readonly run_id: string;
+  /** Stable Manifest job identity. Optional only for legacy v1 workers. */
+  readonly job_id?: string;
   readonly plugin_id: string;
   readonly plugin_version: string;
   readonly profile_id: string;
@@ -46,6 +49,7 @@ export interface PluginJobEvent {
 }
 
 const JOB_RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const JOB_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 const JOB_PLUGIN_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$/;
 const RFC3339_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/;
 
@@ -111,11 +115,17 @@ export function isPluginJobEvent(value: unknown): value is PluginJobEvent {
 
   const metadata = value.metadata;
   if (!isExactRecord(metadata, [
-    "run_id", "plugin_id", "plugin_version", "profile_id",
+    "run_id", "job_id", "plugin_id", "plugin_version", "profile_id",
     "config_version", "actor", "attempt",
   ])) return false;
   if (
     !isContractText(metadata.run_id, 200) || !JOB_RUN_ID_PATTERN.test(metadata.run_id) ||
+    (metadata.job_id !== undefined &&
+      (
+        metadata.job_id === LEGACY_EXTERNAL_REPORT_JOB_ID ||
+        !isContractText(metadata.job_id, 100) ||
+        !JOB_ID_PATTERN.test(metadata.job_id)
+      )) ||
     !isContractText(metadata.plugin_id, 100) || !JOB_PLUGIN_ID_PATTERN.test(metadata.plugin_id) ||
     !isContractText(metadata.plugin_version, 100) ||
     !isContractText(metadata.profile_id, 100) ||

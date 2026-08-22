@@ -12,6 +12,10 @@ enforced by `isPluginJobEvent`. The golden wire sample in
 `fixtures/plugin-job-event.v1.valid.json` and
 `fixtures/plugin-job-event.v1.invalid.json` are consumed by host and Go-service
 CI to detect cross-repository drift on both accepted and rejected input.
+`metadata.job_id` is the stable Manifest job identity. It remains optional in
+the v1 wire schema only for rolling upgrades; new workers must send it, and the
+host maps an omitted value to the non-executable `legacy.external-report`
+identity. Senders must not submit that reserved compatibility value explicitly.
 
 `npm run build` creates the ESM JavaScript and declarations under `dist/`.
 `npm run test:pack` installs the generated tarball into a temporary directory

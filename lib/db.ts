@@ -285,6 +285,20 @@ async function initializeDatabase(db: Db) {
     await pluginJobsCollection.createIndex({ idempotency_key: 1 }, { unique: true });
     await pluginJobsCollection.createIndex({ status: 1, updated_at: -1 });
     await pluginJobsCollection.createIndex({ plugin_id: 1, created_at: -1 });
+    await pluginJobsCollection.createIndex({
+      control_mode: 1,
+      status: 1,
+      cancel_requested: 1,
+      next_retry_at: 1,
+      created_at: 1,
+    });
+    await pluginJobsCollection.createIndex({
+      control_mode: 1,
+      status: 1,
+      cancel_requested: 1,
+      "lease.expires_at": 1,
+      created_at: 1,
+    });
     await pluginJobsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
 
     // Append-only worker receipts. Snapshot CAS remains the state truth; an

@@ -47,6 +47,7 @@
       "required": ["run_id", "plugin_id", "plugin_version", "profile_id", "config_version", "actor", "attempt"],
       "properties": {
         "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$" },
+        "job_id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$", "maxLength": 100, "not": { "const": "legacy.external-report" } },
         "plugin_id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$", "maxLength": 100 },
         "plugin_version": { "$ref": "#/$defs/text100" },
         "profile_id": { "$ref": "#/$defs/text100" },

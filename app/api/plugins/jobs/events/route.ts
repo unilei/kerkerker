@@ -7,7 +7,10 @@ import {
 } from "@/lib/plugins/job-events";
 import { getMongoPluginJobEventStore } from "@/lib/plugins/mongo-job-event-store";
 import { getMongoPluginJobStore } from "@/lib/plugins/mongo-job-store";
-import type { PluginJobRun } from "@/lib/plugins/job-runner";
+import {
+  LEGACY_EXTERNAL_REPORT_JOB_ID,
+  type PluginJobRun,
+} from "@/lib/plugins/job-runner";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +49,7 @@ function pendingReceiptMatchesJob(
     pending.event_hash === job.metadata.last_event_hash &&
     pending.sequence === job.metadata.last_sequence &&
     pending.metadata.run_id === job.run_id &&
+    (pending.metadata.job_id ?? LEGACY_EXTERNAL_REPORT_JOB_ID) === job.job_id &&
     pending.metadata.plugin_id === job.plugin_id &&
     pending.metadata.plugin_version === job.plugin_version &&
     pending.metadata.profile_id === job.profile_id &&

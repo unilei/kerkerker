@@ -5,6 +5,7 @@ import test from "node:test";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   PLUGIN_CONTRACT_VERSION,
+  LEGACY_EXTERNAL_REPORT_JOB_ID,
   PLUGIN_JOB_EVENT_KINDS,
   PLUGIN_JOB_EVENT_SCHEMA,
   PLUGIN_JOB_EVENT_STATUSES,
@@ -64,6 +65,7 @@ test("job event v1 golden fixture stays transport-neutral", () => {
   assert.equal(isPluginJobEvent(jobEventFixture), true);
   assert.equal(jobEventFixture.schema, PLUGIN_JOB_EVENT_SCHEMA);
   assert.equal(jobEventFixture.event_id, `${jobEventFixture.metadata.run_id}:${jobEventFixture.sequence}`);
+  assert.equal(jobEventFixture.metadata.job_id, "content.refresh.daily");
   assert.equal(PLUGIN_JOB_EVENT_KINDS.includes(jobEventFixture.kind), true);
   assert.equal(PLUGIN_JOB_EVENT_STATUSES.includes(jobEventFixture.status), true);
   assert.equal(
@@ -98,4 +100,19 @@ test("job event schema and semantic guard reject invalid state and cross-field d
   const invalidDate = cloneJobEvent();
   invalidDate.occurred_at = "2026-02-30T24:00:00Z";
   assert.equal(isPluginJobEvent(invalidDate), false);
+
+  const invalidJobId = cloneJobEvent();
+  invalidJobId.metadata.job_id = "Content Refresh";
+  assert.equal(validateJobEventSchema(invalidJobId), false);
+  assert.equal(isPluginJobEvent(invalidJobId), false);
+
+  const legacyWithoutJobId = cloneJobEvent();
+  delete legacyWithoutJobId.metadata.job_id;
+  assert.equal(validateJobEventSchema(legacyWithoutJobId), true);
+  assert.equal(isPluginJobEvent(legacyWithoutJobId), true);
+
+  const reservedLegacyJobId = cloneJobEvent();
+  reservedLegacyJobId.metadata.job_id = LEGACY_EXTERNAL_REPORT_JOB_ID;
+  assert.equal(validateJobEventSchema(reservedLegacyJobId), false);
+  assert.equal(isPluginJobEvent(reservedLegacyJobId), false);
 });

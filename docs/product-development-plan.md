@@ -152,6 +152,8 @@ flowchart LR
 - 管理员只读入口 `GET /api/plugins/jobs` 已接入 `plugin_jobs` Mongo 存储，可按状态或 `run_id` 查看通用作业进度；它明确标记为不可写，旧 Pan scheduler 仍是唯一写入真源，避免两个状态机互相覆盖。
 - 受控 worker 写入口 `POST /api/plugins/jobs/report` 已实现独立 Bearer 鉴权、64 KiB 流式限额、注册插件/版本/画像校验、确定性事件 ID、单调 sequence、内容摘要去重和 Mongo revision CAS；Go 刷新器支持 `stdout|http|both`，默认关闭。它当前只负责状态可见性，不宣称已经具备宿主租约、远程取消或持久重放。
 - 已接受的 worker 事件追加写入 `plugin_job_events`，按 `event_id` 和 `(run_id, sequence)` 双重唯一并与运行快照同周期保留；管理员可通过 `GET /api/plugins/jobs/events` 使用连续游标正向分页查看。非事务 Mongo 在状态 CAS 内保存脱敏 outbox，追加失败时阻断下一序号并由重放/后续请求排空；终态 pending 收据仍进入时间线 DTO，不把迟到旧事件误当作已确认历史。
+- 通用任务身份固定为 `run_id + job_id + control_mode`：宿主任务由原子 `claimNext` 领取，外部上报任务永不进入宿主执行队列；每次领取生成随机 token 并递增 fencing 序号，所有运行中写入同时校验 token、fence、revision 和租约有效期，阻断重启或接管后的旧 worker 写入。事件 v1 在迁移窗口内兼容缺失 `job_id` 的旧 worker，并映射到只读 legacy 身份。
+- 启用首个通用宿主 worker 前必须审计缺少 `job_id/control_mode/lease_fence` 的历史 `plugin_jobs`：`metadata.source=job-report` 可确定性回填为外部上报；其它记录必须由迁移映射指定真实 `job_id` 或显式终止，不能由运行时猜测并自动领取。当前生产写入口只有外部事件接收器，宿主 executor 尚未启用。
 - 当前网盘调度已先落地兼容的运行元数据层：新运行记录固定保存 `plugin_id`、插件版本、`profile_id`、配置版本、actor 和幂等键，事件与审计继承同一快照；历史记录读取使用明确的 legacy 默认值。下一步把这组字段和生命周期抽到真正的通用 runner，而不是复制网盘专用状态机。
 - 建立独立的 `kerkerker-plugin-contract` 包/仓库，发布 Manifest、能力接口、DTO、错误码、JSON Schema、兼容性测试包和 TypeScript SDK；当前仓内发布骨架和 CI 检查已完成。
 - 将 Douban、KKPAN 适配器拆成独立插件包；私有实现可以使用受控 package 或 Sidecar 镜像，宿主只通过注册表和版本化契约调用。

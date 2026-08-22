@@ -10,6 +10,8 @@ import type { PluginJobRun } from "@/lib/plugins/job-runner";
 
 const job = {
   run_id: "refresh-1",
+  job_id: "content.refresh.daily",
+  control_mode: "external-report",
   plugin_id: "kerkerker.douban-content",
   plugin_version: "1.0.0",
   profile_id: "cn-default",
@@ -20,6 +22,7 @@ const job = {
   status: "running",
   attempt: 1,
   retry_policy: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+  lease_fence: 0,
   cancel_requested: false,
   progress: { total: 2, processed: 1, created: 1, failed: 0, skipped: 0 },
   metadata: { source: "job-report" },
@@ -39,6 +42,7 @@ const events: PluginJobEventRecord[] = [0, 1, 2].map((sequence) => ({
   received_at: `2026-08-22T00:01:0${sequence}.000Z`,
   metadata: {
     run_id: "refresh-1",
+    job_id: "content.refresh.daily",
     plugin_id: "kerkerker.douban-content",
     plugin_version: "1.0.0",
     profile_id: "cn-default",

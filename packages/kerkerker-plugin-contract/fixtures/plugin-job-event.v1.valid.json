@@ -6,6 +6,7 @@
   "occurred_at": "2026-08-22T06:30:00.123Z",
   "metadata": {
     "run_id": "refresh-contract-1",
+    "job_id": "content.refresh.daily",
     "plugin_id": "kerkerker.douban-content",
     "plugin_version": "1.0.0",
     "profile_id": "cn-default",

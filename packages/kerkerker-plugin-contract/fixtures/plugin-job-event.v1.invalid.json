@@ -6,6 +6,7 @@
   "occurred_at": "2026-08-22T00:00:00Z",
   "metadata": {
     "run_id": "refresh-contract-invalid",
+    "job_id": "content.refresh.daily",
     "plugin_id": "kerkerker.douban-content",
     "plugin_version": "1.0.0",
     "profile_id": "cn-default",

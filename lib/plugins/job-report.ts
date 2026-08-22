@@ -22,6 +22,7 @@ import {
 import { getMongoPluginJobEventStore } from "@/lib/plugins/mongo-job-event-store";
 import { getMongoPluginJobStore } from "@/lib/plugins/mongo-job-store";
 import {
+  LEGACY_EXTERNAL_REPORT_JOB_ID,
   PluginJobError,
   PLUGIN_JOB_ERROR_CODES,
   type PluginJobProgress,
@@ -47,6 +48,7 @@ const MAX_ID_LENGTH = 200;
 const MAX_PLUGIN_ID_LENGTH = 100;
 const MAX_ERROR_LENGTH = 2_000;
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const JOB_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 const PLUGIN_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$/;
 const RFC3339_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const JOB_REPORT_TOKEN_PATTERN = /^[A-Za-z0-9._~-]{32,512}$/;
@@ -105,7 +107,7 @@ export function parseJobReportEvent(value: unknown): JobReportEvent {
     throw new RangeError("occurred_at 必须是 RFC3339 时间");
   }
   const metadata = parseObject(body.metadata, "metadata", [
-    "run_id", "plugin_id", "plugin_version", "profile_id",
+    "run_id", "job_id", "plugin_id", "plugin_version", "profile_id",
     "config_version", "actor", "attempt",
   ]);
   const progress = parseObject(body.progress, "progress", [
@@ -113,6 +115,15 @@ export function parseJobReportEvent(value: unknown): JobReportEvent {
   ]);
   const runId = nonEmpty(metadata.run_id, "metadata.run_id");
   if (!RUN_ID_PATTERN.test(runId)) throw new RangeError("metadata.run_id 格式无效");
+  const jobId = metadata.job_id === undefined
+    ? undefined
+    : nonEmpty(metadata.job_id, "metadata.job_id", 100);
+  if (jobId !== undefined && !JOB_ID_PATTERN.test(jobId)) {
+    throw new RangeError("metadata.job_id 格式无效");
+  }
+  if (jobId === LEGACY_EXTERNAL_REPORT_JOB_ID) {
+    throw new RangeError("metadata.job_id 不能使用保留兼容值");
+  }
   const pluginId = nonEmpty(metadata.plugin_id, "metadata.plugin_id", MAX_PLUGIN_ID_LENGTH);
   if (!PLUGIN_ID_PATTERN.test(pluginId)) throw new RangeError("metadata.plugin_id 格式无效");
   const sequence = nonNegativeInteger(body.sequence, "sequence");
@@ -135,6 +146,7 @@ export function parseJobReportEvent(value: unknown): JobReportEvent {
     occurred_at: occurredAt,
     metadata: {
       run_id: runId,
+      ...(jobId ? { job_id: jobId } : {}),
       plugin_id: pluginId,
       plugin_version: nonEmpty(metadata.plugin_version, "metadata.plugin_version", 100),
       profile_id: nonEmpty(metadata.profile_id, "metadata.profile_id", 100),
@@ -193,8 +205,14 @@ function eventHash(event: JobReportEvent): string {
   return createHash("sha256").update(JSON.stringify(event)).digest("hex");
 }
 
+function reportJobId(metadata: JobReportMetadata): string {
+  return metadata.job_id ?? LEGACY_EXTERNAL_REPORT_JOB_ID;
+}
+
 function sameIdentity(run: PluginJobRun, event: JobReportEvent): boolean {
   return run.run_id === event.metadata.run_id &&
+    run.job_id === reportJobId(event.metadata) &&
+    run.control_mode === "external-report" &&
     run.plugin_id === event.metadata.plugin_id &&
     run.plugin_version === event.metadata.plugin_version &&
     run.profile_id === event.metadata.profile_id &&
@@ -205,7 +223,8 @@ function sameIdentity(run: PluginJobRun, event: JobReportEvent): boolean {
 }
 
 function isReportRun(run: PluginJobRun): boolean {
-  return run.metadata.source === "job-report" &&
+  return run.control_mode === "external-report" &&
+    run.metadata.source === "job-report" &&
     Number.isSafeInteger(run.metadata.last_sequence) &&
     typeof run.metadata.last_event_id === "string" &&
     typeof run.metadata.last_event_hash === "string";
@@ -264,6 +283,7 @@ function assertPendingReceipt(run: PluginJobRun, receipt: PluginJobEventRecord):
     receipt.event_id !== run.metadata.last_event_id ||
     receipt.event_hash !== run.metadata.last_event_hash ||
     receipt.sequence !== run.metadata.last_sequence ||
+    reportJobId(receipt.metadata) !== run.job_id ||
     receipt.metadata.plugin_id !== run.plugin_id ||
     receipt.metadata.plugin_version !== run.plugin_version ||
     receipt.metadata.profile_id !== run.profile_id ||
@@ -370,6 +390,8 @@ export async function ingestPluginJobReport(
     );
     const run: PluginJobRun = {
       run_id: event.metadata.run_id,
+      job_id: reportJobId(event.metadata),
+      control_mode: "external-report",
       plugin_id: event.metadata.plugin_id,
       plugin_version: event.metadata.plugin_version,
       profile_id: event.metadata.profile_id,
@@ -380,6 +402,7 @@ export async function ingestPluginJobReport(
       status: "running",
       attempt: event.metadata.attempt,
       retry_policy: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+      lease_fence: 0,
       cancel_requested: false,
       progress: event.progress,
       metadata: {
