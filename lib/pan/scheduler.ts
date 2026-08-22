@@ -28,12 +28,20 @@ import {
   getPanCatalogJobMode,
   type PanCatalogJobMode,
 } from "@/lib/pan/catalog-job";
-import { PluginJobRunner } from "@/lib/plugins/job-runner";
+import { PluginJobRunner, type PluginJobRun } from "@/lib/plugins/job-runner";
 import { getMongoPluginJobStore } from "@/lib/plugins/mongo-job-store";
 import { redactPluginJobEventText } from "@/lib/plugins/job-events";
 
 export const PAN_SYNC_TASKS = ["catalog", "incremental"] as const;
 export type PanSyncTask = (typeof PAN_SYNC_TASKS)[number];
+
+export const PAN_CATALOG_PROJECTION_STATUSES = [
+  "pending",
+  "succeeded",
+  "failed",
+] as const;
+export type PanCatalogProjectionStatus =
+  (typeof PAN_CATALOG_PROJECTION_STATUSES)[number];
 
 /**
  * Keep the legacy persisted scheduler vocabulary stable while the generic
@@ -184,6 +192,12 @@ export interface PanSyncRunDoc {
   generic_job_mode?: PanCatalogJobMode;
   generic_job_idempotency_key?: string;
   generic_job_projected_at?: string;
+  generic_job_projection_status?: PanCatalogProjectionStatus;
+  generic_job_projection_attempts?: number;
+  generic_job_projection_attempted_at?: string;
+  generic_job_projection_error?: string;
+  generic_job_cutover_claimed_at?: string;
+  generic_job_promoted_at?: string;
   discovered: number;
   queued: number;
   processed: number;
@@ -231,6 +245,12 @@ export interface PanSyncRun {
   generic_job_mode?: PanCatalogJobMode;
   generic_job_idempotency_key?: string;
   generic_job_projected_at?: string;
+  generic_job_projection_status?: PanCatalogProjectionStatus;
+  generic_job_projection_attempts?: number;
+  generic_job_projection_attempted_at?: string;
+  generic_job_projection_error?: string;
+  generic_job_cutover_claimed_at?: string;
+  generic_job_promoted_at?: string;
   discovered: number;
   queued: number;
   processed: number;
@@ -345,6 +365,12 @@ function toRun(doc: PanSyncRunDoc): PanSyncRun {
     generic_job_mode: doc.generic_job_mode,
     generic_job_idempotency_key: doc.generic_job_idempotency_key,
     generic_job_projected_at: doc.generic_job_projected_at,
+    generic_job_projection_status: doc.generic_job_projection_status,
+    generic_job_projection_attempts: doc.generic_job_projection_attempts,
+    generic_job_projection_attempted_at: doc.generic_job_projection_attempted_at,
+    generic_job_projection_error: doc.generic_job_projection_error,
+    generic_job_cutover_claimed_at: doc.generic_job_cutover_claimed_at,
+    generic_job_promoted_at: doc.generic_job_promoted_at,
     discovered: doc.discovered || 0,
     queued: doc.queued || 0,
     processed: doc.processed || 0,
@@ -720,6 +746,8 @@ async function createRunDoc(input: {
           generic_job_id: catalogProjection.jobId,
           generic_job_mode: catalogProjection.mode,
           generic_job_idempotency_key: catalogProjection.idempotencyKey,
+          generic_job_projection_status: "pending" as const,
+          generic_job_projection_attempts: 0,
         }
       : {}),
     discovered: 0,
@@ -744,41 +772,8 @@ async function createRunDoc(input: {
   const coll = await runCollection();
   await coll.insertOne(doc);
   if (catalogProjection) {
-    try {
-      const genericRun = await enqueuePanCatalogJobProjection(
-        new PluginJobRunner(await getMongoPluginJobStore()),
-        {
-          runId,
-          trigger: input.trigger,
-          batchLimit: input.batchLimit,
-          maxBatches: input.maxBatches,
-          scheduleSlot: input.scheduleSlot,
-          pluginId: metadata.plugin_id,
-          pluginVersion: metadata.plugin_version,
-          profileId: metadata.profile_id,
-          profile: metadata.profile,
-          configVersion: metadata.config_version,
-          actor: metadata.actor,
-        },
-        catalogJobMode
-      );
-      if (genericRun) {
-        const projectionPatch = {
-          generic_job_run_id: genericRun.run_id,
-          generic_job_projected_at: new Date().toISOString(),
-        };
-        await coll.updateOne({ run_id: runId }, { $set: projectionPatch });
-        Object.assign(doc, projectionPatch);
-      }
-    } catch (error) {
-      // The legacy run remains the execution source in shadow mode. A failed
-      // projection is observable and retryable, but must not abort a real
-      // catalog sync after its legacy record has been created.
-      console.warn(
-        "KKPAN 目录通用任务影子投影失败:",
-        redactPluginJobEventText(truncateError(error, 500))
-      );
-    }
+    const projected = await projectPanCatalogRun(runId);
+    if (projected) Object.assign(doc, projected);
   }
   return toRun(doc);
 }
@@ -805,6 +800,297 @@ async function patchRun(
 async function getRunDoc(runId: string): Promise<PanSyncRunDoc | null> {
   const coll = await runCollection();
   return coll.findOne({ run_id: runId });
+}
+
+/**
+ * Durable shadow projection writer. The legacy run is inserted first, so a
+ * process crash between the two writes leaves a pending/failed record that
+ * this compensation path can safely retry using the same idempotency key.
+ */
+export async function projectPanCatalogRun(
+  runId: string
+): Promise<PanSyncRunDoc | null> {
+  const coll = await runCollection();
+  const now = new Date().toISOString();
+  const claimed = await coll.findOneAndUpdate(
+    {
+      run_id: runId,
+      task: "catalog",
+      generic_job_mode: "shadow",
+      $or: [
+        { generic_job_projection_status: { $exists: false } },
+        { generic_job_projection_status: "pending" },
+        { generic_job_projection_status: "failed" },
+        { generic_job_run_id: { $exists: false } },
+      ],
+    },
+    {
+      $set: {
+        generic_job_projection_attempted_at: now,
+        updated_at: now,
+      },
+      $inc: { generic_job_projection_attempts: 1 },
+    },
+    { returnDocument: "after" }
+  );
+  if (!claimed) return getRunDoc(runId);
+
+  const metadata = normalizePanSyncRunMetadata({
+    run_id: claimed.run_id,
+    plugin_id: claimed.plugin_id,
+    plugin_version: claimed.plugin_version,
+    profile_id: claimed.profile_id,
+    profile: claimed.profile,
+    config_version: claimed.config_version,
+    actor: claimed.actor,
+    idempotency_key: claimed.idempotency_key,
+  });
+  const source = {
+    runId: claimed.run_id,
+    trigger: claimed.trigger,
+    batchLimit: claimed.batch_limit,
+    maxBatches: claimed.max_batches,
+    scheduleSlot: claimed.schedule_slot,
+    pluginId: metadata.plugin_id,
+    pluginVersion: metadata.plugin_version,
+    profileId: metadata.profile_id,
+    profile: metadata.profile,
+    configVersion: metadata.config_version,
+    actor: metadata.actor,
+  } as const;
+  try {
+    const genericRun = await enqueuePanCatalogJobProjection(
+      new PluginJobRunner(await getMongoPluginJobStore()),
+      source,
+      "shadow"
+    );
+    if (!genericRun) return getRunDoc(runId);
+    const projectedAt = new Date().toISOString();
+    await coll.updateOne(
+      { run_id: runId, generic_job_mode: "shadow" },
+      {
+        $set: {
+          generic_job_id: genericRun.job_id,
+          generic_job_idempotency_key: genericRun.idempotency_key,
+          generic_job_run_id: genericRun.run_id,
+          generic_job_projected_at: projectedAt,
+          generic_job_projection_status: "succeeded",
+          updated_at: projectedAt,
+        },
+        $unset: { generic_job_projection_error: "" },
+      }
+    );
+  } catch (error) {
+    const message = redactPluginJobEventText(truncateError(error, 500));
+    await coll.updateOne(
+      { run_id: runId, generic_job_mode: "shadow" },
+      {
+        $set: {
+          generic_job_projection_status: "failed",
+          generic_job_projection_error: message,
+          updated_at: new Date().toISOString(),
+        },
+      }
+    );
+    console.warn("KKPAN 目录通用任务影子投影失败:", message);
+  }
+  return getRunDoc(runId);
+}
+
+/** Retry missing/failed catalog projections left by a crash or Mongo outage. */
+export async function reconcilePanCatalogJobProjections(
+  limit = 100
+): Promise<number> {
+  if (getPanCatalogJobMode() !== "shadow") return 0;
+  const bounded = Math.min(Math.max(Math.floor(limit || 1), 1), 500);
+  const runs = await (await runCollection())
+    .find({
+      task: "catalog",
+      generic_job_mode: "shadow",
+      $or: [
+        { generic_job_projection_status: { $exists: false } },
+        { generic_job_projection_status: "pending" },
+        { generic_job_projection_status: "failed" },
+        { generic_job_run_id: { $exists: false } },
+      ],
+    })
+    .sort({ created_at: 1 })
+    .limit(bounded)
+    .project({ run_id: 1 })
+    .toArray();
+  let repaired = 0;
+  for (const run of runs) {
+    const repairedRun = await projectPanCatalogRun(String(run.run_id));
+    if (repairedRun?.generic_job_projection_status === "succeeded") repaired++;
+  }
+  return repaired;
+}
+
+/**
+ * Explicit, operator-controlled cutover for one catalog projection.
+ *
+ * The legacy scheduler must be disabled before this function can claim the
+ * migration marker. The old run is required to be queued and untouched; a
+ * running, cancelled, or terminal legacy run can never be promoted into a
+ * second execution source.
+ */
+export async function promotePanCatalogProjection(
+  legacyRunId: string
+): Promise<PluginJobRun> {
+  if (getPanCatalogJobMode() !== "cutover") {
+    throw new Error("只有 PAN_SYNC_CATALOG_JOB_MODE=cutover 才能晋级目录任务");
+  }
+  if (process.env.PAN_SYNC_SCHEDULER_DISABLED !== "true") {
+    throw new Error("晋级前必须设置 PAN_SYNC_SCHEDULER_DISABLED=true，关闭旧执行器");
+  }
+  const coll = await runCollection();
+  const now = new Date().toISOString();
+  const claimed = await coll.findOneAndUpdate(
+    {
+      run_id: legacyRunId,
+      task: "catalog",
+      status: "queued",
+      cancel_requested: false,
+      generic_job_mode: "shadow",
+      generic_job_projection_status: "succeeded",
+      generic_job_run_id: { $type: "string" },
+      $or: [
+        { generic_job_cutover_claimed_at: { $exists: false } },
+        { generic_job_cutover_claimed_at: now },
+      ],
+    },
+    { $set: { generic_job_cutover_claimed_at: now, updated_at: now } },
+    { returnDocument: "after" }
+  );
+  if (!claimed?.generic_job_run_id) {
+    const current = await coll.findOne({ run_id: legacyRunId });
+    if (
+      current?.generic_job_mode === "shadow" &&
+      current.generic_job_cutover_claimed_at &&
+      (await reconcilePanCatalogCutoverProjection(legacyRunId))
+    ) {
+      const repaired = await coll.findOne({ run_id: legacyRunId });
+      if (repaired?.generic_job_run_id) {
+        const generic = await (await getMongoPluginJobStore()).get(
+          repaired.generic_job_run_id
+        );
+        if (generic) return generic;
+      }
+    }
+    if (current?.generic_job_mode === "cutover" && current.generic_job_run_id) {
+      const existing = await (await getMongoPluginJobStore()).get(
+        current.generic_job_run_id
+      );
+      if (existing) return existing;
+    }
+    throw new Error("旧 Pan 任务不是可晋级的 queued shadow 投影");
+  }
+
+  const runner = new PluginJobRunner(await getMongoPluginJobStore());
+  let genericPromoted = false;
+  try {
+    const genericBefore = await runner.get(claimed.generic_job_run_id);
+    if (
+      !genericBefore ||
+      genericBefore.status !== "queued" ||
+      genericBefore.attempt !== 0 ||
+      genericBefore.lease
+    ) {
+      throw new Error("通用目录任务已经开始或不再处于可晋级状态");
+    }
+    const promoted = await runner.promoteHostClaimable(
+      claimed.generic_job_run_id
+    );
+    genericPromoted = true;
+    const promotedAt = new Date().toISOString();
+    const legacyUpdated = await coll.updateOne(
+      {
+        run_id: legacyRunId,
+        generic_job_cutover_claimed_at: now,
+        status: "queued",
+      },
+      {
+        $set: {
+          generic_job_mode: "cutover",
+          generic_job_promoted_at: promotedAt,
+          updated_at: promotedAt,
+        },
+        $unset: { generic_job_cutover_claimed_at: "" },
+      }
+    );
+    if (legacyUpdated.modifiedCount !== 1) {
+      throw new Error("通用任务已晋级，但旧 Pan 兼容记录未能同步");
+    }
+    return promoted;
+  } catch (error) {
+    // If the generic promotion already won, retain the marker so the next
+    // explicit reconciliation can finish the legacy projection update. Do
+    // not make the two execution sources ambiguous by silently clearing it.
+    if (!genericPromoted) {
+      await coll.updateOne(
+        { run_id: legacyRunId, generic_job_cutover_claimed_at: now },
+        { $unset: { generic_job_cutover_claimed_at: "" } }
+      ).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
+/** Complete a cutover marker after a process died between the two CAS writes. */
+export async function reconcilePanCatalogCutoverProjection(
+  legacyRunId: string
+): Promise<boolean> {
+  const coll = await runCollection();
+  const legacy = await coll.findOne({
+    run_id: legacyRunId,
+    task: "catalog",
+    generic_job_mode: "shadow",
+    generic_job_cutover_claimed_at: { $exists: true },
+    generic_job_run_id: { $type: "string" },
+  });
+  if (!legacy?.generic_job_run_id) return false;
+  const generic = await (await getMongoPluginJobStore()).get(
+    legacy.generic_job_run_id
+  );
+  if (!generic || generic.host_claimable === false) return false;
+  const now = new Date().toISOString();
+  const updated = await coll.updateOne(
+    {
+      run_id: legacyRunId,
+      generic_job_mode: "shadow",
+      generic_job_cutover_claimed_at: legacy.generic_job_cutover_claimed_at,
+    },
+    {
+      $set: {
+        generic_job_mode: "cutover",
+        generic_job_promoted_at: now,
+        updated_at: now,
+      },
+      $unset: { generic_job_cutover_claimed_at: "" },
+    }
+  );
+  return updated.modifiedCount === 1;
+}
+
+export async function reconcilePanCatalogCutoverProjections(
+  limit = 100
+): Promise<number> {
+  const bounded = Math.min(Math.max(Math.floor(limit || 1), 1), 500);
+  const docs = await (await runCollection())
+    .find({
+      task: "catalog",
+      generic_job_mode: "shadow",
+      generic_job_cutover_claimed_at: { $exists: true },
+    })
+    .sort({ updated_at: 1 })
+    .limit(bounded)
+    .project({ run_id: 1 })
+    .toArray();
+  let repaired = 0;
+  for (const doc of docs) {
+    if (await reconcilePanCatalogCutoverProjection(String(doc.run_id))) repaired++;
+  }
+  return repaired;
 }
 
 export async function getPanSyncRun(runId: string): Promise<PanSyncRun | null> {
@@ -971,7 +1257,12 @@ export async function requestPanSyncRunCancel(runId: string): Promise<boolean> {
   const coll = await runCollection();
   const now = new Date().toISOString();
   const queued = await coll.updateOne(
-    { run_id: runId, status: "queued", cancel_requested: { $ne: true } },
+    {
+      run_id: runId,
+      status: "queued",
+      cancel_requested: { $ne: true },
+      generic_job_cutover_claimed_at: { $exists: false },
+    },
     {
       $set: {
         cancel_requested: true,
@@ -986,7 +1277,12 @@ export async function requestPanSyncRunCancel(runId: string): Promise<boolean> {
     return true;
   }
   const running = await coll.updateOne(
-    { run_id: runId, status: "running", cancel_requested: { $ne: true } },
+    {
+      run_id: runId,
+      status: "running",
+      cancel_requested: { $ne: true },
+      generic_job_cutover_claimed_at: { $exists: false },
+    },
     { $set: { cancel_requested: true, updated_at: now } }
   );
   if (running.modifiedCount > 0) {
@@ -1004,7 +1300,13 @@ async function claimRun(runId: string): Promise<PanSyncRunDoc | null> {
   const coll = await runCollection();
   const now = new Date().toISOString();
   return coll.findOneAndUpdate(
-    { run_id: runId, status: "queued", cancel_requested: { $ne: true } },
+    {
+      run_id: runId,
+      status: "queued",
+      cancel_requested: { $ne: true },
+      // A promoted catalog projection is owned by PluginHostExecutor.
+      generic_job_mode: { $ne: "cutover" },
+    },
     { $set: { status: "running", started_at: now, updated_at: now } },
     { returnDocument: "after" }
   );
@@ -1362,6 +1664,7 @@ async function recoverStaleRuns(): Promise<void> {
   const result = await coll.updateMany(
     {
       status: { $in: ["queued", "running"] },
+      generic_job_mode: { $ne: "cutover" },
       updated_at: { $lt: cutoff },
       ...(liveOwner ? { owner: { $ne: liveOwner } } : {}),
       $or: [
@@ -1452,14 +1755,23 @@ async function resumeQueuedRun(): Promise<void> {
   const coll = await runCollection();
   const queued = await coll
     .findOne(
-      { status: "queued", cancel_requested: { $ne: true } },
+      {
+        status: "queued",
+        cancel_requested: { $ne: true },
+        generic_job_mode: { $ne: "cutover" },
+      },
       { sort: { created_at: 1 } }
     );
   if (!queued) return;
   const owner = `pan-resume-${randomUUID()}`;
   if (!(await acquirePanSyncLease(owner, RUN_LEASE_TTL_MS))) return;
   const claimed = await coll.findOneAndUpdate(
-    { run_id: queued.run_id, status: "queued", cancel_requested: { $ne: true } },
+    {
+      run_id: queued.run_id,
+      status: "queued",
+      cancel_requested: { $ne: true },
+      generic_job_mode: { $ne: "cutover" },
+    },
     { $set: { owner, updated_at: new Date().toISOString() } },
     { returnDocument: "after" }
   );
@@ -1484,6 +1796,10 @@ async function schedulerTick(): Promise<void> {
       globalScheduler.panSyncLastRecoveryAt = Date.now();
     }
     await repairOrphanedScheduledSlots();
+    const repairedProjections = await reconcilePanCatalogJobProjections();
+    if (repairedProjections > 0) {
+      console.log(`已补偿 ${repairedProjections} 个 KKPAN 目录通用任务投影`);
+    }
     await resumeQueuedRun();
     for (const task of PAN_SYNC_TASKS) {
       const schedule = await getPanSyncSchedule(task);
@@ -1540,6 +1856,10 @@ async function schedulerTick(): Promise<void> {
 }
 
 export function startPanSyncScheduler(): void {
+  if (getPanCatalogJobMode() === "cutover") {
+    console.warn("KKPAN catalog 已进入 cutover，旧 Pan scheduler 不启动");
+    return;
+  }
   if (globalScheduler.panSyncSchedulerStarted) return;
   globalScheduler.panSyncSchedulerStarted = true;
   const tick = () => {

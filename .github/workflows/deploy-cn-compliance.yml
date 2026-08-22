@@ -216,6 +216,7 @@ jobs:
           DANMU_API_TOKEN: ${{ secrets.DEPLOY_DANMU_API_TOKEN }}
           SCHEDULER_DISABLED: ${{ vars.PAN_SYNC_SCHEDULER_DISABLED || 'false' }}
           SCHEDULER_POLL_MS: ${{ vars.PAN_SYNC_SCHEDULER_POLL_MS || '30000' }}
+          CATALOG_JOB_MODE: ${{ vars.PAN_SYNC_CATALOG_JOB_MODE || 'off' }}
           PLUGIN_PROFILE: ${{ vars.KERKERKER_PLUGIN_PROFILE || 'cn-default' }}
           PLUGIN_REGION: ${{ vars.KERKERKER_PLUGIN_REGION || 'CN' }}
           TMDB_API_KEY: ${{ secrets.DEPLOY_TMDB_API_KEY }}
@@ -249,6 +250,7 @@ jobs:
               ("NEXT_PUBLIC_DANMU_API_TOKEN", "DANMU_API_TOKEN"),
               ("PAN_SYNC_SCHEDULER_DISABLED", "SCHEDULER_DISABLED"),
               ("PAN_SYNC_SCHEDULER_POLL_MS", "SCHEDULER_POLL_MS"),
+              ("PAN_SYNC_CATALOG_JOB_MODE", "CATALOG_JOB_MODE"),
               ("KERKERKER_PLUGIN_PROFILE", "PLUGIN_PROFILE"),
               ("KERKERKER_PLUGIN_REGION", "PLUGIN_REGION"),
               ("TMDB_API_KEY", "TMDB_API_KEY"),

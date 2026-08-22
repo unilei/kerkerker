@@ -107,9 +107,11 @@ flowchart LR
 
 通用作业的管理员只读入口为 `GET /api/plugins/jobs`。它只查询已写入 `plugin_jobs` 的通用作业，支持 `status`、`run_id` 和 `limit`，响应明确标记 `writable=false`；单次运行的持久事件时间线通过 `GET /api/plugins/jobs/events?run_id=<run_id>` 查询，支持 `after_sequence` 和 `limit` 正向分页，即使当前已到末尾也返回可继续轮询的序号。两个入口都使用显式管理员 DTO，不返回幂等键、执行 cursor、自由 metadata、事件内容摘要、内部 outbox 或 TTL 字段。旧 Pan 调度的 `runs`/`plugin_runs` 仍由 `/api/pan-resources/scheduler` 提供，不能通过这些入口修改或重试。
 
-通用宿主执行器壳层位于 [`lib/plugins/job-executor.ts`](../../lib/plugins/job-executor.ts)。它只接受构建期静态注册的 `job_id`，使用 `PluginJobRunner` 的原子领取、租约心跳、取消检查和 fencing 写入；心跳、进度、游标与终态更新在单次执行内串行化，租约失效会中止回调且不使用旧 token 写终态。执行器默认不启动，也不会领取未注册任务；旧 Pan 调度器在完成显式双写、投影对账和单一执行源切换前仍是网盘任务的唯一写入与执行真源。
+通用宿主执行器位于 [`lib/plugins/job-executor.ts`](../../lib/plugins/job-executor.ts)。它只接受构建期静态注册的 `job_id`，使用 `PluginJobRunner` 的原子领取、租约心跳、取消检查和 fencing 写入；心跳、进度、游标与终态更新在单次执行内串行化，租约失效会中止回调且不使用旧 token 写终态。执行器默认不启动，也不会领取未注册任务。
 
-KKPAN 目录同步的统一任务身份已经固定为 `resource.cloud-drive.catalog-sync`。当前迁移开关 `PAN_SYNC_CATALOG_JOB_MODE` 默认是 `off`：`shadow` 会把通用任务的 `job_id`、派生 `run_id`、幂等键和调度窗口双写到旧 Pan 运行记录与 `plugin_jobs`，但影子记录带有 `host_claimable=false`，永远不会进入宿主领取队列；旧 Pan 仍是唯一执行真源。`cutover` 在宿主 handler 尚未部署前会 fail-closed，防止旧调度器和通用执行器同时运行。任务身份工厂位于 [`lib/pan/catalog-job.ts`](../../lib/pan/catalog-job.ts)，真正的 handler 切换必须在完成目标台账 fencing、事件时间线和对账后进行。
+KKPAN 目录同步的统一任务身份已经固定为 `resource.cloud-drive.catalog-sync`。当前迁移开关 `PAN_SYNC_CATALOG_JOB_MODE` 默认是 `off`：`shadow` 会把通用任务的 `job_id`、派生 `run_id`、幂等键和调度窗口双写到旧 Pan 运行记录与 `plugin_jobs`，但影子记录带有 `host_claimable=false`，永远不会进入宿主领取队列；旧 Pan 仍是唯一执行真源。投影状态（`pending/succeeded/failed`、尝试次数和脱敏错误）持久化在旧运行记录，scheduler 会补偿进程崩溃或 Mongo 短暂失败造成的缺口。KKPAN handler 位于 [`lib/pan/host-job-handler.ts`](../../lib/pan/host-job-handler.ts)，目标 owner 使用 `generic_run_id:lease_fence`，并将进度游标和终态回写旧兼容投影；默认注册不启动 Mongo 回写，生产注册必须显式启用。
+
+`cutover` 只有在旧 scheduler 已通过 `PAN_SYNC_SCHEDULER_DISABLED=true` 关闭后，才能由显式晋级函数校验旧任务仍为未开始的 queued shadow，并 CAS 晋级 generic 任务；普通重复入队不会隐式改变 `host_claimable`。Node instrumentation 仅在两个闸门同时满足时启动 [`lib/pan/host-executor-bootstrap.ts`](../../lib/pan/host-executor-bootstrap.ts)，否则继续使用旧 scheduler 或保持关闭，避免双执行源。
 
 受控跨进程 worker 可通过 `POST /api/plugins/jobs/report` 写入 `kerkerker.plugin-job.v1` 事件。该入口使用独立、默认关闭的 `KERKERKER_JOB_REPORT_TOKEN`，并在新任务开始时校验插件已注册、版本精确匹配、画像存在且绑定该插件；已开始任务继续按持久化身份快照验收，避免宿主先升级时截断旧 worker 的终态。每个运行必须先发送 `sequence=0` 的 `started`，后续事件使用单调序号及确定性 `event_id=<run_id>:<sequence>`；宿主持久化最后序号和当前事件摘要，当前序号的精确重复返回相同快照，内容不同的当前序号、身份漂移、进度倒退和终态后的新事件均被拒绝。更旧序号在身份校验后作为无状态变化的 stale no-op 返回，不借迟到事件补写未曾确认的历史。事件顺序只由 `sequence` 决定，来源时间与宿主接收时间分别留存，因此 worker 时钟回拨不会阻塞后续事件。Mongo 写入使用 `revision` CAS，并发的相同事件会重新读取胜出快照，不能借共享 `run_id` 覆盖其他任务。
 

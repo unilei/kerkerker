@@ -6,6 +6,13 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  if (process.env.PAN_SYNC_CATALOG_JOB_MODE === "cutover") {
+    const { startPanCatalogHostExecutor } = await import(
+      "./lib/pan/host-executor-bootstrap"
+    );
+    await startPanCatalogHostExecutor();
+    return;
+  }
   const { startPanSyncScheduler } = await import("./lib/pan/scheduler");
   startPanSyncScheduler();
 }

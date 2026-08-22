@@ -199,12 +199,17 @@ function toEnqueueInput(
 export async function enqueuePanCatalogJobProjection(
   runner: PluginJobRunnerPort,
   source: PanCatalogJobSource,
-  mode: PanCatalogJobMode
+  mode: PanCatalogJobMode,
+  options: { promoteShadow?: boolean } = {}
 ): Promise<PluginJobRun | null> {
   if (mode === "off") return null;
   const projection = createPanCatalogJobProjection(source, mode);
   const input = mode === "shadow"
     ? toPanCatalogJobShadowEnqueueInput(projection)
     : toPanCatalogJobEnqueueInput(projection);
-  return runner.enqueue(input);
+  const run = await runner.enqueue(input);
+  if (mode === "cutover" && options.promoteShadow && run.host_claimable === false) {
+    return runner.promoteHostClaimable(run.run_id);
+  }
+  return run;
 }

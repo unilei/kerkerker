@@ -133,6 +133,8 @@ Manifest 规则：
 - `runtime.mode=remote` 可以声明 `protocolVersions`、`health` 和 `auth`：健康路径必须是同一 HTTPS origin 下的绝对路径；协议响应必须返回宿主支持的 v1 兼容版本；`auth.secret` 只能引用 `permissions.secrets` 中的密钥名，认证值由宿主运行时注入，禁止写入 Manifest、日志或请求体。
 - `compliance` 必须能让运营方定位法律依据、内容范围、地区和数据分类；许可证与维护入口写入插件发布元数据。
 
+宿主任务 handler 也必须是构建期静态注册。任务文档只携带稳定 `job_id`、插件/画像快照和受限 metadata，不能携带模块路径、函数名或可执行脚本；未注册任务必须留在队列中，不得被 worker 领取后再标记失败。迁移期间的 shadow 任务必须显式保存 `host_claimable=false`，普通幂等重放不得自动晋级；晋级只能由带有单一执行源闸门、旧任务状态 CAS 和 lease fence 校验的迁移函数完成。
+
 ### 能力实现接口
 
 插件模块只暴露 Manifest 已声明的能力。下面是契约包中的最小形状；具体 DTO 和可选操作按能力版本扩展，宿主不能调用未声明的方法：

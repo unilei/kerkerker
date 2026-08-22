@@ -141,7 +141,11 @@ test("cutover projection is the only mode that can be claimed", async () => {
 test("cutover reuses a queued shadow identity through an atomic promotion", async () => {
   const runner = createInMemoryPluginJobRunner();
   const shadow = await enqueuePanCatalogJobProjection(runner, source, "shadow");
-  const promoted = await enqueuePanCatalogJobProjection(runner, source, "cutover");
+  const shadowAgain = await enqueuePanCatalogJobProjection(runner, source, "cutover");
+  assert.equal(shadowAgain?.host_claimable, false);
+  const promoted = await enqueuePanCatalogJobProjection(runner, source, "cutover", {
+    promoteShadow: true,
+  });
   assert.equal(promoted?.run_id, shadow?.run_id);
   assert.equal(promoted?.host_claimable, true);
   const claimed = await runner.claimNext({ owner: "host", jobIds: [PAN_CATALOG_JOB_ID] });
@@ -173,7 +177,8 @@ test("cutover promotes a shadow returned by a concurrent create race", async () 
   const promoted = await enqueuePanCatalogJobProjection(
     runner,
     source,
-    "cutover"
+    "cutover",
+    { promoteShadow: true }
   );
   assert.equal(promoted?.host_claimable, true);
   assert.equal(promoted?.metadata.shadow, false);

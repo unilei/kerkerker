@@ -535,8 +535,11 @@ export class PluginJobRunner implements PluginJobRunnerPort {
           "幂等键已经绑定到其他任务、插件或画像"
         );
       }
+      // Re-enqueue is deliberately idempotent and must not change execution
+      // authority.  Migration code must call the explicit promotion method
+      // after it has fenced the legacy executor and validated its state.
       if (input.hostClaimable !== false && !isHostClaimable(existing)) {
-        return this.promoteHostClaimable(existing.run_id);
+        return cloneRun(existing);
       }
       if (input.hostClaimable === false) {
         if (existing.host_claimable === false) {
@@ -589,12 +592,8 @@ export class PluginJobRunner implements PluginJobRunnerPort {
     };
     const stored = await this.store.create(run);
     // A concurrent creator may return an already-existing shadow snapshot
-    // instead of throwing duplicate-key. Re-check claimability after create so
-    // the cutover caller never reports success while holding a non-executable
-    // record.
-    if (input.hostClaimable !== false && !isHostClaimable(stored)) {
-      return this.promoteHostClaimable(stored.run_id);
-    }
+    // instead of throwing duplicate-key. Preserve that snapshot; explicit
+    // migration code is responsible for promotion after its safety checks.
     if (input.hostClaimable === false) {
       if (stored.host_claimable === false) {
         return cloneRun(stored);

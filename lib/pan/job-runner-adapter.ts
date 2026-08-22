@@ -44,7 +44,11 @@ export function adaptPanSyncRunToPluginJobRun(run: PanSyncRun): PluginJobRun {
     profile: run.profile,
     config_version: run.config_version,
     actor: { ...run.actor },
-    idempotency_key: run.idempotency_key,
+    // Once a generic projection exists, its stable key is the canonical
+    // identity.  Keep the legacy key only in metadata for reconciliation.
+    idempotency_key: projected
+      ? run.generic_job_idempotency_key || run.idempotency_key
+      : run.idempotency_key,
     status: run.status,
     attempt,
     retry_policy: COMPAT_RETRY_POLICY,

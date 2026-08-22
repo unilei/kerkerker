@@ -511,5 +511,9 @@ test("shadow Pan projections expose the canonical job identity without becoming 
   assert.equal(generic?.run_id, "pan-catalog:legacy-pan-run");
   assert.equal(generic?.job_id, "resource.cloud-drive.catalog-sync");
   assert.equal(generic?.host_claimable, false);
+  assert.equal(
+    generic?.idempotency_key,
+    "job:kerkerker.kkpan-cloud-drive:resource.cloud-drive.catalog-sync:cn-default:schedule:catalog:2026-08-23"
+  );
   assert.equal(generic?.metadata.legacy_run_id, "legacy-pan-run");
 });

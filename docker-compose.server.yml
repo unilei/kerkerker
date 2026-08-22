@@ -30,6 +30,7 @@ services:
       - KKPAN_API_BASE=${KKPAN_API_BASE:-https://www.kkpans.com}
       - PAN_SYNC_SCHEDULER_DISABLED=${PAN_SYNC_SCHEDULER_DISABLED:-false}
       - PAN_SYNC_SCHEDULER_POLL_MS=${PAN_SYNC_SCHEDULER_POLL_MS:-30000}
+      - PAN_SYNC_CATALOG_JOB_MODE=${PAN_SYNC_CATALOG_JOB_MODE:-off}
     depends_on:
       mongodb:
         condition: service_healthy

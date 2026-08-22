@@ -47,7 +47,9 @@ test(
         null
       );
 
-      const promoted = await enqueuePanCatalogJobProjection(runner, source, "cutover");
+      const promoted = await enqueuePanCatalogJobProjection(runner, source, "cutover", {
+        promoteShadow: true,
+      });
       assert.equal(promoted?.run_id, shadow?.run_id);
       assert.equal(promoted?.host_claimable, true);
       assert.equal(promoted?.metadata.shadow, false);
@@ -62,4 +64,3 @@ test(
     }
   }
 );
-
