@@ -15,6 +15,11 @@ import {
 } from "@/packages/kerkerker-plugin-contract/src/index";
 import { pluginProfileRegistry } from "@/lib/plugins/builtin-profiles";
 import { pluginRegistry } from "@/lib/plugins/builtin";
+import {
+  redactPluginJobEventError,
+  type PluginJobEventAppendInput,
+} from "@/lib/plugins/job-events";
+import { getMongoPluginJobEventStore } from "@/lib/plugins/mongo-job-event-store";
 import { getMongoPluginJobStore } from "@/lib/plugins/mongo-job-store";
 import {
   PluginJobError,
@@ -226,6 +231,7 @@ export interface JobReportIngestDependencies {
   get(runId: string): Promise<PluginJobRun | null>;
   create(run: PluginJobRun): Promise<PluginJobRun>;
   update(runId: string, revision: number, mutate: (run: PluginJobRun) => PluginJobRun): Promise<PluginJobRun | null>;
+  appendEvent(input: PluginJobEventAppendInput): Promise<unknown>;
   now?(): Date;
 }
 
@@ -234,7 +240,31 @@ export function defaultJobReportIngestDependencies(): JobReportIngestDependencie
     async get(runId) { return (await getMongoPluginJobStore()).get(runId); },
     async create(run) { return (await getMongoPluginJobStore()).create(run); },
     async update(runId, revision, mutate) { return (await getMongoPluginJobStore()).update(runId, revision, mutate); },
+    async appendEvent(input) { return (await getMongoPluginJobEventStore()).append(input); },
   };
+}
+
+async function persistAcceptedEvent(
+  event: JobReportEvent,
+  eventHashValue: string,
+  receivedAt: string,
+  run: PluginJobRun,
+  dependencies: JobReportIngestDependencies
+): Promise<void> {
+  const recordedReceipt = run.metadata.last_received_at;
+  const snapshotReceivedAt =
+    typeof recordedReceipt === "string" &&
+    Number.isFinite(Date.parse(recordedReceipt))
+      ? recordedReceipt
+      : receivedAt;
+  await dependencies.appendEvent({
+    event,
+    eventHash: eventHashValue,
+    receivedAt: snapshotReceivedAt,
+    expiresAt: run.expires_at
+      ? new Date(run.expires_at)
+      : new Date(Date.parse(snapshotReceivedAt) + 30 * 24 * 60 * 60 * 1000),
+  });
 }
 
 function assertRegisteredSource(event: JobReportEvent): void {
@@ -297,6 +327,7 @@ export async function ingestPluginJobReport(
     if (created.metadata.last_event_id !== event.event_id || created.metadata.last_event_hash !== incomingHash) {
       throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT, "run_id 已绑定到其他任务事件");
     }
+    await persistAcceptedEvent(event, incomingHash, receivedAt, created, dependencies);
     return created;
   }
 
@@ -305,6 +336,7 @@ export async function ingestPluginJobReport(
   if (event.sequence < lastSequence) return existing;
   if (event.sequence === lastSequence) {
     if (existing.metadata.last_event_id === event.event_id && existing.metadata.last_event_hash === incomingHash) {
+      await persistAcceptedEvent(event, incomingHash, receivedAt, existing, dependencies);
       return existing;
     }
     throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT, "相同 sequence 的任务事件内容不一致");
@@ -318,11 +350,12 @@ export async function ingestPluginJobReport(
 
   const progress = monotonicProgress(existing.progress, event.progress);
   const nextStatus = event.kind === "finished" ? event.status : "running";
+  const redactedError = redactPluginJobEventError(event.error);
   const updated = await dependencies.update(event.metadata.run_id, existing.revision, (run) => ({
     ...run,
     status: nextStatus,
     progress,
-    error: event.error,
+    error: redactedError,
     metadata: {
       ...run.metadata,
       last_sequence: event.sequence,
@@ -345,9 +378,13 @@ export async function ingestPluginJobReport(
         winnerSequence === event.sequence &&
         winner.metadata.last_event_id === event.event_id &&
         winner.metadata.last_event_hash === incomingHash
-      ) return winner;
+      ) {
+        await persistAcceptedEvent(event, incomingHash, receivedAt, winner, dependencies);
+        return winner;
+      }
     }
     throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.CONFLICT, "任务状态已被其他 worker 修改");
   }
+  await persistAcceptedEvent(event, incomingHash, receivedAt, updated, dependencies);
   return updated;
 }

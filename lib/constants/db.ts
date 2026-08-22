@@ -31,6 +31,8 @@ export const COLLECTIONS = {
   TAKEDOWN_RECORDS: 'takedown_records',
   /** Provider-neutral plugin job runs */
   PLUGIN_JOBS: 'plugin_jobs',
+  /** Append-only receipts for provider-neutral plugin job events */
+  PLUGIN_JOB_EVENTS: 'plugin_job_events',
 } as const;
 
 /** 集合名称类型 */

@@ -83,6 +83,7 @@ function makeStore(): JobReportIngestDependencies & { snapshot(runId: string): P
       runs.set(runId, clone(next));
       return clone(next);
     },
+    async appendEvent() {},
   };
 }
 
@@ -200,6 +201,74 @@ test("job report ingestion creates, deduplicates, advances, and seals a run", as
   );
 });
 
+test("job report ingestion appends accepted receipts and repairs an exact replay", async () => {
+  const store = makeStore();
+  const receipts: string[] = [];
+  const receiptTimes: string[] = [];
+  let failFirstAppend = true;
+  let nowIndex = 0;
+  const times = [
+    "2026-08-22T08:00:00.000Z",
+    "2026-08-22T08:01:00.000Z",
+    "2026-08-22T08:02:00.000Z",
+    "2026-08-22T08:03:00.000Z",
+  ];
+  const dependencies: JobReportIngestDependencies = {
+    ...store,
+    now: () => new Date(times[nowIndex++]),
+    appendEvent: async ({ event: accepted, receivedAt }) => {
+      if (failFirstAppend) {
+        failFirstAppend = false;
+        throw new Error("event store unavailable");
+      }
+      if (!receipts.includes(accepted.event_id)) {
+        receipts.push(accepted.event_id);
+        receiptTimes.push(receivedAt);
+      }
+    },
+  };
+
+  await assert.rejects(
+    () => ingestPluginJobReport(event(), dependencies),
+    /event store unavailable/
+  );
+  assert.equal(store.snapshot("refresh-1")?.status, "running");
+
+  const repaired = await ingestPluginJobReport(event(), dependencies);
+  assert.equal(repaired.revision, 0);
+  assert.deepEqual(receipts, ["refresh-1:0"]);
+  assert.deepEqual(receiptTimes, [times[0]]);
+
+  await ingestPluginJobReport(
+    event({ kind: "progress", sequence: 1 }),
+    dependencies
+  );
+  await ingestPluginJobReport(event(), dependencies);
+  assert.deepEqual(receipts, ["refresh-1:0", "refresh-1:1"]);
+  assert.deepEqual(receiptTimes, [times[0], times[2]]);
+});
+
+test("job report ingestion redacts sensitive error URLs in the run snapshot", async () => {
+  const store = makeStore();
+  await ingestPluginJobReport(event(), store);
+  const finished = await ingestPluginJobReport(
+    event({
+      kind: "finished",
+      sequence: 1,
+      status: "failed",
+      progress: { processed: 10, created: 8, failed: 2 },
+      error: {
+        code: "UPSTREAM_ERROR",
+        message: "https://example.com/fail?token=plain-secret&item=1#debug",
+      },
+    }),
+    store
+  );
+
+  assert.doesNotMatch(finished.error?.message || "", /plain-secret|#debug/);
+  assert.match(finished.error?.message || "", /item=1/);
+});
+
 test("job report ingestion rejects mutated duplicates and identity changes", async () => {
   const store = makeStore();
   await ingestPluginJobReport(event(), store);
@@ -237,6 +306,7 @@ test("job report ingestion detects CAS loss without overwriting the winner", asy
     get: store.get,
     create: store.create,
     update: async () => null,
+    appendEvent: store.appendEvent,
   };
   await assert.rejects(
     () => ingestPluginJobReport(event({ kind: "progress", sequence: 1 }), deps),
@@ -257,6 +327,7 @@ test("job report ingestion resolves an identical concurrent CAS winner", async (
       assert.ok(winner);
       return null;
     },
+    appendEvent: store.appendEvent,
   });
   assert.equal(resolved.revision, 1);
   assert.equal(resolved.metadata.last_sequence, 1);
@@ -273,6 +344,7 @@ test("job report ingestion validates a concurrent create winner and registry sco
         metadata: { ...winner.metadata, last_event_hash: "different" },
       }),
       update: async () => null,
+      appendEvent: store.appendEvent,
     }),
     (error: unknown) => error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT
   );
@@ -367,6 +439,7 @@ test("job report route authenticates, persists valid events, and maps errors saf
       get: async () => null,
       create: async () => { throw new RangeError("mongodb://user:secret@example.invalid/jobs"); },
       update: async () => null,
+      appendEvent: async () => undefined,
     });
     const failed = await brokenRoute.POST(request(base));
     const failedBody = await failed.json();

@@ -204,7 +204,9 @@ MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/kerkerker
 `POST /api/plugins/jobs/report` 上报版本化任务事件。该密钥与管理员会话及
 `KKPAN_SYNC_CRON_SECRET` 分离；接口只接受已注册且绑定到指定画像的精确插件版本，
 并用 `run_id + sequence` 去重和 CAS 更新。管理员通过只读
-`GET /api/plugins/jobs` 查看结果。未配置密钥时写入接口始终返回 `401`。
+`GET /api/plugins/jobs` 查看当前快照，并通过
+`GET /api/plugins/jobs/events?run_id=<run_id>` 按事件序号查看持久时间线；事件接口支持
+`after_sequence` 和 `limit` 正向分页。未配置密钥时写入接口始终返回 `401`。
 GitHub Actions 部署使用 Web 仓库 Secret `DEPLOY_JOB_REPORT_TOKEN` 写入该配置；
 启用 Go 上报前应先部署 Web，再在 Go 仓库配置同值 Secret、HTTPS 接收地址和
 `DEPLOY_JOB_REPORT_MODE=http|both`。密钥必须是 32–512 位 URL-safe 字符，建议使用

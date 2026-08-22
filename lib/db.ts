@@ -287,6 +287,19 @@ async function initializeDatabase(db: Db) {
     await pluginJobsCollection.createIndex({ plugin_id: 1, created_at: -1 });
     await pluginJobsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
 
+    // Append-only worker receipts. Snapshot CAS remains the state truth; an
+    // exact worker replay repairs a receipt if the second write was interrupted.
+    const pluginJobEventsCollection = db.collection(COLLECTIONS.PLUGIN_JOB_EVENTS);
+    await pluginJobEventsCollection.createIndex({ event_id: 1 }, { unique: true });
+    await pluginJobEventsCollection.createIndex(
+      { run_id: 1, sequence: 1 },
+      { unique: true }
+    );
+    await pluginJobEventsCollection.createIndex(
+      { expires_at: 1 },
+      { expireAfterSeconds: 0 }
+    );
+
     // Phase 1 compliance data layer. Index creation is idempotent; retention
     // is enforced by TTL indexes while policy and takedown records remain
     // queryable for operational review.
