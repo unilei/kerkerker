@@ -15,6 +15,7 @@ import {
   PluginJobError,
   PluginJobRunner,
   PLUGIN_JOB_ERROR_CODES,
+  normalizePluginJobId,
   type PluginJobRun,
   type PluginJobRunnerPort,
 } from "@/lib/plugins/job-runner";
@@ -154,9 +155,18 @@ function assertGenericHostRun(run: PluginJobRun): void {
   ) {
     throw new InvalidLifecycleStateError("只有可执行的宿主插件任务支持此操作");
   }
+  try {
+    normalizePluginJobId(run.job_id);
+  } catch {
+    throw new InvalidLifecycleStateError("任务 job_id 无效，不能执行宿主操作");
+  }
   // Pan migration runs have a separate fenced compatibility control path. Do
   // not mutate them here while the legacy scheduler remains in the system.
-  if (run.metadata.source === "pan-scheduler") {
+  const metadata =
+    run.metadata && typeof run.metadata === "object" && !Array.isArray(run.metadata)
+      ? run.metadata
+      : {};
+  if (metadata.source === "pan-scheduler") {
     throw new InvalidLifecycleStateError("Pan 迁移任务必须通过迁移控制入口操作");
   }
 }
