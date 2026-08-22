@@ -22,6 +22,15 @@ import {
   KKPAN_PLUGIN_ID,
   kkpanCloudDriveManifest,
 } from "@/lib/plugins/adapters/kkpan-cloud-drive";
+import {
+  createPanCatalogJobProjection,
+  enqueuePanCatalogJobProjection,
+  getPanCatalogJobMode,
+  type PanCatalogJobMode,
+} from "@/lib/pan/catalog-job";
+import { PluginJobRunner } from "@/lib/plugins/job-runner";
+import { getMongoPluginJobStore } from "@/lib/plugins/mongo-job-store";
+import { redactPluginJobEventText } from "@/lib/plugins/job-events";
 
 export const PAN_SYNC_TASKS = ["catalog", "incremental"] as const;
 export type PanSyncTask = (typeof PAN_SYNC_TASKS)[number];
@@ -169,6 +178,12 @@ export interface PanSyncRunDoc {
   batch_limit: number;
   max_batches: number;
   schedule_slot?: string;
+  /** Generic catalog job identity during the migration window. */
+  generic_job_id?: string;
+  generic_job_run_id?: string;
+  generic_job_mode?: PanCatalogJobMode;
+  generic_job_idempotency_key?: string;
+  generic_job_projected_at?: string;
   discovered: number;
   queued: number;
   processed: number;
@@ -210,6 +225,12 @@ export interface PanSyncRun {
   status: PanSyncRunStatus;
   batch_limit: number;
   max_batches: number;
+  schedule_slot?: string;
+  generic_job_id?: string;
+  generic_job_run_id?: string;
+  generic_job_mode?: PanCatalogJobMode;
+  generic_job_idempotency_key?: string;
+  generic_job_projected_at?: string;
   discovered: number;
   queued: number;
   processed: number;
@@ -318,6 +339,12 @@ function toRun(doc: PanSyncRunDoc): PanSyncRun {
     status: doc.status,
     batch_limit: doc.batch_limit,
     max_batches: doc.max_batches,
+    schedule_slot: doc.schedule_slot,
+    generic_job_id: doc.generic_job_id,
+    generic_job_run_id: doc.generic_job_run_id,
+    generic_job_mode: doc.generic_job_mode,
+    generic_job_idempotency_key: doc.generic_job_idempotency_key,
+    generic_job_projected_at: doc.generic_job_projected_at,
     discovered: doc.discovered || 0,
     queued: doc.queued || 0,
     processed: doc.processed || 0,
@@ -658,6 +685,27 @@ async function createRunDoc(input: {
   const now = new Date().toISOString();
   const runId = randomUUID();
   const metadata = createPanSyncRunMetadata(runId);
+  const catalogJobMode = input.task === "catalog" ? getPanCatalogJobMode() : "off";
+  if (catalogJobMode === "cutover") {
+    throw new Error(
+      "KKPAN catalog generic cutover 尚未启用；请先部署宿主 handler，再设置 PAN_SYNC_CATALOG_JOB_MODE=cutover"
+    );
+  }
+  const catalogProjection = catalogJobMode === "shadow"
+    ? createPanCatalogJobProjection({
+        runId,
+        trigger: input.trigger,
+        batchLimit: input.batchLimit,
+        maxBatches: input.maxBatches,
+        scheduleSlot: input.scheduleSlot,
+        pluginId: metadata.plugin_id,
+        pluginVersion: metadata.plugin_version,
+        profileId: metadata.profile_id,
+        profile: metadata.profile,
+        configVersion: metadata.config_version,
+        actor: metadata.actor,
+      }, catalogJobMode)
+    : undefined;
   const doc: PanSyncRunDoc = {
     run_id: runId,
     ...metadata,
@@ -667,6 +715,13 @@ async function createRunDoc(input: {
     batch_limit: input.batchLimit,
     max_batches: input.maxBatches,
     ...(input.scheduleSlot ? { schedule_slot: input.scheduleSlot } : {}),
+    ...(catalogProjection
+      ? {
+          generic_job_id: catalogProjection.jobId,
+          generic_job_mode: catalogProjection.mode,
+          generic_job_idempotency_key: catalogProjection.idempotencyKey,
+        }
+      : {}),
     discovered: 0,
     queued: 0,
     processed: 0,
@@ -688,6 +743,43 @@ async function createRunDoc(input: {
   };
   const coll = await runCollection();
   await coll.insertOne(doc);
+  if (catalogProjection) {
+    try {
+      const genericRun = await enqueuePanCatalogJobProjection(
+        new PluginJobRunner(await getMongoPluginJobStore()),
+        {
+          runId,
+          trigger: input.trigger,
+          batchLimit: input.batchLimit,
+          maxBatches: input.maxBatches,
+          scheduleSlot: input.scheduleSlot,
+          pluginId: metadata.plugin_id,
+          pluginVersion: metadata.plugin_version,
+          profileId: metadata.profile_id,
+          profile: metadata.profile,
+          configVersion: metadata.config_version,
+          actor: metadata.actor,
+        },
+        catalogJobMode
+      );
+      if (genericRun) {
+        const projectionPatch = {
+          generic_job_run_id: genericRun.run_id,
+          generic_job_projected_at: new Date().toISOString(),
+        };
+        await coll.updateOne({ run_id: runId }, { $set: projectionPatch });
+        Object.assign(doc, projectionPatch);
+      }
+    } catch (error) {
+      // The legacy run remains the execution source in shadow mode. A failed
+      // projection is observable and retryable, but must not abort a real
+      // catalog sync after its legacy record has been created.
+      console.warn(
+        "KKPAN 目录通用任务影子投影失败:",
+        redactPluginJobEventText(truncateError(error, 500))
+      );
+    }
+  }
   return toRun(doc);
 }
 

@@ -495,6 +495,8 @@ Sidecar v1 至少暴露以下受保护端点：
 
 宿主执行器还必须使用构建期静态的允许任务注册表过滤 `job_id`，不能先领取未知任务再根据运行时 metadata 选择代码。处理器注册必须绑定 `plugin_id`，可选地绑定精确插件版本；未注册或身份不匹配的任务不得执行。心跳、进度、游标和终态更新共享同一个 `revision` CAS，因此单次执行内必须串行化这些写入；取消和租约失效必须先停止新的副作用，旧 token 不得再写入终态。
 
+KKPAN 目录同步的迁移必须使用稳定任务 ID `resource.cloud-drive.catalog-sync`，幂等键按 `plugin_id + job_id + profile_id + logical_window` 生成；定时运行的 `logical_window` 是 `schedule:<task>:<本地日期>`，手动运行使用唯一的旧运行 ID。迁移开关 `PAN_SYNC_CATALOG_JOB_MODE` 只有 `off`、`shadow`、`cutover` 三个值，缺省为 `off`，非法值必须拒绝启动或创建任务。`shadow` 可以将通用身份双写到 `pan_sync_runs` 和 `plugin_jobs`，但必须将 `host_claimable` 固定为 `false`，宿主 `claimNext` 和直接 `start` 都必须拒绝该记录；旧执行器仍是唯一副作用来源。`cutover` 必须在宿主 handler、目标台账 fencing、事件时间线和新旧结果对账均通过后才能开启，且开启时旧 `executeRun()` 必须停止创建或执行同一目录任务。
+
 心跳、进度、游标和完成写入必须同时匹配 `run_id`、`running` 状态、revision、owner、token、fence、顶层 `lease_fence`，并确认租约在数据库比较时仍未过期。只检查 owner 或先读后无条件写均不合规。接管发生后，旧 token 的所有写入必须失败；完成状态只能在条件更新确认成功后对外宣告。租约 token 属于内部能力凭证，不得出现在管理员 DTO、日志、事件、审计载荷或客户端响应中。
 
 历史记录读取可以补充明确的 legacy 默认值，但缺少控制模式或 fencing 字段的旧宿主任务在完成显式回填前不得被 `claimNext` 执行。取消请求必须由宿主使用有限 CAS 重试提交；与领取、心跳或进度更新竞争时不能把一次 revision 冲突暴露成丢失取消。已请求取消的运行在租约过期后原子收敛为 `cancelled`；执行次数耗尽的过期运行收敛为 `failed`，不得永久停留在 `running`。多实例测试至少覆盖同一任务只被领取一次、不同任务不重复、未来重试不领取、取消竞争、worker 时钟偏移、错误时间类型 fail-closed、过期后同 owner 接管使旧 token 失效，以及外部上报任务永不被领取。

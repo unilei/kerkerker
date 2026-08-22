@@ -336,6 +336,21 @@ test("claimNext is single-winner and excludes cancelled, future, and external ru
   assert.equal(await runner.claimNext({ owner: "worker-next" }), null);
 });
 
+test("malformed host_claimable values fail closed in the in-memory store", async () => {
+  const store = new InMemoryPluginJobStore();
+  const runner = new PluginJobRunnerImplementation(store);
+  const malformed = await enqueue(runner, { idempotencyKey: "claim:malformed" });
+  await store.update(malformed.run_id, malformed.revision, (run) => ({
+    ...run,
+    host_claimable: "yes" as unknown as boolean,
+  }));
+  assert.equal(await runner.claimNext({ owner: "host" }), null);
+  await assert.rejects(
+    runner.start({ runId: malformed.run_id, owner: "host" }),
+    /影子迁移任务不能由宿主领取/
+  );
+});
+
 test("expired cancelled and exhausted runs converge to terminal states", async () => {
   const { runner, advance } = makeRunner();
   const cancelled = await enqueue(runner, { idempotencyKey: "recover:cancelled" });
@@ -451,4 +466,50 @@ test("batch pan snapshots expose a read-only generic view without changing legac
     completed_batches: 0,
     remaining: 0,
   });
+});
+
+test("shadow Pan projections expose the canonical job identity without becoming claimable", () => {
+  const [generic] = adaptPanSyncRunsToPluginJobRuns([
+    {
+      run_id: "legacy-pan-run",
+      plugin_id: "kerkerker.kkpan-cloud-drive",
+      plugin_version: "1.0.0",
+      profile_id: "cn-default",
+      profile: "cn-default",
+      config_version: "runtime",
+      actor: { type: "system", id: "pan-scheduler" },
+      idempotency_key: "pan-sync:legacy-pan-run",
+      task: "catalog",
+      trigger: "scheduled",
+      status: "queued",
+      batch_limit: 5,
+      max_batches: 100,
+      schedule_slot: "catalog:2026-08-23",
+      generic_job_id: "resource.cloud-drive.catalog-sync",
+      generic_job_run_id: "pan-catalog:legacy-pan-run",
+      generic_job_mode: "shadow",
+      generic_job_idempotency_key:
+        "job:kerkerker.kkpan-cloud-drive:resource.cloud-drive.catalog-sync:cn-default:schedule:catalog:2026-08-23",
+      generic_job_projected_at: "2026-08-23T00:00:00.000Z",
+      discovered: 0,
+      queued: 0,
+      processed: 0,
+      synced: 0,
+      empty: 0,
+      failed: 0,
+      imported: 0,
+      refreshed: 0,
+      disabled: 0,
+      remaining: 0,
+      progress_total: 0,
+      completed_batches: 0,
+      cancel_requested: false,
+      created_at: "2026-08-23T00:00:00.000Z",
+      updated_at: "2026-08-23T00:00:00.000Z",
+    },
+  ]);
+  assert.equal(generic?.run_id, "pan-catalog:legacy-pan-run");
+  assert.equal(generic?.job_id, "resource.cloud-drive.catalog-sync");
+  assert.equal(generic?.host_claimable, false);
+  assert.equal(generic?.metadata.legacy_run_id, "legacy-pan-run");
 });

@@ -168,6 +168,14 @@ class FakeCollection {
       }
       const actual = this.field(document, key);
       if (expected && typeof expected === "object") {
+        if ("$exists" in expected) {
+          return (actual !== undefined) === Boolean(
+            (expected as { $exists: unknown }).$exists
+          );
+        }
+        if ("$ne" in expected) {
+          return actual !== (expected as { $ne: unknown }).$ne;
+        }
         if ("$lte" in expected) {
           return String(actual) <= String((expected as { $lte: unknown }).$lte);
         }
@@ -386,6 +394,16 @@ test("Mongo job store atomically claims only eligible host work", async () => {
     run_id: "cancelled-run",
     idempotency_key: "job:cancelled",
     cancel_requested: true,
+  }));
+  await store.create(run({
+    run_id: "shadow-run",
+    idempotency_key: "job:shadow",
+    host_claimable: false,
+  }));
+  await store.create(run({
+    run_id: "malformed-claimable-run",
+    idempotency_key: "job:malformed-claimable",
+    host_claimable: "yes" as unknown as boolean,
   }));
 
   const claims = await Promise.all(Array.from({ length: 20 }, (_, index) =>

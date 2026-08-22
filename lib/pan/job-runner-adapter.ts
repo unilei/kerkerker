@@ -32,10 +32,12 @@ export function adaptPanSyncRunToPluginJobRun(run: PanSyncRun): PluginJobRun {
     skipped: Math.max(0, run.empty + run.disabled),
   };
   const attempt = run.status === "queued" ? 0 : 1;
+  const projected = Boolean(run.generic_job_id && run.generic_job_run_id);
   return {
-    run_id: run.run_id,
-    job_id: `legacy.pan.${run.task}`,
+    run_id: projected ? run.generic_job_run_id! : run.run_id,
+    job_id: projected ? run.generic_job_id! : `legacy.pan.${run.task}`,
     control_mode: "host",
+    ...(run.generic_job_mode === "shadow" ? { host_claimable: false } : {}),
     plugin_id: run.plugin_id,
     plugin_version: run.plugin_version,
     profile_id: run.profile_id,
@@ -59,6 +61,13 @@ export function adaptPanSyncRunToPluginJobRun(run: PanSyncRun): PluginJobRun {
       max_batches: run.max_batches,
       completed_batches: run.completed_batches,
       remaining: run.remaining,
+      ...(projected
+        ? {
+            legacy_run_id: run.run_id,
+            migration_mode: run.generic_job_mode,
+            generic_job_idempotency_key: run.generic_job_idempotency_key,
+          }
+        : {}),
     },
     // PanSyncRun's public DTO does not expose its internal CAS revision. The
     // adapter therefore marks snapshots as revision zero; a durable write

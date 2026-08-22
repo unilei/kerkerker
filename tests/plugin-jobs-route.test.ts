@@ -138,6 +138,7 @@ test("plugin jobs endpoint forwards status and bounded limit and marks view read
   assert.equal(body.data.jobs[0].timeline_pending, false);
   assert.equal(body.data.jobs[0].job_id, "content.catalog.sync");
   assert.equal(body.data.jobs[0].control_mode, "host");
+  assert.equal("host_claimable" in body.data.jobs[0], false);
   assert.equal(body.data.jobs[0].lease.fence, 1);
   assert.equal("token" in body.data.jobs[0].lease, false);
 

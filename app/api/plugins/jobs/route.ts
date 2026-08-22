@@ -29,6 +29,7 @@ function toAdminJob(job: PluginJobRun) {
     run_id: job.run_id,
     job_id: job.job_id,
     control_mode: job.control_mode,
+    ...(job.host_claimable === false ? { host_claimable: false } : {}),
     plugin_id: job.plugin_id,
     plugin_version: job.plugin_version,
     profile_id: job.profile_id,

@@ -26,6 +26,15 @@ function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
 function toRun(document: PluginJobDocument): PluginJobRun {
   const run = { ...document } as PluginJobDocument;
   delete run._id;
+  const hasHostClaimable = Object.prototype.hasOwnProperty.call(
+    run,
+    "host_claimable"
+  );
+  const normalizedHostClaimable = !hasHostClaimable
+    ? undefined
+    : run.host_claimable === true;
+  const runWithoutHostClaimable = { ...run };
+  delete runWithoutHostClaimable.host_claimable;
   const reportRun = run.metadata?.source === "job-report";
   const leaseFence = Number.isSafeInteger(run.lease_fence) && run.lease_fence >= 0
     ? run.lease_fence
@@ -40,13 +49,16 @@ function toRun(document: PluginJobDocument): PluginJobRun {
       }
     : undefined;
   return {
-    ...run,
+    ...runWithoutHostClaimable,
     job_id: typeof run.job_id === "string"
       ? run.job_id
       : reportRun
         ? LEGACY_EXTERNAL_REPORT_JOB_ID
         : "legacy.unspecified",
     control_mode: run.control_mode ?? (reportRun ? "external-report" : "host"),
+    ...(hasHostClaimable
+      ? { host_claimable: normalizedHostClaimable }
+      : {}),
     lease_fence: leaseFence,
     actor: { ...run.actor },
     retry_policy: { ...run.retry_policy },
@@ -195,6 +207,27 @@ export class MongoPluginJobStore implements PluginJobStore {
       ...(input.runId ? { run_id: input.runId } : {}),
       ...(input.jobIds ? { job_id: { $in: [...input.jobIds] } } : {}),
       control_mode: "host",
+      $and: [
+        {
+          $or: [
+            { host_claimable: { $exists: false } },
+            { host_claimable: true },
+          ],
+        },
+        {
+          $or: [
+            { status: "queued" },
+            {
+              status: "retry_waiting",
+              $expr: mongoTimestampComparison("$next_retry_at", "$lte"),
+            },
+            {
+              status: "running",
+              $expr: mongoTimestampComparison("$lease.expires_at", "$lte"),
+            },
+          ],
+        },
+      ],
       cancel_requested: false,
       $expr: {
         $lt: [
@@ -202,17 +235,6 @@ export class MongoPluginJobStore implements PluginJobStore {
           "$retry_policy.maxAttempts",
         ],
       },
-      $or: [
-        { status: "queued" },
-        {
-          status: "retry_waiting",
-          $expr: mongoTimestampComparison("$next_retry_at", "$lte"),
-        },
-        {
-          status: "running",
-          $expr: mongoTimestampComparison("$lease.expires_at", "$lte"),
-        },
-      ],
     };
     const update: Document[] = [
       {
@@ -252,6 +274,12 @@ export class MongoPluginJobStore implements PluginJobStore {
         control_mode: "host",
         status: "running",
         $and: [
+          {
+            $or: [
+              { host_claimable: { $exists: false } },
+              { host_claimable: true },
+            ],
+          },
           {
             $expr: mongoTimestampComparison("$lease.expires_at", "$lte"),
           },

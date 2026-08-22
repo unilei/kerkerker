@@ -109,6 +109,8 @@ export interface PluginJobRun {
   readonly run_id: string;
   readonly job_id: string;
   readonly control_mode: PluginJobControlMode;
+  /** Shadow projections are durable but must never be claimed by a host. */
+  readonly host_claimable?: boolean;
   readonly plugin_id: string;
   readonly plugin_version: string;
   readonly profile_id: string;
@@ -145,6 +147,8 @@ export interface PluginJobEnqueueInput {
   readonly jobId: string;
   /** Enqueue creates host-controlled work; external reports use ingestion. */
   readonly controlMode?: "host";
+  /** Set false for migration projections that must remain non-executable. */
+  readonly hostClaimable?: boolean;
   readonly pluginId: string;
   readonly pluginVersion: string;
   readonly profileId: string;
@@ -233,6 +237,8 @@ export interface PluginJobStore {
 
 export interface PluginJobRunnerPort {
   enqueue(input: PluginJobEnqueueInput): Promise<PluginJobRun>;
+  /** Atomically promotes an untouched shadow projection to host work. */
+  promoteHostClaimable(runId: string): Promise<PluginJobRun>;
   get(runId: string): Promise<PluginJobRun | null>;
   list(options?: { status?: PluginJobStatus; limit?: number }): Promise<PluginJobRun[]>;
   claimNext(options: PluginJobClaimOptions): Promise<PluginJobRun | null>;
@@ -391,6 +397,7 @@ function normalizeLeaseCredential(
 function isClaimEligible(run: PluginJobRun, now: Date): boolean {
   if (
     run.control_mode !== "host" ||
+    !isHostClaimable(run) ||
     run.cancel_requested ||
     run.attempt >= run.retry_policy.maxAttempts
   ) {
@@ -406,6 +413,12 @@ function isClaimEligible(run: PluginJobRun, now: Date): boolean {
     return Number.isFinite(expiresAt) && expiresAt <= now.getTime();
   }
   return false;
+}
+
+function isHostClaimable(run: PluginJobRun): boolean {
+  // Missing is the compatibility value for pre-migration host jobs. Any
+  // present value other than the literal boolean true is non-claimable.
+  return run.host_claimable === undefined || run.host_claimable === true;
 }
 
 function claimRun(
@@ -496,6 +509,9 @@ export class PluginJobRunner implements PluginJobRunnerPort {
     const idempotencyKey = assertNonEmpty(input.idempotencyKey, "idempotencyKey");
     const jobId = normalizePluginJobId(input.jobId);
     const controlMode = normalizeControlMode(input.controlMode);
+    if (input.hostClaimable !== undefined && typeof input.hostClaimable !== "boolean") {
+      throw new TypeError("hostClaimable 必须是布尔值");
+    }
     if (jobId === LEGACY_EXTERNAL_REPORT_JOB_ID) {
       throw new TypeError("新的宿主任务不能使用 legacy.external-report jobId");
     }
@@ -519,6 +535,24 @@ export class PluginJobRunner implements PluginJobRunnerPort {
           "幂等键已经绑定到其他任务、插件或画像"
         );
       }
+      if (input.hostClaimable !== false && !isHostClaimable(existing)) {
+        return this.promoteHostClaimable(existing.run_id);
+      }
+      if (input.hostClaimable === false) {
+        if (existing.host_claimable === false) {
+          return cloneRun(existing);
+        }
+        if (!isHostClaimable(existing)) {
+          throw new PluginJobError(
+            PLUGIN_JOB_ERROR_CODES.INVALID_STATE,
+            "任务 claimability 字段无效，不能创建影子投影"
+          );
+        }
+        throw new PluginJobError(
+          PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT,
+          "幂等键已经绑定到可执行任务，不能降级为影子任务"
+        );
+      }
       return cloneRun(existing);
     }
 
@@ -532,6 +566,7 @@ export class PluginJobRunner implements PluginJobRunnerPort {
       run_id: input.runId || randomUUID(),
       job_id: jobId,
       control_mode: controlMode,
+      ...(input.hostClaimable === false ? { host_claimable: false } : {}),
       plugin_id: pluginId,
       plugin_version: pluginVersion,
       profile_id: profileId,
@@ -552,7 +587,71 @@ export class PluginJobRunner implements PluginJobRunnerPort {
       created_at: now,
       updated_at: now,
     };
-    return cloneRun(await this.store.create(run));
+    const stored = await this.store.create(run);
+    // A concurrent creator may return an already-existing shadow snapshot
+    // instead of throwing duplicate-key. Re-check claimability after create so
+    // the cutover caller never reports success while holding a non-executable
+    // record.
+    if (input.hostClaimable !== false && !isHostClaimable(stored)) {
+      return this.promoteHostClaimable(stored.run_id);
+    }
+    if (input.hostClaimable === false) {
+      if (stored.host_claimable === false) {
+        return cloneRun(stored);
+      }
+      if (!isHostClaimable(stored)) {
+        throw new PluginJobError(
+          PLUGIN_JOB_ERROR_CODES.INVALID_STATE,
+          "任务 claimability 字段无效，不能创建影子投影"
+        );
+      }
+      throw new PluginJobError(
+        PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT,
+        "幂等键已经绑定到可执行任务，不能降级为影子任务"
+      );
+    }
+    return cloneRun(stored);
+  }
+
+  async promoteHostClaimable(runId: string): Promise<PluginJobRun> {
+    const normalizedRunId = assertNonEmpty(runId, "runId");
+    for (let attempt = 0; attempt < MAX_CANCEL_CAS_ATTEMPTS; attempt += 1) {
+      const current = await this.require(normalizedRunId);
+      if (isHostClaimable(current)) return cloneRun(current);
+      if (
+        current.host_claimable !== false ||
+        current.metadata.shadow !== true ||
+        current.control_mode !== "host" ||
+        current.status !== "queued" ||
+        current.attempt !== 0 ||
+        current.lease
+      ) {
+        throw new PluginJobError(
+          PLUGIN_JOB_ERROR_CODES.INVALID_STATE,
+          "只有未开始的 shadow 任务可以晋级为宿主任务"
+        );
+      }
+      const now = this.now().toISOString();
+      const updated = await this.store.update(
+        current.run_id,
+        current.revision,
+        (run) => ({
+          ...withUpdatedTimestamp(run, now),
+          host_claimable: true,
+          metadata: {
+            ...run.metadata,
+            migration_mode: "cutover",
+            shadow: false,
+            promoted_at: now,
+          },
+        })
+      );
+      if (updated) return cloneRun(updated);
+    }
+    throw new PluginJobError(
+      PLUGIN_JOB_ERROR_CODES.CONFLICT,
+      "影子任务持续被其他 worker 修改，晋级未能提交"
+    );
   }
 
   async get(runId: string): Promise<PluginJobRun | null> {
@@ -581,6 +680,12 @@ export class PluginJobRunner implements PluginJobRunnerPort {
     const nowDate = this.now();
     if (current.control_mode !== "host") {
       throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.INVALID_STATE, "外部上报任务不能由宿主领取");
+    }
+    if (!isHostClaimable(current)) {
+      throw new PluginJobError(
+        PLUGIN_JOB_ERROR_CODES.INVALID_STATE,
+        "影子迁移任务不能由宿主领取"
+      );
     }
     if (current.status === "cancelled" || current.cancel_requested) {
       throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.INVALID_STATE, "任务已取消");
