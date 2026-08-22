@@ -16,8 +16,8 @@ import {
 import { pluginProfileRegistry } from "@/lib/plugins/builtin-profiles";
 import { pluginRegistry } from "@/lib/plugins/builtin";
 import {
-  redactPluginJobEventError,
-  type PluginJobEventAppendInput,
+  createPluginJobEventRecord,
+  type PluginJobEventRecord,
 } from "@/lib/plugins/job-events";
 import { getMongoPluginJobEventStore } from "@/lib/plugins/mongo-job-event-store";
 import { getMongoPluginJobStore } from "@/lib/plugins/mongo-job-store";
@@ -231,7 +231,7 @@ export interface JobReportIngestDependencies {
   get(runId: string): Promise<PluginJobRun | null>;
   create(run: PluginJobRun): Promise<PluginJobRun>;
   update(runId: string, revision: number, mutate: (run: PluginJobRun) => PluginJobRun): Promise<PluginJobRun | null>;
-  appendEvent(input: PluginJobEventAppendInput): Promise<unknown>;
+  appendEvent(record: PluginJobEventRecord): Promise<unknown>;
   now?(): Date;
 }
 
@@ -240,31 +240,96 @@ export function defaultJobReportIngestDependencies(): JobReportIngestDependencie
     async get(runId) { return (await getMongoPluginJobStore()).get(runId); },
     async create(run) { return (await getMongoPluginJobStore()).create(run); },
     async update(runId, revision, mutate) { return (await getMongoPluginJobStore()).update(runId, revision, mutate); },
-    async appendEvent(input) { return (await getMongoPluginJobEventStore()).append(input); },
+    async appendEvent(record) { return (await getMongoPluginJobEventStore()).append(record); },
   };
 }
 
-async function persistAcceptedEvent(
+function createPendingReceipt(
   event: JobReportEvent,
   eventHashValue: string,
   receivedAt: string,
-  run: PluginJobRun,
-  dependencies: JobReportIngestDependencies
-): Promise<void> {
-  const recordedReceipt = run.metadata.last_received_at;
-  const snapshotReceivedAt =
-    typeof recordedReceipt === "string" &&
-    Number.isFinite(Date.parse(recordedReceipt))
-      ? recordedReceipt
-      : receivedAt;
-  await dependencies.appendEvent({
+  expiresAt: Date
+): PluginJobEventRecord {
+  return createPluginJobEventRecord({
     event,
     eventHash: eventHashValue,
-    receivedAt: snapshotReceivedAt,
-    expiresAt: run.expires_at
-      ? new Date(run.expires_at)
-      : new Date(Date.parse(snapshotReceivedAt) + 30 * 24 * 60 * 60 * 1000),
+    receivedAt,
+    expiresAt,
   });
+}
+
+function assertPendingReceipt(run: PluginJobRun, receipt: PluginJobEventRecord): void {
+  if (
+    receipt.run_id !== run.run_id ||
+    receipt.event_id !== run.metadata.last_event_id ||
+    receipt.event_hash !== run.metadata.last_event_hash ||
+    receipt.sequence !== run.metadata.last_sequence ||
+    receipt.metadata.plugin_id !== run.plugin_id ||
+    receipt.metadata.plugin_version !== run.plugin_version ||
+    receipt.metadata.profile_id !== run.profile_id ||
+    receipt.metadata.config_version !== run.config_version ||
+    receipt.metadata.actor !== run.actor.id ||
+    receipt.metadata.attempt !== run.attempt
+  ) {
+    throw new PluginJobError(
+      PLUGIN_JOB_ERROR_CODES.CONFLICT,
+      "任务事件 outbox 与运行快照不一致"
+    );
+  }
+}
+
+async function flushPendingReceipt(
+  run: PluginJobRun,
+  dependencies: JobReportIngestDependencies
+): Promise<PluginJobRun> {
+  let current = run;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const receipt = current.pending_event_receipt;
+    if (!receipt) return current;
+    if (!isReportRun(current)) {
+      throw new PluginJobError(
+        PLUGIN_JOB_ERROR_CODES.CONFLICT,
+        "非上报任务不能包含 worker 事件 outbox"
+      );
+    }
+    assertPendingReceipt(current, receipt);
+    await dependencies.appendEvent(receipt);
+    const cleared = await dependencies.update(
+      current.run_id,
+      current.revision,
+      (snapshot) => {
+        const pending = snapshot.pending_event_receipt;
+        if (
+          !pending ||
+          pending.event_id !== receipt.event_id ||
+          pending.event_hash !== receipt.event_hash
+        ) {
+          throw new PluginJobError(
+            PLUGIN_JOB_ERROR_CODES.CONFLICT,
+            "任务事件 outbox 在清理时发生变化"
+          );
+        }
+        return {
+          ...snapshot,
+          pending_event_receipt: undefined,
+          revision: snapshot.revision + 1,
+        };
+      }
+    );
+    if (cleared) return cleared;
+    const winner = await dependencies.get(current.run_id);
+    if (!winner) {
+      throw new PluginJobError(
+        PLUGIN_JOB_ERROR_CODES.CONFLICT,
+        "任务事件 outbox 清理时运行记录消失"
+      );
+    }
+    current = winner;
+  }
+  throw new PluginJobError(
+    PLUGIN_JOB_ERROR_CODES.CONFLICT,
+    "任务事件 outbox 持续发生并发冲突"
+  );
 }
 
 function assertRegisteredSource(event: JobReportEvent): void {
@@ -288,12 +353,21 @@ export async function ingestPluginJobReport(
   const incomingHash = eventHash(event);
   const receivedAtDate = dependencies.now?.() ?? new Date();
   const receivedAt = receivedAtDate.toISOString();
-  const existing = await dependencies.get(event.metadata.run_id);
+  let existing = await dependencies.get(event.metadata.run_id);
   if (!existing && event.kind !== "started") {
     throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.NOT_FOUND, "任务尚未开始");
   }
   if (!existing) {
     assertRegisteredSource(event);
+    const expiresAt = new Date(
+      receivedAtDate.getTime() + 30 * 24 * 60 * 60 * 1000
+    );
+    const receipt = createPendingReceipt(
+      event,
+      incomingHash,
+      receivedAt,
+      expiresAt
+    );
     const run: PluginJobRun = {
       run_id: event.metadata.run_id,
       plugin_id: event.metadata.plugin_id,
@@ -316,8 +390,9 @@ export async function ingestPluginJobReport(
         last_occurred_at: event.occurred_at,
         last_received_at: receivedAt,
       },
+      pending_event_receipt: receipt,
       revision: 0,
-      expires_at: new Date(receivedAtDate.getTime() + 30 * 24 * 60 * 60 * 1000),
+      expires_at: expiresAt,
       created_at: receivedAt,
       updated_at: receivedAt,
       started_at: receivedAt,
@@ -327,16 +402,16 @@ export async function ingestPluginJobReport(
     if (created.metadata.last_event_id !== event.event_id || created.metadata.last_event_hash !== incomingHash) {
       throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT, "run_id 已绑定到其他任务事件");
     }
-    await persistAcceptedEvent(event, incomingHash, receivedAt, created, dependencies);
-    return created;
+    return flushPendingReceipt(created, dependencies);
   }
 
+  assertReportIdentity(existing, event);
+  existing = await flushPendingReceipt(existing, dependencies);
   assertReportIdentity(existing, event);
   const lastSequence = existing.metadata.last_sequence as number;
   if (event.sequence < lastSequence) return existing;
   if (event.sequence === lastSequence) {
     if (existing.metadata.last_event_id === event.event_id && existing.metadata.last_event_hash === incomingHash) {
-      await persistAcceptedEvent(event, incomingHash, receivedAt, existing, dependencies);
       return existing;
     }
     throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT, "相同 sequence 的任务事件内容不一致");
@@ -350,7 +425,15 @@ export async function ingestPluginJobReport(
 
   const progress = monotonicProgress(existing.progress, event.progress);
   const nextStatus = event.kind === "finished" ? event.status : "running";
-  const redactedError = redactPluginJobEventError(event.error);
+  const receipt = createPendingReceipt(
+    event,
+    incomingHash,
+    receivedAt,
+    existing.expires_at
+      ? new Date(existing.expires_at)
+      : new Date(receivedAtDate.getTime() + 30 * 24 * 60 * 60 * 1000)
+  );
+  const redactedError = receipt.error;
   const updated = await dependencies.update(event.metadata.run_id, existing.revision, (run) => ({
     ...run,
     status: nextStatus,
@@ -364,13 +447,16 @@ export async function ingestPluginJobReport(
       last_occurred_at: event.occurred_at,
       last_received_at: receivedAt,
     },
+    pending_event_receipt: receipt,
     revision: run.revision + 1,
     updated_at: receivedAt,
     ...(event.kind === "finished" ? { finished_at: receivedAt } : {}),
   }));
   if (!updated) {
-    const winner = await dependencies.get(event.metadata.run_id);
+    let winner = await dependencies.get(event.metadata.run_id);
     if (winner) {
+      assertReportIdentity(winner, event);
+      winner = await flushPendingReceipt(winner, dependencies);
       assertReportIdentity(winner, event);
       const winnerSequence = winner.metadata.last_sequence as number;
       if (winnerSequence > event.sequence) return winner;
@@ -379,12 +465,10 @@ export async function ingestPluginJobReport(
         winner.metadata.last_event_id === event.event_id &&
         winner.metadata.last_event_hash === incomingHash
       ) {
-        await persistAcceptedEvent(event, incomingHash, receivedAt, winner, dependencies);
         return winner;
       }
     }
     throw new PluginJobError(PLUGIN_JOB_ERROR_CODES.CONFLICT, "任务状态已被其他 worker 修改");
   }
-  await persistAcceptedEvent(event, incomingHash, receivedAt, updated, dependencies);
-  return updated;
+  return flushPendingReceipt(updated, dependencies);
 }

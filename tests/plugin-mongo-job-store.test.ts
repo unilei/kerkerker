@@ -6,6 +6,7 @@ import {
   PLUGIN_JOB_ERROR_CODES,
   type PluginJobRun,
 } from "@/lib/plugins/job-runner";
+import { createPluginJobEventRecord } from "@/lib/plugins/job-events";
 
 type RawRun = PluginJobRun & { _id?: string };
 
@@ -124,4 +125,49 @@ test("Mongo job store lists by status without exposing Mongo identity", async ()
   assert.equal(failed.length, 1);
   assert.equal(failed[0]?.run_id, "run-2");
   assert.equal("_id" in (failed[0] || {}), false);
+});
+
+test("Mongo job store preserves and atomically clears a pending event receipt", async () => {
+  const collection = new FakeCollection();
+  const store = new MongoPluginJobStore(collection as never);
+  const pending = createPluginJobEventRecord({
+    event: {
+      schema: "kerkerker.plugin-job.v1",
+      event_id: "run-1:0",
+      sequence: 0,
+      kind: "started",
+      occurred_at: "2026-08-21T00:00:00Z",
+      metadata: {
+        run_id: "run-1",
+        plugin_id: "example.plugin",
+        plugin_version: "1.0.0",
+        profile_id: "cn-default",
+        config_version: "config-1",
+        actor: "test",
+        attempt: 1,
+      },
+      status: "running",
+      progress: { total: 0, processed: 0, created: 0, failed: 0, skipped: 0 },
+    },
+    eventHash: "a".repeat(64),
+    receivedAt: "2026-08-21T00:00:00.000Z",
+    expiresAt: new Date("2026-09-20T00:00:00.000Z"),
+  });
+  await store.create(run({
+    status: "running",
+    attempt: 1,
+    pending_event_receipt: pending,
+  }));
+
+  const loaded = await store.get("run-1");
+  assert.equal(loaded?.pending_event_receipt?.event_id, "run-1:0");
+  assert.ok(loaded?.pending_event_receipt?.expires_at instanceof Date);
+
+  const cleared = await store.update("run-1", 0, (current) => ({
+    ...current,
+    pending_event_receipt: undefined,
+    revision: 1,
+  }));
+  assert.equal(cleared?.pending_event_receipt, undefined);
+  assert.equal((await store.get("run-1"))?.pending_event_receipt, undefined);
 });

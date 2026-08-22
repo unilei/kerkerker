@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { PluginJobEvent } from "@/packages/kerkerker-plugin-contract/src/index";
-import type { PluginJobEventRecord } from "@/lib/plugins/job-events";
+import {
+  createPluginJobEventRecord,
+  redactPluginJobEventText,
+  type PluginJobEventRecord,
+} from "@/lib/plugins/job-events";
 import { MongoPluginJobEventStore } from "@/lib/plugins/mongo-job-event-store";
 import {
   PluginJobError,
@@ -99,12 +103,12 @@ function event(sequence = 0, overrides: Partial<PluginJobEvent> = {}): PluginJob
 }
 
 function appendInput(sequence = 0, overrides: Partial<PluginJobEvent> = {}) {
-  return {
+  return createPluginJobEventRecord({
     event: event(sequence, overrides),
     eventHash: String(sequence).repeat(64),
     receivedAt: `2026-08-22T00:01:0${sequence}.000Z`,
     expiresAt: new Date("2026-09-21T00:00:00.000Z"),
-  };
+  });
 }
 
 test("Mongo job event store appends exact receipts idempotently", async () => {
@@ -112,7 +116,7 @@ test("Mongo job event store appends exact receipts idempotently", async () => {
   const first = await store.append(appendInput());
   const replay = await store.append({
     ...appendInput(),
-    receivedAt: "2026-08-22T01:00:00.000Z",
+    received_at: "2026-08-22T01:00:00.000Z",
   });
 
   assert.equal(first.event_id, "refresh-1:0");
@@ -120,7 +124,7 @@ test("Mongo job event store appends exact receipts idempotently", async () => {
   assert.notEqual(replay, first);
 
   await assert.rejects(
-    () => store.append({ ...appendInput(), eventHash: "f".repeat(64) }),
+    () => store.append({ ...appendInput(), event_hash: "f".repeat(64) }),
     (error: unknown) =>
       error instanceof PluginJobError &&
       error.code === PLUGIN_JOB_ERROR_CODES.IDEMPOTENCY_CONFLICT
@@ -144,7 +148,7 @@ test("Mongo job event store protects run sequence and lists forward pages", asyn
     () =>
       store.append({
         ...appendInput(1),
-        event: { ...event(1), event_id: "different:1" },
+        event_id: "different:1",
       }),
     (error: unknown) =>
       error instanceof PluginJobError &&
@@ -167,4 +171,39 @@ test("Mongo job event store redacts sensitive URL parameters", async () => {
 
   assert.doesNotMatch(stored.error?.message || "", /plain-secret|#debug/);
   assert.match(stored.error?.message || "", /item=1/);
+});
+
+test("job event text redaction removes embedded DSN, auth, JWT, and assignments", () => {
+  const jwt = `${"a".repeat(12)}.${"b".repeat(12)}.${"c".repeat(12)}`;
+  const sanitized = redactPluginJobEventText(
+    "request https://alice:hunter2@example.invalid/fail?token=url-secret&pass=url-pass&pwd=url-pwd&item=1 " +
+      "mongodb://dbuser:dbpass@mongo:27017/db?authSource=admin " +
+      "amqp://queue-user:queue-pass@broker:5672/vhost\n" +
+      "Authorization: Bearer bearer-secret Basic YmFzaWMtc2VjcmV0\n" +
+      "Authorization=ApiKey apikey-secret scope=admin\n" +
+      "Proxy-Authorization: Digest username=proxy-user password=proxy-pass\n" +
+      "DATABASE_PASSWORD=hunter2 KERKERKER_JOB_REPORT_TOKEN=report-secret\n" +
+      'payload={"token":"json-secret"}\n' +
+      String.raw`escaped={\"client_secret\":\"escaped-json-secret\"}` +
+      ` pass=plain-pass pwd=plain-pwd api_key=plain-key jwt=${jwt} failed`
+  );
+
+  assert.doesNotMatch(
+    sanitized,
+    /alice|hunter2|url-secret|url-pass|url-pwd|dbuser|dbpass|admin|queue-user|queue-pass|bearer-secret|YmFzaWM|apikey-secret|proxy-user|proxy-pass|report-secret|json-secret|escaped-json-secret|plain-pass|plain-pwd|plain-key|aaaaaaaaaaaa/
+  );
+  assert.match(sanitized, /item=1/);
+
+  const invalidCodeEvent = event(1, {
+      kind: "finished",
+      status: "failed",
+      error: { code: "token=must-not-leak", message: "failed" },
+  });
+  const record = createPluginJobEventRecord({
+    event: invalidCodeEvent,
+    eventHash: "f".repeat(64),
+    receivedAt: "2026-08-22T00:01:01.000Z",
+    expiresAt: new Date("2026-09-21T00:00:00.000Z"),
+  });
+  assert.equal(record.error?.code, "UNCLASSIFIED_ERROR");
 });

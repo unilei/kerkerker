@@ -151,7 +151,7 @@ flowchart LR
 - 从 `lib/pan/scheduler.ts` 提取通用 `PluginJobRunner`，统一 `run_id`、租约、心跳、取消、恢复、幂等键、游标、重试退避和配置快照；当前已交付无供应商依赖的生命周期、CAS 版本、租约、进度、取消和退避边界，并提供 Mongo `PluginJobStore` 与只读 Pan 调度兼容适配器。调度 API 的 `plugin_runs` 只读投影不具备写入能力，`revision=0` 和 `maxAttempts=1` 明确表示旧状态机尚未完成双写迁移；下一步接入实际作业执行和跨仓刷新。
 - 管理员只读入口 `GET /api/plugins/jobs` 已接入 `plugin_jobs` Mongo 存储，可按状态或 `run_id` 查看通用作业进度；它明确标记为不可写，旧 Pan scheduler 仍是唯一写入真源，避免两个状态机互相覆盖。
 - 受控 worker 写入口 `POST /api/plugins/jobs/report` 已实现独立 Bearer 鉴权、64 KiB 流式限额、注册插件/版本/画像校验、确定性事件 ID、单调 sequence、内容摘要去重和 Mongo revision CAS；Go 刷新器支持 `stdout|http|both`，默认关闭。它当前只负责状态可见性，不宣称已经具备宿主租约、远程取消或持久重放。
-- 已接受的 worker 事件追加写入 `plugin_job_events`，按 `event_id` 和 `(run_id, sequence)` 双重唯一并与运行快照同周期保留；管理员可通过 `GET /api/plugins/jobs/events` 正向分页查看。非事务 Mongo 下采用快照先行和精确重放修复，不把迟到旧事件误当作已确认历史。
+- 已接受的 worker 事件追加写入 `plugin_job_events`，按 `event_id` 和 `(run_id, sequence)` 双重唯一并与运行快照同周期保留；管理员可通过 `GET /api/plugins/jobs/events` 使用连续游标正向分页查看。非事务 Mongo 在状态 CAS 内保存脱敏 outbox，追加失败时阻断下一序号并由重放/后续请求排空；终态 pending 收据仍进入时间线 DTO，不把迟到旧事件误当作已确认历史。
 - 当前网盘调度已先落地兼容的运行元数据层：新运行记录固定保存 `plugin_id`、插件版本、`profile_id`、配置版本、actor 和幂等键，事件与审计继承同一快照；历史记录读取使用明确的 legacy 默认值。下一步把这组字段和生命周期抽到真正的通用 runner，而不是复制网盘专用状态机。
 - 建立独立的 `kerkerker-plugin-contract` 包/仓库，发布 Manifest、能力接口、DTO、错误码、JSON Schema、兼容性测试包和 TypeScript SDK；当前仓内发布骨架和 CI 检查已完成。
 - 将 Douban、KKPAN 适配器拆成独立插件包；私有实现可以使用受控 package 或 Sidecar 镜像，宿主只通过注册表和版本化契约调用。

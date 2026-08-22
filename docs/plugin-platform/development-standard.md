@@ -482,7 +482,7 @@ Sidecar v1 至少暴露以下受保护端点：
 
 现有 [`lib/pan/scheduler.ts`](../../lib/pan/scheduler.ts) 的持久运行、事件、租约、停止和恢复行为是通用化的迁移基础；[`lib/plugins/job-runner.ts`](../../lib/plugins/job-runner.ts) 提供供应商无关的状态、CAS 版本、租约、进度、取消、重试退避和幂等边界，持久化适配器必须实现 `PluginJobStore` 的原子更新；不得为每个插件复制同类状态机。
 
-跨进程 worker 使用 `kerkerker.plugin-job.v1` 上报时必须遵守同一顺序协议：首条 `started` 固定为 `sequence=0`，`event_id` 固定为 `<run_id>:<sequence>`，后续序号只增不减；插件、精确版本、画像、配置版本、actor 和 attempt 在同一运行中不可变化。`total/processed/created/failed/skipped` 均为累计值且不得倒退，`created + failed + skipped` 必须等于 `processed`。宿主只能以 CAS 接收新序号；当前序号只有摘要完全相同才作为幂等重放，更旧序号完成身份校验后仅作为不改变状态的 stale no-op。当前序号不同内容、终态后的事件或占用已有非上报任务的 `run_id` 必须拒绝。成功应用的事件必须按 `(run_id, sequence)` 追加保存，不能只覆盖最后进度；若状态快照与事件日志无法使用同一事务，先提交快照、日志失败返回可重试错误，并由当前序号的精确重放修复，禁止用内容未知的迟到旧事件补历史。服务认证密钥独立于管理员和其它 cron 密钥，默认关闭，必须是 32–512 位 URL-safe 字符，禁止放入事件体或日志。
+跨进程 worker 使用 `kerkerker.plugin-job.v1` 上报时必须遵守同一顺序协议：首条 `started` 固定为 `sequence=0`，`event_id` 固定为 `<run_id>:<sequence>`，后续序号只增不减；插件、精确版本、画像、配置版本、actor 和 attempt 在同一运行中不可变化。`total/processed/created/failed/skipped` 均为累计值且不得倒退，`created + failed + skipped` 必须等于 `processed`。宿主只能以 CAS 接收新序号；当前序号只有摘要完全相同才作为幂等重放，更旧序号完成身份校验后仅作为不改变状态的 stale no-op。当前序号不同内容、终态后的事件或占用已有非上报任务的 `run_id` 必须拒绝。成功应用的事件必须按 `(run_id, sequence)` 追加保存，不能只覆盖最后进度；若状态快照与事件日志无法使用同一事务，必须在状态 CAS 内保存脱敏 outbox，日志失败返回可重试错误且下一序号必须先排空 outbox，禁止用内容未知的迟到旧事件补历史。管理员时间线 DTO 不得暴露原始摘要、outbox 或自由 metadata；自由错误文本必须清理嵌入凭据。服务认证密钥独立于管理员和其它 cron 密钥，默认关闭，必须是 32–512 位 URL-safe 字符，禁止放入事件体或日志。
 
 ### 结构化日志
 

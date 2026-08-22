@@ -154,11 +154,11 @@ test("job report lifecycle timestamps use host receipt time exactly", async () =
 test("job report ingestion creates, deduplicates, advances, and seals a run", async () => {
   const store = makeStore();
   const started = await ingestPluginJobReport(event(), store);
-  assert.equal(started.revision, 0);
+  assert.equal(started.revision, 1);
   assert.equal(started.metadata.last_sequence, 0);
 
   const duplicateStart = await ingestPluginJobReport(event(), store);
-  assert.equal(duplicateStart.revision, 0);
+  assert.equal(duplicateStart.revision, 1);
 
   const progressedEvent = event({
     kind: "progress",
@@ -167,12 +167,12 @@ test("job report ingestion creates, deduplicates, advances, and seals a run", as
     progress: { processed: 4, created: 3, failed: 1 },
   });
   const progressed = await ingestPluginJobReport(progressedEvent, store);
-  assert.equal(progressed.revision, 1);
+  assert.equal(progressed.revision, 3);
   assert.equal(progressed.progress.processed, 4);
-  assert.equal((await ingestPluginJobReport(progressedEvent, store)).revision, 1);
+  assert.equal((await ingestPluginJobReport(progressedEvent, store)).revision, 3);
 
   const stale = await ingestPluginJobReport(event(), store);
-  assert.equal(stale.revision, 1);
+  assert.equal(stale.revision, 3);
 
   const finishedEvent = event({
     kind: "finished",
@@ -184,7 +184,7 @@ test("job report ingestion creates, deduplicates, advances, and seals a run", as
   });
   const finished = await ingestPluginJobReport(finishedEvent, store);
   assert.equal(finished.status, "partial");
-  assert.equal(finished.revision, 2);
+  assert.equal(finished.revision, 5);
   assert.equal(finished.metadata.last_sequence, 3);
   assert.ok(finished.finished_at);
   assert.ok(finished.started_at);
@@ -216,14 +216,14 @@ test("job report ingestion appends accepted receipts and repairs an exact replay
   const dependencies: JobReportIngestDependencies = {
     ...store,
     now: () => new Date(times[nowIndex++]),
-    appendEvent: async ({ event: accepted, receivedAt }) => {
+    appendEvent: async (accepted) => {
       if (failFirstAppend) {
         failFirstAppend = false;
         throw new Error("event store unavailable");
       }
       if (!receipts.includes(accepted.event_id)) {
         receipts.push(accepted.event_id);
-        receiptTimes.push(receivedAt);
+        receiptTimes.push(accepted.received_at);
       }
     },
   };
@@ -235,7 +235,7 @@ test("job report ingestion appends accepted receipts and repairs an exact replay
   assert.equal(store.snapshot("refresh-1")?.status, "running");
 
   const repaired = await ingestPluginJobReport(event(), dependencies);
-  assert.equal(repaired.revision, 0);
+  assert.equal(repaired.revision, 1);
   assert.deepEqual(receipts, ["refresh-1:0"]);
   assert.deepEqual(receiptTimes, [times[0]]);
 
@@ -246,6 +246,38 @@ test("job report ingestion appends accepted receipts and repairs an exact replay
   await ingestPluginJobReport(event(), dependencies);
   assert.deepEqual(receipts, ["refresh-1:0", "refresh-1:1"]);
   assert.deepEqual(receiptTimes, [times[0], times[2]]);
+});
+
+test("job report ingestion drains an older outbox before accepting the next sequence", async () => {
+  const store = makeStore();
+  const receipts: string[] = [];
+  let failingSequence: number | undefined;
+  const dependencies: JobReportIngestDependencies = {
+    ...store,
+    appendEvent: async (receipt) => {
+      if (receipt.sequence === failingSequence) {
+        throw new Error(`append failed for ${receipt.sequence}`);
+      }
+      if (!receipts.includes(receipt.event_id)) receipts.push(receipt.event_id);
+    },
+  };
+
+  await ingestPluginJobReport(event(), dependencies);
+  failingSequence = 1;
+  await assert.rejects(
+    () => ingestPluginJobReport(event({ kind: "progress", sequence: 1 }), dependencies),
+    /append failed for 1/
+  );
+  assert.equal(store.snapshot("refresh-1")?.pending_event_receipt?.sequence, 1);
+
+  failingSequence = undefined;
+  const advanced = await ingestPluginJobReport(
+    event({ kind: "progress", sequence: 2 }),
+    dependencies
+  );
+  assert.equal(advanced.metadata.last_sequence, 2);
+  assert.equal(advanced.pending_event_receipt, undefined);
+  assert.deepEqual(receipts, ["refresh-1:0", "refresh-1:1", "refresh-1:2"]);
 });
 
 test("job report ingestion redacts sensitive error URLs in the run snapshot", async () => {
@@ -285,7 +317,7 @@ test("job report ingestion rejects mutated duplicates and identity changes", asy
     sequence: 1,
     occurred_at: "2026-08-20T23:59:59Z",
   }), store);
-  assert.equal(clockAdjusted.revision, 1);
+  assert.equal(clockAdjusted.revision, 3);
   assert.equal(clockAdjusted.metadata.last_occurred_at, "2026-08-20T23:59:59Z");
   assert.ok(clockAdjusted.started_at);
   assert.ok(clockAdjusted.updated_at >= clockAdjusted.started_at);
@@ -312,7 +344,7 @@ test("job report ingestion detects CAS loss without overwriting the winner", asy
     () => ingestPluginJobReport(event({ kind: "progress", sequence: 1 }), deps),
     (error: unknown) => error instanceof PluginJobError && error.code === PLUGIN_JOB_ERROR_CODES.CONFLICT
   );
-  assert.equal(store.snapshot("refresh-1")?.revision, 0);
+  assert.equal(store.snapshot("refresh-1")?.revision, 1);
 });
 
 test("job report ingestion resolves an identical concurrent CAS winner", async () => {
@@ -329,7 +361,7 @@ test("job report ingestion resolves an identical concurrent CAS winner", async (
     },
     appendEvent: store.appendEvent,
   });
-  assert.equal(resolved.revision, 1);
+  assert.equal(resolved.revision, 3);
   assert.equal(resolved.metadata.last_sequence, 1);
 });
 
@@ -425,7 +457,7 @@ test("job report route authenticates, persists valid events, and maps errors saf
     assert.deepEqual((await accepted.json()).data, {
       run_id: "refresh-1",
       status: "running",
-      revision: 0,
+      revision: 1,
     });
 
     const conflict = await route.POST(request({

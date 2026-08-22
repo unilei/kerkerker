@@ -4,8 +4,7 @@ import { COLLECTIONS } from "@/lib/constants/db";
 import { getDatabase } from "@/lib/db";
 import {
   clonePluginJobEventRecord,
-  createPluginJobEventRecord,
-  type PluginJobEventAppendInput,
+  redactPluginJobEventError,
   type PluginJobEventListOptions,
   type PluginJobEventRecord,
   type PluginJobEventStore,
@@ -73,8 +72,13 @@ function normalizeAfterSequence(value: number | undefined): number | undefined {
 export class MongoPluginJobEventStore implements PluginJobEventStore {
   constructor(private readonly collection: Collection<PluginJobEventDocument>) {}
 
-  async append(input: PluginJobEventAppendInput): Promise<PluginJobEventRecord> {
-    const expected = createPluginJobEventRecord(input);
+  async append(record: PluginJobEventRecord): Promise<PluginJobEventRecord> {
+    const cloned = clonePluginJobEventRecord(record);
+    const safeError = redactPluginJobEventError(cloned.error);
+    const expected = {
+      ...cloned,
+      ...(safeError ? { error: safeError } : {}),
+    };
     const existing = await this.collection.findOne({ event_id: expected.event_id });
     if (existing) {
       const record = toRecord(existing);

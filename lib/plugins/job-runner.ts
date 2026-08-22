@@ -11,6 +11,10 @@
 
 import { randomUUID } from "node:crypto";
 import type { AuditActorDoc } from "@/lib/compliance-types";
+import {
+  clonePluginJobEventRecord,
+  type PluginJobEventRecord,
+} from "@/lib/plugins/job-events";
 
 export const PLUGIN_JOB_STATUSES = [
   "queued",
@@ -107,6 +111,8 @@ export interface PluginJobRun {
   readonly progress: PluginJobProgress;
   readonly error?: PluginJobErrorSnapshot;
   readonly metadata: Readonly<Record<string, unknown>>;
+  /** Internal durable outbox entry; never expose it through an admin DTO. */
+  readonly pending_event_receipt?: PluginJobEventRecord;
   /** Monotonic revision used by durable adapters for compare-and-swap updates. */
   readonly revision: number;
   readonly expires_at?: Date;
@@ -270,6 +276,13 @@ function cloneRun(run: PluginJobRun): PluginJobRun {
     progress: { ...run.progress },
     ...(run.error ? { error: { ...run.error } } : {}),
     metadata: { ...run.metadata },
+    ...(run.pending_event_receipt
+      ? {
+          pending_event_receipt: clonePluginJobEventRecord(
+            run.pending_event_receipt
+          ),
+        }
+      : {}),
   };
 }
 

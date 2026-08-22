@@ -206,7 +206,8 @@ MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/kerkerker
 并用 `run_id + sequence` 去重和 CAS 更新。管理员通过只读
 `GET /api/plugins/jobs` 查看当前快照，并通过
 `GET /api/plugins/jobs/events?run_id=<run_id>` 按事件序号查看持久时间线；事件接口支持
-`after_sequence` 和 `limit` 正向分页。未配置密钥时写入接口始终返回 `401`。
+`after_sequence` 和 `limit` 正向分页，响应游标可继续轮询后续事件。两个管理员入口都使用
+显式脱敏 DTO，不返回内部事件摘要、outbox、游标或自由 metadata。未配置密钥时写入接口始终返回 `401`。
 GitHub Actions 部署使用 Web 仓库 Secret `DEPLOY_JOB_REPORT_TOKEN` 写入该配置；
 启用 Go 上报前应先部署 Web，再在 Go 仓库配置同值 Secret、HTTPS 接收地址和
 `DEPLOY_JOB_REPORT_MODE=http|both`。密钥必须是 32–512 位 URL-safe 字符，建议使用

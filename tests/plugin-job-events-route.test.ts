@@ -107,6 +107,79 @@ test("plugin job events endpoint returns a bounded forward page", async () => {
   assert.equal(body.data.page.has_more, true);
   assert.equal(body.data.page.next_after_sequence, 1);
   assert.equal(body.data.writable, false);
+  assert.equal("event_hash" in body.data.events[0], false);
+  assert.equal("expires_at" in body.data.events[0], false);
+});
+
+test("plugin job events endpoint keeps a polling cursor at the current tail", async () => {
+  const route = createPluginJobEventsRouteHandlers({
+    getJob: async () => job,
+    listEvents: async (options) =>
+      events.filter((item) => item.sequence > (options.afterSequence ?? -1)),
+  });
+
+  const tail = await route.GET(
+    authenticatedRequest("run_id=refresh-1&after_sequence=2")
+  );
+  const tailBody = await tail.json();
+  assert.equal(tailBody.data.events.length, 0);
+  assert.equal(tailBody.data.page.has_more, false);
+  assert.equal(tailBody.data.page.next_after_sequence, 2);
+
+  const full = await route.GET(authenticatedRequest());
+  const fullBody = await full.json();
+  assert.equal(fullBody.data.page.has_more, false);
+  assert.equal(fullBody.data.page.next_after_sequence, 2);
+});
+
+test("plugin job events endpoint includes a durable pending outbox receipt", async () => {
+  const pending = events[2];
+  const route = createPluginJobEventsRouteHandlers({
+    getJob: async () => ({
+      ...job,
+      actor: { type: "system", id: pending.metadata.actor },
+      status: pending.status,
+      metadata: {
+        source: "job-report",
+        last_sequence: pending.sequence,
+        last_event_id: pending.event_id,
+        last_event_hash: pending.event_hash,
+      },
+      pending_event_receipt: pending,
+    }),
+    listEvents: async () => [],
+  });
+  const response = await route.GET(
+    authenticatedRequest("run_id=refresh-1&after_sequence=1")
+  );
+  const body = await response.json();
+
+  assert.deepEqual(body.data.events.map((item: { sequence: number }) => item.sequence), [2]);
+  assert.equal(body.data.page.next_after_sequence, 2);
+  assert.equal("event_hash" in body.data.events[0], false);
+});
+
+test("plugin job events endpoint ignores an inconsistent pending outbox receipt", async () => {
+  const route = createPluginJobEventsRouteHandlers({
+    getJob: async () => ({
+      ...job,
+      metadata: {
+        source: "job-report",
+        last_sequence: 2,
+        last_event_id: events[2].event_id,
+        last_event_hash: "different-hash",
+      },
+      pending_event_receipt: events[2],
+    }),
+    listEvents: async () => [],
+  });
+  const response = await route.GET(
+    authenticatedRequest("run_id=refresh-1&after_sequence=1")
+  );
+  const body = await response.json();
+
+  assert.deepEqual(body.data.events, []);
+  assert.equal(body.data.page.next_after_sequence, 1);
 });
 
 test("plugin job events endpoint validates queries and missing runs", async () => {

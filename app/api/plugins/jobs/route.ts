@@ -7,12 +7,71 @@ import {
   type PluginJobRun,
   type PluginJobStatus,
 } from "@/lib/plugins/job-runner";
+import { redactPluginJobEventError } from "@/lib/plugins/job-events";
 
 export const dynamic = "force-dynamic";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 const MAX_RUN_ID_LENGTH = 200;
+
+class InvalidJobsQueryError extends Error {}
+
+function toAdminJob(job: PluginJobRun) {
+  const retryable = job.error?.retryable;
+  const safeError = job.error
+    ? redactPluginJobEventError({
+        ...(job.error.code ? { code: job.error.code } : {}),
+        message: job.error.message,
+      })
+    : undefined;
+  return {
+    run_id: job.run_id,
+    plugin_id: job.plugin_id,
+    plugin_version: job.plugin_version,
+    profile_id: job.profile_id,
+    profile: job.profile,
+    config_version: job.config_version,
+    actor: {
+      type: job.actor.type,
+      ...(job.actor.id ? { id: job.actor.id } : {}),
+      ...(job.actor.label ? { label: job.actor.label } : {}),
+    },
+    status: job.status,
+    attempt: job.attempt,
+    retry_policy: { ...job.retry_policy },
+    ...(job.next_retry_at ? { next_retry_at: job.next_retry_at } : {}),
+    ...(job.lease
+      ? {
+          lease: {
+            owner: job.lease.owner,
+            acquired_at: job.lease.acquired_at,
+            heartbeat_at: job.lease.heartbeat_at,
+            expires_at: job.lease.expires_at,
+          },
+        }
+      : {}),
+    ...(job.heartbeat_at ? { heartbeat_at: job.heartbeat_at } : {}),
+    cancel_requested: job.cancel_requested,
+    progress: { ...job.progress },
+    ...(safeError
+      ? {
+          error: {
+            ...safeError,
+            ...(retryable !== undefined
+              ? { retryable }
+              : {}),
+          },
+        }
+      : {}),
+    revision: job.revision,
+    timeline_pending: Boolean(job.pending_event_receipt),
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+    ...(job.started_at ? { started_at: job.started_at } : {}),
+    ...(job.finished_at ? { finished_at: job.finished_at } : {}),
+  };
+}
 
 export interface PluginJobsRouteDependencies {
   listJobs(options: {
@@ -38,7 +97,7 @@ function parseStatus(value: string | null): PluginJobStatus | undefined {
   if (
     !PLUGIN_JOB_STATUSES.includes(value as PluginJobStatus)
   ) {
-    throw new RangeError("status 不是有效的插件任务状态");
+    throw new InvalidJobsQueryError("status 不是有效的插件任务状态");
   }
   return value as PluginJobStatus;
 }
@@ -46,11 +105,11 @@ function parseStatus(value: string | null): PluginJobStatus | undefined {
 function parseLimit(value: string | null): number {
   if (value === null || value.trim() === "") return DEFAULT_LIMIT;
   if (!/^\d+$/.test(value)) {
-    throw new RangeError(`limit 必须是 1 到 ${MAX_LIMIT} 的整数`);
+    throw new InvalidJobsQueryError(`limit 必须是 1 到 ${MAX_LIMIT} 的整数`);
   }
   const limit = Number(value);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
-    throw new RangeError(`limit 必须是 1 到 ${MAX_LIMIT} 的整数`);
+    throw new InvalidJobsQueryError(`limit 必须是 1 到 ${MAX_LIMIT} 的整数`);
   }
   return limit;
 }
@@ -59,7 +118,7 @@ function parseRunId(value: string | null): string | undefined {
   const runId = value?.trim();
   if (!runId) return undefined;
   if (!new RegExp(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,${MAX_RUN_ID_LENGTH - 1}}$`).test(runId)) {
-    throw new RangeError("run_id 查询参数格式无效");
+    throw new InvalidJobsQueryError("run_id 查询参数格式无效");
   }
   return runId;
 }
@@ -114,7 +173,7 @@ export function createPluginJobsRouteHandlers(
           data: {
             source: "plugin_jobs",
             writable: false,
-            jobs: selectedJobs,
+            jobs: selectedJobs.map(toAdminJob),
             filters: {
               ...(query.status ? { status: query.status } : {}),
               ...(query.runId ? { runId: query.runId } : {}),
@@ -124,9 +183,16 @@ export function createPluginJobsRouteHandlers(
         });
       } catch (error) {
         const message =
-          error instanceof RangeError ? error.message : "获取插件任务记录失败";
-        const status = error instanceof RangeError ? 400 : 500;
-        if (status === 500) console.error("获取插件任务记录失败:", error);
+          error instanceof InvalidJobsQueryError
+            ? error.message
+            : "获取插件任务记录失败";
+        const status = error instanceof InvalidJobsQueryError ? 400 : 500;
+        if (status === 500) {
+          console.error(
+            "获取插件任务记录失败:",
+            error instanceof Error ? error.name : "unknown"
+          );
+        }
         return NextResponse.json(
           { code: status, message, data: null },
           { status }

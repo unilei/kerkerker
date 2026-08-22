@@ -21,6 +21,7 @@ const jobs: PluginJobRun[] = [
     attempt: 1,
     retry_policy: { maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 5000 },
     cancel_requested: false,
+    cursor: "opaque?token=must-not-leak",
     progress: { total: 10, processed: 4, created: 2, failed: 0, skipped: 2 },
     metadata: { logical_window: "2026-08-21" },
     revision: 2,
@@ -47,8 +48,11 @@ function jobsPlaceholder(): PluginJobRun {
     retry_policy: { maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 5000 },
     cancel_requested: false,
     progress: { total: 10, processed: 10, created: 8, failed: 2, skipped: 0 },
-    error: { message: "upstream unavailable", retryable: false },
-    metadata: { logical_window: "2026-08-20" },
+    error: {
+      message: "GET https://user:pass@example.invalid/fail?token=must-not-leak failed",
+      retryable: false,
+    },
+    metadata: { logical_window: "2026-08-20", api_key: "must-not-leak" },
     revision: 4,
     created_at: "2026-08-20T00:00:00.000Z",
     updated_at: "2026-08-20T00:01:00.000Z",
@@ -109,6 +113,15 @@ test("plugin jobs endpoint forwards status and bounded limit and marks view read
   assert.equal(body.data.filters.status, "running");
   assert.equal(body.data.filters.runId, "run-1");
   assert.deepEqual(body.data.jobs.map((job: PluginJobRun) => job.run_id), ["run-1"]);
+  for (const internalField of [
+    "idempotency_key",
+    "cursor",
+    "metadata",
+    "pending_event_receipt",
+  ]) {
+    assert.equal(internalField in body.data.jobs[0], false, internalField);
+  }
+  assert.equal(body.data.jobs[0].timeline_pending, false);
 
   const listResponse = await handlers.GET(
     authenticatedRequest("http://localhost/api/plugins/jobs?status=running&limit=1")
@@ -141,24 +154,51 @@ test("plugin jobs endpoint rejects invalid filters before reading Mongo", async 
 });
 
 test("plugin jobs endpoint redacts infrastructure errors", async () => {
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
   const handlers = createPluginJobsRouteHandlers({
     listJobs: async () => {
-      throw new Error("mongodb://user:secret@example.invalid/plugin_jobs");
+      throw new RangeError("mongodb://user:secret@example.invalid/plugin_jobs");
     },
     getJob: async () => {
-      throw new Error("mongodb://user:secret@example.invalid/plugin_jobs");
+      throw new RangeError("mongodb://user:secret@example.invalid/plugin_jobs");
     },
   });
 
+  try {
+    const response = await handlers.GET(
+      authenticatedRequest("http://localhost/api/plugins/jobs")
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 500);
+    assert.equal(body.message, "获取插件任务记录失败");
+    assert.equal(body.data, null);
+    assert.doesNotMatch(JSON.stringify(body), /user:secret/);
+    assert.doesNotMatch(JSON.stringify(logged), /user:secret/);
+    assert.match(JSON.stringify(logged), /Error/);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test("plugin jobs endpoint removes internal state and redacts stored errors", async () => {
+  const handlers = createPluginJobsRouteHandlers({
+    listJobs: async () => jobs,
+    getJob: async (runId) => jobs.find((job) => job.run_id === runId) || null,
+  });
   const response = await handlers.GET(
-    authenticatedRequest("http://localhost/api/plugins/jobs")
+    authenticatedRequest("http://localhost/api/plugins/jobs?run_id=run-2")
   );
   const body = await response.json();
+  const serialized = JSON.stringify(body);
 
-  assert.equal(response.status, 500);
-  assert.equal(body.message, "获取插件任务记录失败");
-  assert.equal(body.data, null);
-  assert.doesNotMatch(JSON.stringify(body), /user:secret/);
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(serialized, /must-not-leak|api_key|idempotency_key|metadata/);
+  assert.match(body.data.jobs[0].error.message, /\[REDACTED\]/);
 });
 
 test("plugin jobs endpoint returns not found for an unknown run", async () => {

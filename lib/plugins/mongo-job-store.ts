@@ -8,6 +8,7 @@ import {
   type PluginJobStatus,
   type PluginJobStore,
 } from "@/lib/plugins/job-runner";
+import { clonePluginJobEventRecord } from "@/lib/plugins/job-events";
 
 interface PluginJobDocument extends PluginJobRun, Document {
   _id?: ObjectId;
@@ -30,6 +31,13 @@ function toRun(document: PluginJobDocument): PluginJobRun {
     progress: { ...run.progress },
     ...(run.error ? { error: { ...run.error } } : {}),
     metadata: { ...run.metadata },
+    ...(run.pending_event_receipt
+      ? {
+          pending_event_receipt: clonePluginJobEventRecord(
+            run.pending_event_receipt
+          ),
+        }
+      : {}),
     ...(run.expires_at ? { expires_at: new Date(run.expires_at) } : {}),
   };
 }

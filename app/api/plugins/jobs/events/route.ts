@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdminRequest } from "@/lib/admin-route";
-import type { PluginJobEventRecord } from "@/lib/plugins/job-events";
+import {
+  redactPluginJobEventError,
+  type PluginJobEventRecord,
+} from "@/lib/plugins/job-events";
 import { getMongoPluginJobEventStore } from "@/lib/plugins/mongo-job-event-store";
 import { getMongoPluginJobStore } from "@/lib/plugins/mongo-job-store";
 import type { PluginJobRun } from "@/lib/plugins/job-runner";
@@ -13,6 +16,65 @@ const MAX_LIMIT = 100;
 const MAX_RUN_ID_LENGTH = 200;
 
 class InvalidJobEventsQueryError extends Error {}
+
+function toAdminEvent(event: PluginJobEventRecord) {
+  const safeError = redactPluginJobEventError(event.error);
+  return {
+    schema: event.schema,
+    event_id: event.event_id,
+    run_id: event.run_id,
+    sequence: event.sequence,
+    kind: event.kind,
+    occurred_at: event.occurred_at,
+    received_at: event.received_at,
+    metadata: { ...event.metadata },
+    status: event.status,
+    progress: { ...event.progress },
+    ...(safeError ? { error: safeError } : {}),
+  };
+}
+
+function pendingReceiptMatchesJob(
+  job: PluginJobRun,
+  pending: PluginJobEventRecord
+): boolean {
+  return (
+    job.metadata.source === "job-report" &&
+    job.actor.type === "system" &&
+    pending.run_id === job.run_id &&
+    pending.event_id === job.metadata.last_event_id &&
+    pending.event_hash === job.metadata.last_event_hash &&
+    pending.sequence === job.metadata.last_sequence &&
+    pending.metadata.run_id === job.run_id &&
+    pending.metadata.plugin_id === job.plugin_id &&
+    pending.metadata.plugin_version === job.plugin_version &&
+    pending.metadata.profile_id === job.profile_id &&
+    pending.metadata.config_version === job.config_version &&
+    pending.metadata.actor === job.actor.id &&
+    pending.metadata.attempt === job.attempt &&
+    pending.status === job.status
+  );
+}
+
+function mergePendingReceipt(
+  events: PluginJobEventRecord[],
+  job: PluginJobRun,
+  afterSequence: number | undefined
+): PluginJobEventRecord[] {
+  const selected = new Map(events.map((event) => [event.event_id, event]));
+  const pending = job.pending_event_receipt;
+  if (
+    pending &&
+    pendingReceiptMatchesJob(job, pending) &&
+    (afterSequence === undefined || pending.sequence > afterSequence) &&
+    !selected.has(pending.event_id)
+  ) {
+    selected.set(pending.event_id, pending);
+  }
+  return [...selected.values()].sort((left, right) =>
+    left.sequence - right.sequence
+  );
+}
 
 export interface PluginJobEventsRouteDependencies {
   getJob(runId: string): Promise<PluginJobRun | null>;
@@ -95,16 +157,20 @@ export function createPluginJobEventsRouteHandlers(
           );
         }
 
-        const selected = await dependencies.listEvents({
+        const storedEvents = await dependencies.listEvents({
           runId,
           ...(afterSequence !== undefined ? { afterSequence } : {}),
           limit: limit + 1,
         });
+        const selected = mergePendingReceipt(
+          storedEvents,
+          job,
+          afterSequence
+        );
         const hasMore = selected.length > limit;
         const events = selected.slice(0, limit);
-        const nextAfterSequence = hasMore
-          ? events.at(-1)?.sequence ?? afterSequence ?? null
-          : null;
+        const nextAfterSequence =
+          events.at(-1)?.sequence ?? afterSequence ?? null;
 
         return NextResponse.json({
           code: 200,
@@ -113,7 +179,7 @@ export function createPluginJobEventsRouteHandlers(
             source: "plugin_job_events",
             writable: false,
             run_id: runId,
-            events,
+            events: events.map(toAdminEvent),
             page: {
               limit,
               after_sequence: afterSequence ?? null,
