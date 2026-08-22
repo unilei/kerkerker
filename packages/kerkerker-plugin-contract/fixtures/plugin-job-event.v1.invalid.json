@@ -1,0 +1,24 @@
+{
+  "schema": "kerkerker.plugin-job.v1",
+  "event_id": "refresh-contract-invalid:0",
+  "sequence": 0,
+  "kind": "started",
+  "occurred_at": "2026-08-22T00:00:00Z",
+  "metadata": {
+    "run_id": "refresh-contract-invalid",
+    "plugin_id": "kerkerker.douban-content",
+    "plugin_version": "1.0.0",
+    "profile_id": "cn-default",
+    "config_version": "runtime",
+    "actor": "system/refresh\ufeff",
+    "attempt": 1
+  },
+  "status": "running",
+  "progress": {
+    "total": 0,
+    "processed": 0,
+    "created": 0,
+    "failed": 0,
+    "skipped": 0
+  }
+}

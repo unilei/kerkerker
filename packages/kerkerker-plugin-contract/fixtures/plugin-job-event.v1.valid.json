@@ -1,0 +1,24 @@
+{
+  "schema": "kerkerker.plugin-job.v1",
+  "event_id": "refresh-contract-1:1",
+  "sequence": 1,
+  "kind": "progress",
+  "occurred_at": "2026-08-22T06:30:00.123Z",
+  "metadata": {
+    "run_id": "refresh-contract-1",
+    "plugin_id": "kerkerker.douban-content",
+    "plugin_version": "1.0.0",
+    "profile_id": "cn-default",
+    "config_version": "runtime",
+    "actor": "system/refresh",
+    "attempt": 1
+  },
+  "status": "running",
+  "progress": {
+    "total": 10,
+    "processed": 4,
+    "created": 3,
+    "failed": 1,
+    "skipped": 0
+  }
+}

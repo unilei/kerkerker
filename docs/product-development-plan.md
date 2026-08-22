@@ -43,7 +43,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 | 已完成 | 首页、分类、浏览、详情和日历的宿主 API 边界 | `app/api/content/*`、对应 hooks/pages |
 | 已完成 | KKPAN 云盘适配器与 provider-neutral cloud-drive host bridge | `lib/plugins/adapters/kkpan-cloud-drive.ts`、`lib/plugins/resource-host.ts`、`lib/pan/cloud-drive-task.ts` |
 | 已完成 | 影片台账、批量同步、定时任务、租约、取消、运行日志和宿主任务状态/退避边界 | `lib/pan/catalog-sync.ts`、`lib/pan/scheduler.ts`、`lib/plugins/job-runner.ts` |
-| 已完成 | 通用任务的 Mongo CAS 存储端口、幂等/状态索引和 TTL 保留边界 | `lib/plugins/mongo-job-store.ts`、`lib/db.ts`、`tests/plugin-mongo-job-store.test.ts` |
+| 已完成 | 通用任务的 Mongo CAS 存储端口、幂等/状态索引、TTL 保留边界和受控 worker 事件接收器 | `lib/plugins/mongo-job-store.ts`、`lib/plugins/job-report.ts`、`app/api/plugins/jobs/report/route.ts` |
 | 已完成 | 网盘任务运行记录的插件/画像/版本/操作者/幂等元数据快照，旧记录兼容读取 | `lib/pan/scheduler.ts`、`tests/pan-scheduler.test.ts` |
 | 已完成 | 内容身份 UUID、外部引用、资源/同步台账的 `content_id` 权威写入及迁移脚本预览/维护模式 | `lib/content-identity-db.ts`、`lib/pan-resources-db.ts`、`lib/pan/catalog-sync.ts`、`scripts/content-identity-backfill.ts` |
 | 已完成 | Douban 图片 R2 镜像、Mongo 持久化和部署门禁 | `kerkerker-douban-service`、`.github/workflows` |
@@ -57,7 +57,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 已支持健康检查、服务间认证、协议版本协商、进程内熔断，画像仅在上游错误时按声明顺序回退；跨实例健康状态、重试上限和集中式健康摘除仍未完成。
 4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；跨来源 `content_id` 精确映射、TMDB 图片 R2 持久化、英文 UI smoke 和运营审批仍未完成。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
-6. Go 服务刷新任务和 Web 网盘任务还没有共享完整的持久化插件作业运行器；宿主已有统一状态转换、租约、取消、进度、可重试错误、退避边界和 Mongo CAS 存储端口。后台调度 API 已增加只读 `plugin_runs` 兼容视图，但旧网盘调度仍是写入真源，双写、恢复和跨仓接入仍属于阶段 3/7。
+6. Go 刷新器已能通过可选 stdout/HTTPS `kerkerker.plugin-job.v1` 协议把有序进度写入宿主 `plugin_jobs`，但尚未由宿主租约驱动，也没有持久 spool、远程取消和断点恢复；Web 网盘任务仍由旧调度器写入。后台已有只读 `plugin_runs` 兼容视图，完整双写和执行器迁移仍属于阶段 3/7。
 
 ## 3. 总体顺序与依赖
 
@@ -84,7 +84,7 @@ flowchart LR
 | 0.5 | Top250 上游端点修复 | 已完成/P0 | 已完成 | 0 | Web、Go 服务和文档使用同一可用路径 |
 | 1 | 合规审批、审计、下架 | 本轮基础已完成，生产收口中 | 1–2 周 | 0 | 策略数据层/API/UI/运行时门禁已交付；待运营填写材料并切换 enforce |
 | 2 | 内容身份和旧字段迁移 | P0 | 2–3 周 | 1 | 资源/台账新写入已用 `content_id`；已提供只读审计，待完成生产全量对账、备份回滚演练和零旧写指标 |
-| 3 | 统一作业基础与独立契约包 | 本轮契约基础、Sidecar 熔断和宿主任务状态边界已完成，持久化 runner 收口中 | 3–5 周 | 2 | 任务和插件都使用版本化运行边界；待完成通用 runner 持久化、集中式健康摘除和重试上限 |
+| 3 | 统一作业基础与独立契约包 | 契约、Sidecar 熔断、Mongo CAS 和跨仓事件接收已完成，执行器收口中 | 3–5 周 | 2 | 任务和插件都使用版本化运行边界；待完成宿主租约执行、集中式健康摘除和重试上限 |
 | 4 | TMDB 内容插件与英文画像 | 本轮最小读路径已完成，生产收口中 | 2–4 周 | 3 | 英文画像不依赖 Douban 回源；待完成身份映射、R2 和运营审批 |
 | 5 | 通用云盘插件与资源中心 | P1 | 2–3 周 | 2、3 | 新云盘来源无需改宿主路由 |
 | 6 | 播放、弹幕、图片、推荐插件 | P1 | 3–5 周 | 3、4 | 每项能力有标准 DTO 和策略门禁 |
@@ -150,6 +150,7 @@ flowchart LR
 
 - 从 `lib/pan/scheduler.ts` 提取通用 `PluginJobRunner`，统一 `run_id`、租约、心跳、取消、恢复、幂等键、游标、重试退避和配置快照；当前已交付无供应商依赖的生命周期、CAS 版本、租约、进度、取消和退避边界，并提供 Mongo `PluginJobStore` 与只读 Pan 调度兼容适配器。调度 API 的 `plugin_runs` 只读投影不具备写入能力，`revision=0` 和 `maxAttempts=1` 明确表示旧状态机尚未完成双写迁移；下一步接入实际作业执行和跨仓刷新。
 - 管理员只读入口 `GET /api/plugins/jobs` 已接入 `plugin_jobs` Mongo 存储，可按状态或 `run_id` 查看通用作业进度；它明确标记为不可写，旧 Pan scheduler 仍是唯一写入真源，避免两个状态机互相覆盖。
+- 受控 worker 写入口 `POST /api/plugins/jobs/report` 已实现独立 Bearer 鉴权、64 KiB 流式限额、注册插件/版本/画像校验、确定性事件 ID、单调 sequence、内容摘要去重和 Mongo revision CAS；Go 刷新器支持 `stdout|http|both`，默认关闭。它当前只负责状态可见性，不宣称已经具备宿主租约、远程取消或持久重放。
 - 当前网盘调度已先落地兼容的运行元数据层：新运行记录固定保存 `plugin_id`、插件版本、`profile_id`、配置版本、actor 和幂等键，事件与审计继承同一快照；历史记录读取使用明确的 legacy 默认值。下一步把这组字段和生命周期抽到真正的通用 runner，而不是复制网盘专用状态机。
 - 建立独立的 `kerkerker-plugin-contract` 包/仓库，发布 Manifest、能力接口、DTO、错误码、JSON Schema、兼容性测试包和 TypeScript SDK；当前仓内发布骨架和 CI 检查已完成。
 - 将 Douban、KKPAN 适配器拆成独立插件包；私有实现可以使用受控 package 或 Sidecar 镜像，宿主只通过注册表和版本化契约调用。
@@ -207,7 +208,7 @@ flowchart LR
 
 - 提取通用 `PluginJobRunner`，在现有元数据快照基础上统一保存 `run_id`、`plugin_id`、`profile_id`、契约版本、配置版本、actor、cursor、processed/created/failed/skipped、错误分类和耗时。
 - 统一租约、心跳、取消、恢复、重试退避、同任务互斥、幂等键、每日槽位补偿、TTL 和告警；租约丢失必须停止副作用。
-- Go 服务通过持久化任务 API 或受控 worker 回报进度，不再只写服务器 cron stdout；后台展示运行、事件、失败原因和下一次计划。
+- Go 服务已可通过受控 worker HTTPS 回报进度，并保留 stdout/both 运维模式；下一步增加持久事件日志、失败 spool、宿主租约/取消和后台时间线，不让状态只停留在最后快照。
 - 部署烟测同时验证应用健康、画像、内容 API、任务 runner、Mongo/Redis/R2 和至少一个真实插件调用。
 
 **验收**：进程崩溃、网络断开、租约切换、取消和重复触发都有测试；管理员能看到任务卡在哪里、为什么失败、是否可重试；日志不包含密钥和完整上游响应。

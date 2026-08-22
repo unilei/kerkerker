@@ -8,11 +8,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./schemas/plugin-job-event.v1.schema.json": "./schemas/plugin-job-event.v1.schema.json",
+    "./fixtures/plugin-job-event.v1.valid.json": "./fixtures/plugin-job-event.v1.valid.json",
+    "./fixtures/plugin-job-event.v1.invalid.json": "./fixtures/plugin-job-event.v1.invalid.json"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "schemas", "fixtures", "README.md", "LICENSE"],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build",
+    "test:pack": "node tests/package.test.mjs",
     "test": "tsx tests/contract.test.ts"
   },
   "engines": {

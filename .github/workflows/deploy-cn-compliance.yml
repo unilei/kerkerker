@@ -57,6 +57,9 @@ jobs:
       - name: Test public plugin contract
         run: npm run plugin-contract:test
 
+      - name: Test packed public plugin contract
+        run: npm run plugin-contract:pack-test
+
       - name: Run tests
         shell: bash
         run: |
@@ -140,6 +143,7 @@ jobs:
           DEPLOY_DOUBAN_API_URL: ${{ secrets.DEPLOY_DOUBAN_API_URL }}
           DEPLOY_ADMIN_SESSION_SECRET: ${{ secrets.DEPLOY_ADMIN_SESSION_SECRET }}
           DEPLOY_KKPAN_SYNC_CRON_SECRET: ${{ secrets.DEPLOY_KKPAN_SYNC_CRON_SECRET }}
+          DEPLOY_JOB_REPORT_TOKEN: ${{ secrets.DEPLOY_JOB_REPORT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -154,6 +158,10 @@ jobs:
           [[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]] || { echo "Invalid DEPLOY_PATH" >&2; exit 1; }
           [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && (( DEPLOY_PORT >= 1 && DEPLOY_PORT <= 65535 )) || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
           [[ "$DEPLOY_BIND" =~ ^[A-Za-z0-9_.:-]+$ ]] || { echo "Invalid DEPLOY_BIND" >&2; exit 1; }
+          [[ -z "$DEPLOY_JOB_REPORT_TOKEN" || "$DEPLOY_JOB_REPORT_TOKEN" =~ ^[A-Za-z0-9._~-]{32,512}$ ]] || {
+            echo "DEPLOY_JOB_REPORT_TOKEN must be empty or a 32-512 character URL-safe secret" >&2
+            exit 1
+          }
 
       - name: Prepare SSH
         id: ssh
@@ -200,6 +208,7 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.DEPLOY_ADMIN_PASSWORD }}
           ADMIN_SESSION_SECRET: ${{ secrets.DEPLOY_ADMIN_SESSION_SECRET }}
           KKPAN_SYNC_CRON_SECRET: ${{ secrets.DEPLOY_KKPAN_SYNC_CRON_SECRET }}
+          JOB_REPORT_TOKEN: ${{ secrets.DEPLOY_JOB_REPORT_TOKEN }}
           DOUBAN_API_URL: ${{ secrets.DEPLOY_DOUBAN_API_URL }}
           MONGODB_DB_NAME: ${{ secrets.DEPLOY_MONGODB_DB_NAME || 'kerkerker' }}
           KKPAN_API_BASE: ${{ secrets.DEPLOY_KKPAN_API_BASE || 'https://www.kkpans.com' }}
@@ -232,6 +241,7 @@ jobs:
               ("ADMIN_SESSION_SECRET", "ADMIN_SESSION_SECRET"),
               ("KKPAN_SYNC_CRON_SECRET", "KKPAN_SYNC_CRON_SECRET"),
               ("CRON_SECRET", "KKPAN_SYNC_CRON_SECRET"),
+              ("KERKERKER_JOB_REPORT_TOKEN", "JOB_REPORT_TOKEN"),
               ("MONGODB_DB_NAME", "MONGODB_DB_NAME"),
               ("NEXT_PUBLIC_DOUBAN_API_URL", "DOUBAN_API_URL"),
               ("KKPAN_API_BASE", "KKPAN_API_BASE"),

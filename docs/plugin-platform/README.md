@@ -105,7 +105,11 @@ flowchart LR
 
 宿主身份层位于 [`lib/content-identity-db.ts`](../../lib/content-identity-db.ts)，集合为 `content_identities`。它只接受精确的 `(provider_id, external_id)` 引用，以宿主 UUID 生成不可变 `content_id`；同一请求发现引用指向多个身份时会报冲突，禁止标题模糊合并。网盘资源和影片同步台账在迁移期双写 `content_id` 与旧 `douban_id`，旧 API 仍保持兼容。
 
-通用作业的管理员只读入口为 `GET /api/plugins/jobs`。它只查询已写入 `plugin_jobs` 的通用作业，支持 `status`、`run_id` 和 `limit`，响应明确标记 `writable=false`；旧 Pan 调度的 `runs`/`plugin_runs` 仍由 `/api/pan-resources/scheduler` 提供，不能通过此入口修改或重试。只有完成双写、CAS 对账和执行器迁移后，才可以增加通用作业的写操作。
+通用作业的管理员只读入口为 `GET /api/plugins/jobs`。它只查询已写入 `plugin_jobs` 的通用作业，支持 `status`、`run_id` 和 `limit`，响应明确标记 `writable=false`；旧 Pan 调度的 `runs`/`plugin_runs` 仍由 `/api/pan-resources/scheduler` 提供，不能通过此入口修改或重试。
+
+受控跨进程 worker 可通过 `POST /api/plugins/jobs/report` 写入 `kerkerker.plugin-job.v1` 事件。该入口使用独立、默认关闭的 `KERKERKER_JOB_REPORT_TOKEN`，并在新任务开始时校验插件已注册、版本精确匹配、画像存在且绑定该插件；已开始任务继续按持久化身份快照验收，避免宿主先升级时截断旧 worker 的终态。每个运行必须先发送 `sequence=0` 的 `started`，后续事件使用单调序号及确定性 `event_id=<run_id>:<sequence>`；宿主持久化最后序号和当前事件摘要，当前序号的精确重复返回相同快照，内容不同的当前序号、身份漂移、进度倒退和终态后的新事件均被拒绝。更旧序号在身份校验后作为无状态变化的 stale no-op 返回，宿主不保存其历史摘要。事件顺序只由 `sequence` 决定，来源时间与宿主接收时间分别留存，因此 worker 时钟回拨不会阻塞后续事件。Mongo 写入使用 `revision` CAS，并发的相同事件会重新读取胜出快照，不能借共享 `run_id` 覆盖其他任务。
+
+当前写入协议用于把 Go 刷新进度纳入统一可见性，不等于 worker 已由宿主租约驱动：宿主尚不能通过该入口取消 Go 进程或恢复其中断水位，HTTP 失败也没有跨进程持久 spool。生产只有在 Web 与 worker 配置同一独立密钥并显式设置 worker 上报模式后才启用；在引入第三方插件前，共享服务密钥必须升级为按插件作用域的凭据。
 
 身份迁移前先运行 `npm run content-identity:audit -- --json`。该命令只读取 `content_identities`、`pan_resources` 和 `pan_sync_targets`，不创建索引、不生成 UUID、不写入数据；退出码 2 表示发现必须人工处理的身份或来源冲突。缺失 `content_id` 且能由唯一 Douban 引用推断的记录只计入待回填，不会被审计命令自动修复；写入仍须使用 `scripts/content-identity-backfill.ts --apply --maintenance` 的停写流程。
 

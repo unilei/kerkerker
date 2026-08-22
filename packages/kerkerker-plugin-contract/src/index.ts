@@ -8,6 +8,150 @@
 
 export const PLUGIN_CONTRACT_VERSION = "1.0.0" as const;
 
+export const PLUGIN_JOB_EVENT_SCHEMA = "kerkerker.plugin-job.v1" as const;
+export const PLUGIN_JOB_EVENT_KINDS = ["started", "progress", "finished"] as const;
+export const PLUGIN_JOB_EVENT_STATUSES = ["running", "succeeded", "partial", "failed"] as const;
+
+export type PluginJobEventKind = (typeof PLUGIN_JOB_EVENT_KINDS)[number];
+export type PluginJobEventStatus = (typeof PLUGIN_JOB_EVENT_STATUSES)[number];
+
+export interface PluginJobEventMetadata {
+  readonly run_id: string;
+  readonly plugin_id: string;
+  readonly plugin_version: string;
+  readonly profile_id: string;
+  readonly config_version: string;
+  readonly actor: string;
+  readonly attempt: number;
+}
+
+export interface PluginJobEventProgress {
+  readonly total: number;
+  readonly processed: number;
+  readonly created: number;
+  readonly failed: number;
+  readonly skipped: number;
+}
+
+export interface PluginJobEvent {
+  readonly schema: typeof PLUGIN_JOB_EVENT_SCHEMA;
+  readonly event_id: string;
+  readonly sequence: number;
+  readonly kind: PluginJobEventKind;
+  readonly occurred_at: string;
+  readonly metadata: PluginJobEventMetadata;
+  readonly status: PluginJobEventStatus;
+  readonly progress: PluginJobEventProgress;
+  readonly error?: { readonly code?: string; readonly message: string };
+}
+
+const JOB_RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const JOB_PLUGIN_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$/;
+const RFC3339_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/;
+
+function isExactRecord(
+  value: unknown,
+  allowedKeys: readonly string[]
+): value is Record<string, unknown> {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).every((key) => allowedKeys.includes(key))
+  );
+}
+
+function isContractText(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value === value.trim() &&
+    Array.from(value).length <= maxLength &&
+    !/\p{Cc}/u.test(value);
+}
+
+function isSafeInteger(value: unknown, minimum = 0): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= minimum;
+}
+
+/** Strict RFC3339 validation aligned with Go's time.RFC3339Nano parser. */
+export function isRfc3339DateTime(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = RFC3339_DATE_TIME_PATTERN.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[8] === "Z" ? 0 : Number(match[10]);
+  const offsetMinute = match[8] === "Z" ? 0 : Number(match[11]);
+  if (
+    month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59 ||
+    offsetHour > 23 || offsetMinute > 59
+  ) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= daysInMonth[month - 1];
+}
+
+/** Runtime guard for semantic rules that JSON Schema cannot express portably. */
+export function isPluginJobEvent(value: unknown): value is PluginJobEvent {
+  if (!isExactRecord(value, [
+    "schema", "event_id", "sequence", "kind", "occurred_at",
+    "metadata", "status", "progress", "error",
+  ])) return false;
+  if (
+    value.schema !== PLUGIN_JOB_EVENT_SCHEMA ||
+    !PLUGIN_JOB_EVENT_KINDS.includes(value.kind as PluginJobEventKind) ||
+    !PLUGIN_JOB_EVENT_STATUSES.includes(value.status as PluginJobEventStatus) ||
+    !isSafeInteger(value.sequence) ||
+    !isRfc3339DateTime(value.occurred_at)
+  ) return false;
+
+  const metadata = value.metadata;
+  if (!isExactRecord(metadata, [
+    "run_id", "plugin_id", "plugin_version", "profile_id",
+    "config_version", "actor", "attempt",
+  ])) return false;
+  if (
+    !isContractText(metadata.run_id, 200) || !JOB_RUN_ID_PATTERN.test(metadata.run_id) ||
+    !isContractText(metadata.plugin_id, 100) || !JOB_PLUGIN_ID_PATTERN.test(metadata.plugin_id) ||
+    !isContractText(metadata.plugin_version, 100) ||
+    !isContractText(metadata.profile_id, 100) ||
+    !isContractText(metadata.config_version, 100) ||
+    !isContractText(metadata.actor, 200) ||
+    !isSafeInteger(metadata.attempt, 1) ||
+    value.event_id !== `${metadata.run_id}:${value.sequence}` ||
+    !isContractText(value.event_id, 240)
+  ) return false;
+
+  const progress = value.progress;
+  if (!isExactRecord(progress, ["total", "processed", "created", "failed", "skipped"])) return false;
+  if (
+    !isSafeInteger(progress.total) || !isSafeInteger(progress.processed) ||
+    !isSafeInteger(progress.created) || !isSafeInteger(progress.failed) ||
+    !isSafeInteger(progress.skipped) || progress.processed > progress.total
+  ) return false;
+  const categorized = progress.created + progress.failed + progress.skipped;
+  if (!Number.isSafeInteger(categorized) || categorized !== progress.processed) return false;
+
+  if (value.error !== undefined) {
+    if (!isExactRecord(value.error, ["code", "message"])) return false;
+    if (value.error.code !== undefined && !isContractText(value.error.code, 100)) return false;
+    if (!isContractText(value.error.message, 2_000)) return false;
+  }
+  if (value.kind === "started") {
+    return value.sequence === 0 && value.status === "running" && value.error === undefined;
+  }
+  if (value.sequence === 0) return false;
+  if (value.kind === "progress") return value.status === "running" && value.error === undefined;
+  if (value.status === "running") return false;
+  if (value.status === "failed") return value.error !== undefined;
+  if (value.status === "succeeded") return value.error === undefined;
+  return true;
+}
+
 export type PluginContractVersion =
   | `${number}.${number}`
   | `${number}.${number}.${number}`;

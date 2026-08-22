@@ -11,7 +11,8 @@
     "docker:prod": "bash scripts/prod.sh",
     "content-identity:audit": "tsx scripts/content-identity-audit.ts",
     "plugin-contract:check": "tsc -p packages/kerkerker-plugin-contract/tsconfig.json --noEmit",
-    "plugin-contract:test": "tsx packages/kerkerker-plugin-contract/tests/contract.test.ts"
+    "plugin-contract:test": "tsx packages/kerkerker-plugin-contract/tests/contract.test.ts",
+    "plugin-contract:pack-test": "npm --prefix packages/kerkerker-plugin-contract run test:pack"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",
@@ -33,6 +34,8 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "eslint": "^9",
     "eslint-config-next": "^16.3.1",
     "tailwindcss": "^4",

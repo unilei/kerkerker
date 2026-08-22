@@ -178,6 +178,7 @@ cd ~/kerkerker
 | `MONGODB_DB_NAME`             | 数据库名称     | `kerkerker`                          |
 | `KKPAN_SYNC_CRON_SECRET`      | kkpans 定时同步 Bearer 密钥 | -                         |
 | `CRON_SECRET`                 | 兼容部署平台的定时任务 Bearer 密钥（优先使用 `KKPAN_SYNC_CRON_SECRET`） | - |
+| `KERKERKER_JOB_REPORT_TOKEN`  | 受控 worker 写入通用插件任务进度的独立 Bearer 密钥；为空时接口关闭 | - |
 | `NEXT_PUBLIC_DANMU_API_URL`   | 弹幕 API 地址  | `https://danmuapi1-eight.vercel.app` |
 | `NEXT_PUBLIC_DANMU_API_TOKEN` | 弹幕 API Token | -                                    |
 
@@ -198,6 +199,16 @@ MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/kerkerker
 `Authorization: Bearer <secret>` 调用
 `POST /api/pan-resources/sync-kkpan`，无需依赖 7 天有效的管理员 cookie。
 该 Bearer 接口保留给外部运维调用；常规部署不需要再配置服务器 crontab。
+
+配置 `KERKERKER_JOB_REPORT_TOKEN` 后，受控 Go/Sidecar worker 可以向
+`POST /api/plugins/jobs/report` 上报版本化任务事件。该密钥与管理员会话及
+`KKPAN_SYNC_CRON_SECRET` 分离；接口只接受已注册且绑定到指定画像的精确插件版本，
+并用 `run_id + sequence` 去重和 CAS 更新。管理员通过只读
+`GET /api/plugins/jobs` 查看结果。未配置密钥时写入接口始终返回 `401`。
+GitHub Actions 部署使用 Web 仓库 Secret `DEPLOY_JOB_REPORT_TOKEN` 写入该配置；
+启用 Go 上报前应先部署 Web，再在 Go 仓库配置同值 Secret、HTTPS 接收地址和
+`DEPLOY_JOB_REPORT_MODE=http|both`。密钥必须是 32–512 位 URL-safe 字符，建议使用
+`openssl rand -hex 32` 生成；不要把管理员密码或 cron 密钥复用为该值。
 
 ### 影片网盘同步中心
 

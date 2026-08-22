@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kerkerker:schema:plugin-job-event:v1",
+  "title": "Kerkerker plugin job event v1",
+  "$defs": {
+    "text100": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^(?!.*[\\u0000-\\u001F\\u007F-\\u009F])(?:\\S|\\S[\\s\\S]*\\S)$"
+    },
+    "text200": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(?!.*[\\u0000-\\u001F\\u007F-\\u009F])(?:\\S|\\S[\\s\\S]*\\S)$"
+    },
+    "text2000": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "^(?!.*[\\u0000-\\u001F\\u007F-\\u009F])(?:\\S|\\S[\\s\\S]*\\S)$"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "event_id", "sequence", "kind", "occurred_at", "metadata", "status", "progress"],
+  "properties": {
+    "schema": { "const": "kerkerker.plugin-job.v1" },
+    "event_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*:[0-9]+$"
+    },
+    "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "kind": { "enum": ["started", "progress", "finished"] },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 100,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "plugin_id", "plugin_version", "profile_id", "config_version", "actor", "attempt"],
+      "properties": {
+        "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$" },
+        "plugin_id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$", "maxLength": 100 },
+        "plugin_version": { "$ref": "#/$defs/text100" },
+        "profile_id": { "$ref": "#/$defs/text100" },
+        "config_version": { "$ref": "#/$defs/text100" },
+        "actor": { "$ref": "#/$defs/text200" },
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "status": { "enum": ["running", "succeeded", "partial", "failed"] },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "processed", "created", "failed", "skipped"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "processed": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "created": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "failed": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "skipped": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message"],
+      "properties": {
+        "code": { "$ref": "#/$defs/text100" },
+        "message": { "$ref": "#/$defs/text2000" }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": { "const": "started" },
+        "sequence": { "const": 0 },
+        "status": { "const": "running" }
+      },
+      "not": { "properties": { "error": true }, "required": ["error"] }
+    },
+    {
+      "properties": {
+        "kind": { "const": "progress" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "status": { "const": "running" }
+      },
+      "not": { "properties": { "error": true }, "required": ["error"] }
+    },
+    {
+      "properties": {
+        "kind": { "const": "finished" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["succeeded", "partial", "failed"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "failed" } } },
+          "then": { "properties": { "error": true }, "required": ["error"] }
+        },
+        {
+          "if": { "properties": { "status": { "const": "succeeded" } } },
+          "then": {
+            "not": { "properties": { "error": true }, "required": ["error"] }
+          }
+        }
+      ]
+    }
+  ]
+}
