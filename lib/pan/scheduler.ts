@@ -77,6 +77,10 @@ const RUN_LEASE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SCHEDULER_TICK_MS = 30 * 1000;
 const STALE_RUN_MS = 7 * 60 * 1000;
 const RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+// Projection retries are deliberately slower than the scheduler tick. A
+// transient Mongo outage must leave the legacy executor usable without
+// turning every tick into a tight retry loop.
+const PAN_CATALOG_PROJECTION_RETRY_DELAY_MS = 30 * 1000;
 // 定时槽位认领与运行记录写入不是同一个 Mongo 操作。认领超过这个窗口仍
 // 没有对应 run 时，下一轮调度会把它视为进程崩溃留下的孤儿槽位并释放。
 const SCHEDULE_CLAIM_GRACE_MS = RUN_LEASE_TTL_MS;
@@ -772,8 +776,18 @@ async function createRunDoc(input: {
   const coll = await runCollection();
   await coll.insertOne(doc);
   if (catalogProjection) {
-    const projected = await projectPanCatalogRun(runId);
-    if (projected) Object.assign(doc, projected);
+    try {
+      const projected = await projectPanCatalogRun(runId);
+      if (projected) Object.assign(doc, projected);
+    } catch (error) {
+      // Shadow projection is an observability/migration side write. The
+      // legacy scheduler remains authoritative until cutover, so a projection
+      // outage must not reject the legacy enqueue or execute path.
+      console.warn(
+        "KKPAN 目录通用任务影子投影暂时失败，保留旧任务继续执行:",
+        redactPluginJobEventText(truncateError(error, 500))
+      );
+    }
   }
   return toRun(doc);
 }
@@ -903,14 +917,22 @@ export async function reconcilePanCatalogJobProjections(
 ): Promise<number> {
   if (getPanCatalogJobMode() !== "shadow") return 0;
   const bounded = Math.min(Math.max(Math.floor(limit || 1), 1), 500);
+  const retryBefore = new Date(
+    Date.now() - PAN_CATALOG_PROJECTION_RETRY_DELAY_MS
+  ).toISOString();
   const runs = await (await runCollection())
     .find({
       task: "catalog",
       generic_job_mode: "shadow",
       $or: [
         { generic_job_projection_status: { $exists: false } },
-        { generic_job_projection_status: "pending" },
-        { generic_job_projection_status: "failed" },
+        {
+          generic_job_projection_status: { $in: ["pending", "failed"] },
+          $or: [
+            { generic_job_projection_attempted_at: { $exists: false } },
+            { generic_job_projection_attempted_at: { $lte: retryBefore } },
+          ],
+        },
         { generic_job_run_id: { $exists: false } },
       ],
     })
