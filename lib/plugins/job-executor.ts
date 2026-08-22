@@ -293,7 +293,6 @@ export class PluginHostExecutor {
         }
       });
     }, this.heartbeatIntervalMs);
-    heartbeat.unref?.();
 
     const cancellationPoll = setInterval(() => {
       if (leaseLost || shutdownRequested || cancellationRequested) return;
@@ -308,7 +307,6 @@ export class PluginHostExecutor {
         })
         .catch(markLeaseLost);
     }, this.cancellationPollIntervalMs);
-    cancellationPoll.unref?.();
 
     const context: PluginJobExecutionContext = {
       get run() {
