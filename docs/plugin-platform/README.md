@@ -107,6 +107,8 @@ flowchart LR
 
 通用作业的管理员只读入口为 `GET /api/plugins/jobs`。它只查询已写入 `plugin_jobs` 的通用作业，支持 `status`、`run_id` 和 `limit`，响应明确标记 `writable=false`；单次运行的持久事件时间线通过 `GET /api/plugins/jobs/events?run_id=<run_id>` 查询，支持 `after_sequence` 和 `limit` 正向分页，即使当前已到末尾也返回可继续轮询的序号。两个入口都使用显式管理员 DTO，不返回幂等键、执行 cursor、自由 metadata、事件内容摘要、内部 outbox 或 TTL 字段。旧 Pan 调度的 `runs`/`plugin_runs` 仍由 `/api/pan-resources/scheduler` 提供，不能通过这些入口修改或重试。
 
+通用宿主执行器壳层位于 [`lib/plugins/job-executor.ts`](../../lib/plugins/job-executor.ts)。它只接受构建期静态注册的 `job_id`，使用 `PluginJobRunner` 的原子领取、租约心跳、取消检查和 fencing 写入；心跳、进度、游标与终态更新在单次执行内串行化，租约失效会中止回调且不使用旧 token 写终态。执行器默认不启动，也不会领取未注册任务；旧 Pan 调度器在完成显式双写、投影对账和单一执行源切换前仍是网盘任务的唯一写入与执行真源。
+
 受控跨进程 worker 可通过 `POST /api/plugins/jobs/report` 写入 `kerkerker.plugin-job.v1` 事件。该入口使用独立、默认关闭的 `KERKERKER_JOB_REPORT_TOKEN`，并在新任务开始时校验插件已注册、版本精确匹配、画像存在且绑定该插件；已开始任务继续按持久化身份快照验收，避免宿主先升级时截断旧 worker 的终态。每个运行必须先发送 `sequence=0` 的 `started`，后续事件使用单调序号及确定性 `event_id=<run_id>:<sequence>`；宿主持久化最后序号和当前事件摘要，当前序号的精确重复返回相同快照，内容不同的当前序号、身份漂移、进度倒退和终态后的新事件均被拒绝。更旧序号在身份校验后作为无状态变化的 stale no-op 返回，不借迟到事件补写未曾确认的历史。事件顺序只由 `sequence` 决定，来源时间与宿主接收时间分别留存，因此 worker 时钟回拨不会阻塞后续事件。Mongo 写入使用 `revision` CAS，并发的相同事件会重新读取胜出快照，不能借共享 `run_id` 覆盖其他任务。
 
 每条成功应用的事件还会以追加式收据写入 `plugin_job_events`，唯一键为 `event_id` 和 `(run_id, sequence)`，默认与运行快照一样保留 30 天。为兼容不支持事务的单机 Mongo，同一次 CAS 先把脱敏事件作为 `pending_event_receipt` outbox 与最新快照一起保存，再追加收据并清除 outbox；追加失败返回 `500`，outbox 会阻止下一序号越过缺口，精确重放或下一事件会先排空它。终态 worker 不再重试时，管理员时间线也会合并仍在快照中的 pending 收据，因此保留期内事件不会静默消失。自由错误文本在落库前会清理嵌入 URL/DSN 的 userinfo 和敏感参数、Bearer/Basic、JWT 及常见密钥赋值；错误码不符合标准标识符时只保存 `UNCLASSIFIED_ERROR`。时间线不主动回填本能力上线前的旧运行。

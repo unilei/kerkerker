@@ -173,10 +173,13 @@ export interface PluginJobStartOptions {
 export interface PluginJobClaimOptions {
   readonly owner: string;
   readonly leaseTtlMs?: number;
+  /** Optional static host allowlist; external callers cannot select handlers. */
+  readonly jobIds?: readonly string[];
 }
 
 export interface PluginJobStoreClaimInput {
   readonly runId?: string;
+  readonly jobIds?: readonly string[];
   readonly owner: string;
   readonly token: string;
   /** Deterministic clock for in-memory stores; durable stores use their server clock. */
@@ -768,9 +771,14 @@ export class PluginJobRunner implements PluginJobRunnerPort {
     );
     const nowDate = this.now();
     const now = nowDate.toISOString();
+    const jobIds = options.jobIds === undefined
+      ? undefined
+      : [...new Set(options.jobIds.map((jobId) => normalizePluginJobId(jobId)))];
+    if (jobIds && jobIds.length === 0) return null;
     await this.store.recoverExpiredLeases(now);
     return this.store.claimNext({
       ...(runId ? { runId } : {}),
+      ...(jobIds ? { jobIds } : {}),
       owner,
       token: randomUUID(),
       now,
@@ -877,7 +885,11 @@ export class InMemoryPluginJobStore implements PluginJobStore {
   async claimNext(input: PluginJobStoreClaimInput): Promise<PluginJobRun | null> {
     const now = new Date(input.now);
     const candidates = [...this.runs.values()]
-      .filter((run) => (!input.runId || run.run_id === input.runId) && isClaimEligible(run, now))
+      .filter((run) =>
+        (!input.runId || run.run_id === input.runId) &&
+        (!input.jobIds || input.jobIds.includes(run.job_id)) &&
+        isClaimEligible(run, now)
+      )
       .sort((left, right) =>
         left.created_at.localeCompare(right.created_at) ||
         left.run_id.localeCompare(right.run_id)

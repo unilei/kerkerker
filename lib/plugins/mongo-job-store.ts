@@ -193,6 +193,7 @@ export class MongoPluginJobStore implements PluginJobStore {
     const nextFence = { $add: [{ $ifNull: ["$lease_fence", 0] }, 1] };
     const filter: Document = {
       ...(input.runId ? { run_id: input.runId } : {}),
+      ...(input.jobIds ? { job_id: { $in: [...input.jobIds] } } : {}),
       control_mode: "host",
       cancel_requested: false,
       $expr: {

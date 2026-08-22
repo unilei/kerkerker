@@ -493,6 +493,8 @@ Sidecar v1 至少暴露以下受保护端点：
 
 宿主 worker 必须用单次、带排序条件的原子 `claimNext` 领取一个任务。查询只覆盖 `control_mode=host`、未请求取消、执行次数未耗尽，并且处于 `queued`、已到期的 `retry_waiting` 或租约已过期的 `running`；未来重试、终态和 `external-report` 记录不得被领取。到期比较和领取时间必须使用数据库的权威时钟，不能信任 worker 本地时间。持久化时间只接受规范字符串或 BSON `Date`；缺失、`null`、不可解析字符串以及 ObjectId、Long、Decimal、Timestamp 等其它 BSON 类型必须 fail-closed，不能领取、续租、回收或执行 fenced 写入。领取必须在同一数据库写入中递增 `attempt`、`revision` 和单调 `lease_fence`，生成新的随机 `lease.token`，并保存 owner、取得时间、心跳和过期时间。即使新旧进程使用相同 owner，每次领取也必须得到不同 token 和更大的 fence。
 
+宿主执行器还必须使用构建期静态的允许任务注册表过滤 `job_id`，不能先领取未知任务再根据运行时 metadata 选择代码。处理器注册必须绑定 `plugin_id`，可选地绑定精确插件版本；未注册或身份不匹配的任务不得执行。心跳、进度、游标和终态更新共享同一个 `revision` CAS，因此单次执行内必须串行化这些写入；取消和租约失效必须先停止新的副作用，旧 token 不得再写入终态。
+
 心跳、进度、游标和完成写入必须同时匹配 `run_id`、`running` 状态、revision、owner、token、fence、顶层 `lease_fence`，并确认租约在数据库比较时仍未过期。只检查 owner 或先读后无条件写均不合规。接管发生后，旧 token 的所有写入必须失败；完成状态只能在条件更新确认成功后对外宣告。租约 token 属于内部能力凭证，不得出现在管理员 DTO、日志、事件、审计载荷或客户端响应中。
 
 历史记录读取可以补充明确的 legacy 默认值，但缺少控制模式或 fencing 字段的旧宿主任务在完成显式回填前不得被 `claimNext` 执行。取消请求必须由宿主使用有限 CAS 重试提交；与领取、心跳或进度更新竞争时不能把一次 revision 冲突暴露成丢失取消。已请求取消的运行在租约过期后原子收敛为 `cancelled`；执行次数耗尽的过期运行收敛为 `failed`，不得永久停留在 `running`。多实例测试至少覆盖同一任务只被领取一次、不同任务不重复、未来重试不领取、取消竞争、worker 时钟偏移、错误时间类型 fail-closed、过期后同 owner 接管使旧 token 失效，以及外部上报任务永不被领取。

@@ -57,7 +57,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 已支持健康检查、服务间认证、协议版本协商、进程内熔断，画像仅在上游错误时按声明顺序回退；跨实例健康状态、重试上限和集中式健康摘除仍未完成。
 4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；跨来源 `content_id` 精确映射、TMDB 图片 R2 持久化、英文 UI smoke 和运营审批仍未完成。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
-6. Go 刷新器已能通过可选 stdout/HTTPS `kerkerker.plugin-job.v1` 协议把有序进度和追加式事件时间线写入宿主，但尚未由宿主租约驱动，也没有 worker 侧持久 spool、远程取消和断点恢复；Web 网盘任务仍由旧调度器写入。后台已有只读 `plugin_runs` 兼容视图，完整双写和执行器迁移仍属于阶段 3/7。
+6. Go 刷新器已能通过可选 stdout/HTTPS `kerkerker.plugin-job.v1` 协议把有序进度和追加式事件时间线写入宿主，但尚未由宿主租约驱动，也没有 worker 侧持久 spool、远程取消和断点恢复；Web 网盘任务仍由旧调度器写入。通用宿主执行器壳层已经交付，按静态 `job_id` 注册表领取、心跳、取消和 fencing 写入，但默认不接管旧 Pan 任务；后台已有只读 `plugin_runs` 兼容视图，完整双写、事件接入和执行器迁移仍属于阶段 3/7。
 
 ## 3. 总体顺序与依赖
 
@@ -84,7 +84,7 @@ flowchart LR
 | 0.5 | Top250 上游端点修复 | 已完成/P0 | 已完成 | 0 | Web、Go 服务和文档使用同一可用路径 |
 | 1 | 合规审批、审计、下架 | 本轮基础已完成，生产收口中 | 1–2 周 | 0 | 策略数据层/API/UI/运行时门禁已交付；待运营填写材料并切换 enforce |
 | 2 | 内容身份和旧字段迁移 | P0 | 2–3 周 | 1 | 资源/台账新写入已用 `content_id`；已提供只读审计，待完成生产全量对账、备份回滚演练和零旧写指标 |
-| 3 | 统一作业基础与独立契约包 | 契约、Sidecar 熔断、Mongo CAS 和跨仓事件接收已完成，执行器收口中 | 3–5 周 | 2 | 任务和插件都使用版本化运行边界；待完成宿主租约执行、集中式健康摘除和重试上限 |
+| 3 | 统一作业基础与独立契约包 | 契约、Sidecar 熔断、Mongo CAS、跨仓事件接收和宿主执行器壳层已完成，迁移收口中 | 3–5 周 | 2 | 任务和插件都使用版本化运行边界；待完成 Pan 执行器迁移、集中式健康摘除和重试上限 |
 | 4 | TMDB 内容插件与英文画像 | 本轮最小读路径已完成，生产收口中 | 2–4 周 | 3 | 英文画像不依赖 Douban 回源；待完成身份映射、R2 和运营审批 |
 | 5 | 通用云盘插件与资源中心 | P1 | 2–3 周 | 2、3 | 新云盘来源无需改宿主路由 |
 | 6 | 播放、弹幕、图片、推荐插件 | P1 | 3–5 周 | 3、4 | 每项能力有标准 DTO 和策略门禁 |
@@ -153,7 +153,8 @@ flowchart LR
 - 受控 worker 写入口 `POST /api/plugins/jobs/report` 已实现独立 Bearer 鉴权、64 KiB 流式限额、注册插件/版本/画像校验、确定性事件 ID、单调 sequence、内容摘要去重和 Mongo revision CAS；Go 刷新器支持 `stdout|http|both`，默认关闭。它当前只负责状态可见性，不宣称已经具备宿主租约、远程取消或持久重放。
 - 已接受的 worker 事件追加写入 `plugin_job_events`，按 `event_id` 和 `(run_id, sequence)` 双重唯一并与运行快照同周期保留；管理员可通过 `GET /api/plugins/jobs/events` 使用连续游标正向分页查看。非事务 Mongo 在状态 CAS 内保存脱敏 outbox，追加失败时阻断下一序号并由重放/后续请求排空；终态 pending 收据仍进入时间线 DTO，不把迟到旧事件误当作已确认历史。
 - 通用任务身份固定为 `run_id + job_id + control_mode`：宿主任务由原子 `claimNext` 领取，外部上报任务永不进入宿主执行队列；每次领取生成随机 token 并递增 fencing 序号，所有运行中写入同时校验 token、fence、revision 和租约有效期，阻断重启或接管后的旧 worker 写入。事件 v1 在迁移窗口内兼容缺失 `job_id` 的旧 worker，并映射到只读 legacy 身份。
-- 启用首个通用宿主 worker 前必须审计缺少 `job_id/control_mode/lease_fence` 的历史 `plugin_jobs`：`metadata.source=job-report` 可确定性回填为外部上报；其它记录必须由迁移映射指定真实 `job_id` 或显式终止，不能由运行时猜测并自动领取。当前生产写入口只有外部事件接收器，宿主 executor 尚未启用。
+- 宿主执行器壳层已落地在 `lib/plugins/job-executor.ts`：它只从构建期静态注册表取得 `job_id -> handler`，领取时按允许的 job ID 过滤，串行化心跳、进度、游标和终态 CAS 写入，并在取消或租约失效时通过 `AbortSignal` 停止回调；未知任务不会被执行。该执行器当前只作为通用基础能力提供，未与旧 Pan 调度器并行启用。
+- 启用首个通用宿主 worker 前必须审计缺少 `job_id/control_mode/lease_fence` 的历史 `plugin_jobs`：`metadata.source=job-report` 可确定性回填为外部上报；其它记录必须由迁移映射指定真实 `job_id` 或显式终止，不能由运行时猜测并自动领取。当前生产写入口只有外部事件接收器，宿主执行器尚未接管旧 Pan 任务。
 - 当前网盘调度已先落地兼容的运行元数据层：新运行记录固定保存 `plugin_id`、插件版本、`profile_id`、配置版本、actor 和幂等键，事件与审计继承同一快照；历史记录读取使用明确的 legacy 默认值。下一步把这组字段和生命周期抽到真正的通用 runner，而不是复制网盘专用状态机。
 - 建立独立的 `kerkerker-plugin-contract` 包/仓库，发布 Manifest、能力接口、DTO、错误码、JSON Schema、兼容性测试包和 TypeScript SDK；当前仓内发布骨架和 CI 检查已完成。
 - 将 Douban、KKPAN 适配器拆成独立插件包；私有实现可以使用受控 package 或 Sidecar 镜像，宿主只通过注册表和版本化契约调用。

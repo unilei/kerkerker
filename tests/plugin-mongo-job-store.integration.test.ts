@@ -351,6 +351,25 @@ test("real Mongo atomically claims and fences plugin jobs", { skip: !mongoUri },
     assert.equal(new Set(claimedIds).size, 16);
 
     await collection.deleteMany({});
+    await store.create(run(300, { job_id: "content.catalog.sync" }));
+    await store.create(run(301, { job_id: "resource.cloud-drive.sync" }));
+    const allowlisted = await store.claimNext({
+      owner: "worker-allowlist",
+      token: "allowlist-token",
+      jobIds: ["content.catalog.sync"],
+      now: "2026-08-21T00:00:00.000Z",
+      leaseTtlMs: 60_000,
+    });
+    assert.equal(allowlisted?.run_id, "real-run-300");
+    assert.equal(await store.claimNext({
+      owner: "worker-allowlist-2",
+      token: "allowlist-token-2",
+      jobIds: ["content.catalog.sync"],
+      now: "2026-08-21T00:00:00.000Z",
+      leaseTtlMs: 60_000,
+    }), null);
+
+    await collection.deleteMany({});
     const expiredLease = {
       owner: "worker-old",
       token: "expired-token",
