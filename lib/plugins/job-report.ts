@@ -31,6 +31,13 @@ export type JobReportStatus = PluginJobEventStatus;
 export type JobReportMetadata = PluginJobEventMetadata;
 export type JobReportEvent = PluginJobEvent;
 
+export class PluginJobReportValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PluginJobReportValidationError";
+  }
+}
+
 const MAX_ID_LENGTH = 200;
 const MAX_PLUGIN_ID_LENGTH = 100;
 const MAX_ERROR_LENGTH = 2_000;
@@ -232,16 +239,16 @@ export function defaultJobReportIngestDependencies(): JobReportIngestDependencie
 
 function assertRegisteredSource(event: JobReportEvent): void {
   const plugin = pluginRegistry.get(event.metadata.plugin_id);
-  if (!plugin) throw new RangeError("任务事件的插件未注册");
+  if (!plugin) throw new PluginJobReportValidationError("任务事件的插件未注册");
   if (plugin.manifest.version !== event.metadata.plugin_version) {
-    throw new RangeError("任务事件的插件版本与注册版本不一致");
+    throw new PluginJobReportValidationError("任务事件的插件版本与注册版本不一致");
   }
   const profile = pluginProfileRegistry.get(event.metadata.profile_id);
-  if (!profile) throw new RangeError("任务事件的插件画像未注册");
+  if (!profile) throw new PluginJobReportValidationError("任务事件的插件画像未注册");
   const isBound = Object.values(profile.capabilities).some((ids) =>
     ids?.includes(event.metadata.plugin_id)
   );
-  if (!isBound) throw new RangeError("任务事件的插件未绑定到指定画像");
+  if (!isBound) throw new PluginJobReportValidationError("任务事件的插件未绑定到指定画像");
 }
 
 export async function ingestPluginJobReport(

@@ -331,8 +331,22 @@ test("job report route authenticates, persists valid events, and maps errors saf
         },
       }
     ))).status, 400);
-    assert.equal((await route.POST(request("not-json"))).status, 400);
+    const malformed = await route.POST(request('{"uri":"mongodb://user:secret@example.invalid'));
+    assert.equal(malformed.status, 400);
+    assert.equal((await malformed.json()).message, "任务事件 JSON 无效");
     assert.equal((await route.POST(request("x".repeat(64 * 1024 + 1)))).status, 413);
+
+    const invalidSource = await route.POST(request({
+      ...base,
+      event_id: "refresh-version-2:0",
+      metadata: {
+        ...base.metadata,
+        run_id: "refresh-version-2",
+        plugin_version: "2.0.0",
+      },
+    }));
+    assert.equal(invalidSource.status, 400);
+    assert.equal((await invalidSource.json()).message, "任务事件来源无效");
 
     const accepted = await route.POST(request(base));
     assert.equal(accepted.status, 200);
@@ -351,7 +365,7 @@ test("job report route authenticates, persists valid events, and maps errors saf
 
     const brokenRoute = createPluginJobReportRouteHandlers({
       get: async () => null,
-      create: async () => { throw new Error("mongodb://user:secret@example.invalid/jobs"); },
+      create: async () => { throw new RangeError("mongodb://user:secret@example.invalid/jobs"); },
       update: async () => null,
     });
     const failed = await brokenRoute.POST(request(base));
