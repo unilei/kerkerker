@@ -208,4 +208,8 @@ test("identity link reports a cross-source ownership conflict", async () => {
     })
   );
   assert.equal(response.status, 409);
+  assert.deepEqual(
+    (await response.json()).data.conflicting_content_ids,
+    [CONTENT_ID, "550e8400-e29b-41d4-a716-446655440001"]
+  );
 });

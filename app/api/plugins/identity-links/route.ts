@@ -120,12 +120,20 @@ function parseBody(body: unknown): {
   };
 }
 
-function errorResponse(error: unknown): { status: number; message: string } {
+function errorResponse(error: unknown): {
+  status: number;
+  message: string;
+  data?: Record<string, unknown>;
+} {
   if (error instanceof IdentityLinkPolicyError) {
     return { status: 403, message: error.message };
   }
   if (error instanceof ContentIdentityConflictError) {
-    return { status: 409, message: error.message };
+    return {
+      status: 409,
+      message: error.message,
+      data: { conflicting_content_ids: [...error.contentIds] },
+    };
   }
   if (error instanceof RangeError) {
     return { status: 400, message: error.message };
@@ -167,7 +175,7 @@ export function createIdentityLinkRouteHandlers(
         const failure = errorResponse(error);
         if (failure.status === 500) console.error("读取内容身份映射失败:", error);
         return NextResponse.json(
-          { code: failure.status, message: failure.message, data: null },
+          { code: failure.status, message: failure.message, data: failure.data || null },
           { status: failure.status }
         );
       }
@@ -253,7 +261,7 @@ export function createIdentityLinkRouteHandlers(
         const failure = errorResponse(error);
         if (failure.status === 500) console.error("写入内容身份映射失败:", error);
         return NextResponse.json(
-          { code: failure.status, message: failure.message, data: null },
+          { code: failure.status, message: failure.message, data: failure.data || null },
           { status: failure.status }
         );
       }

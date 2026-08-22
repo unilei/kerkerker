@@ -47,7 +47,7 @@ function enqueueInput(overrides: Record<string, unknown> = {}) {
     profile: "cn-default",
     configVersion: "config-1",
     actor: { type: "admin" as const, id: "admin-session" },
-    idempotencyKey: `lifecycle:${Math.random()}`,
+    idempotencyKey: "lifecycle:default",
     retryPolicy: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
     metadata: { source: "test" },
     ...overrides,

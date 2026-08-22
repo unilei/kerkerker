@@ -1,9 +1,10 @@
-import {
-  getAllPanResources,
-} from "@/lib/pan-resources-db";
+import type { Filter } from "mongodb";
 import { isValidContentId } from "@/lib/content-identity-db";
+import { COLLECTIONS } from "@/lib/constants/db";
+import { getDatabase } from "@/lib/db";
 import { filterPublicPanResources } from "@/lib/pan/resource-audit";
-import type { PanResource } from "@/types/pan-resource";
+import type { PanResource, PanBrand } from "@/types/pan-resource";
+import type { PanResourceDoc } from "@/lib/pan-resources-db";
 
 /**
  * Provider-neutral read model for the resource center.
@@ -53,7 +54,12 @@ export interface ResourceCenterQuery {
 export interface ResourceCenterReader {
   list(options: {
     readonly contentId?: string;
+    readonly providerId?: string;
+    readonly providerResourceId?: string;
+    readonly platformId?: string;
     readonly keyword?: string;
+    readonly enabled?: boolean;
+    readonly includeLegacy?: boolean;
     readonly limit: number;
   }): Promise<readonly PanResource[]>;
   filterPublic?(
@@ -194,15 +200,71 @@ export function toResourceCenterItem(resource: PanResource): ResourceCenterItem 
   };
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function toPanResource(doc: PanResourceDoc): PanResource {
+  if (!doc._id) throw new Error("资源记录缺少数据库 ID");
+  return {
+    id: doc._id.toString(),
+    douban_id: doc.douban_id,
+    ...(doc.content_id ? { content_id: doc.content_id } : {}),
+    ...(doc.internal_id !== undefined ? { internal_id: doc.internal_id } : {}),
+    ...(doc.movie_title ? { movie_title: doc.movie_title } : {}),
+    brand: doc.brand,
+    title: doc.title,
+    ...(doc.size ? { size: doc.size } : {}),
+    ...(doc.format ? { format: doc.format } : {}),
+    url: doc.url,
+    ...(doc.code ? { code: doc.code } : {}),
+    ...(doc.note ? { note: doc.note } : {}),
+    ...(doc.source ? { source: doc.source } : {}),
+    ...(doc.provider_id ? { provider_id: doc.provider_id } : {}),
+    ...(doc.provider_resource_id
+      ? { provider_resource_id: doc.provider_resource_id }
+      : {}),
+    ...(doc.kkpan_id !== undefined ? { kkpan_id: doc.kkpan_id } : {}),
+    enabled: doc.enabled,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+}
+
 const defaultReader: ResourceCenterReader = {
   async list(options) {
-    return getAllPanResources({
-      contentId: options.contentId,
-      keyword: options.keyword,
-      // Filtering by provider/platform happens below because the compatibility
-      // repository predates the generic resource-center query shape.
-      limit: options.limit,
-    });
+    const filter: Filter<PanResourceDoc> = {};
+    if (options.contentId) filter.content_id = options.contentId;
+    if (options.providerId) filter.provider_id = options.providerId;
+    if (options.providerResourceId) {
+      filter.provider_resource_id = options.providerResourceId;
+    }
+    if (options.platformId) filter.brand = options.platformId as PanBrand;
+    if (options.enabled !== undefined) filter.enabled = options.enabled;
+    if (options.includeLegacy === false) {
+      // Both halves are required. `$type` avoids matching malformed partial
+      // migrations where only one provider field was copied.
+      if (!options.providerId) filter.provider_id = { $type: "string" };
+      if (!options.providerResourceId) {
+        filter.provider_resource_id = { $type: "string" };
+      }
+    }
+    if (options.keyword) {
+      const pattern = escapeRegex(options.keyword);
+      filter.$or = [
+        { title: { $regex: pattern, $options: "i" } },
+        { movie_title: { $regex: pattern, $options: "i" } },
+        { douban_id: { $regex: pattern, $options: "i" } },
+      ];
+    }
+    const db = await getDatabase();
+    const docs = await db
+      .collection<PanResourceDoc>(COLLECTIONS.PAN_RESOURCES)
+      .find(filter)
+      .sort({ updated_at: -1, _id: -1 })
+      .limit(options.limit)
+      .toArray();
+    return docs.map(toPanResource);
   },
   async filterPublic(resources, contentId) {
     return filterPublicPanResources(resources, undefined, { contentId });
@@ -222,10 +284,18 @@ export async function listResourceCenterResources(
   const rows = await reader.list({
     ...(query.contentId ? { contentId: query.contentId } : {}),
     ...(query.keyword ? { keyword: query.keyword } : {}),
-    // Fetch the bounded API window before applying provider/platform filters.
-    // The limit is deliberately capped to avoid an unbounded compatibility
-    // scan; the generic store will provide indexed filtering in the next step.
-    limit: Math.min(Math.max(query.limit, RESOURCE_CENTER_DEFAULT_LIMIT), RESOURCE_CENTER_MAX_LIMIT),
+    ...(query.providerId ? { providerId: query.providerId } : {}),
+    ...(query.providerResourceId
+      ? { providerResourceId: query.providerResourceId }
+      : {}),
+    ...(query.platformId ? { platformId: query.platformId } : {}),
+    ...(query.enabled !== undefined ? { enabled: query.enabled } : {}),
+    ...(query.includeLegacy !== undefined
+      ? { includeLegacy: query.includeLegacy }
+      : { includeLegacy: false }),
+    // The default reader pushes filters into Mongo, so the requested limit is
+    // sufficient and does not require an oversized compatibility scan.
+    limit: query.limit,
   });
   const policyRows = query.publicOnly
     ? await (reader.filterPublic || defaultReader.filterPublic!)(

@@ -131,6 +131,35 @@ test("public resource center service delegates policy filtering before projectio
   assert.equal(result.length, 1);
 });
 
+test("resource center pushes provider and platform filters to its reader", async () => {
+  let seen: Record<string, unknown> | undefined;
+  await listResourceCenterResources(
+    {
+      contentId,
+      providerId: "kerkerker.example-cloud-drive",
+      providerResourceId: "resource-2",
+      platformId: "baidu",
+      enabled: true,
+      limit: 10,
+    },
+    {
+      list: async (options) => {
+        seen = options as unknown as Record<string, unknown>;
+        return [];
+      },
+    }
+  );
+  assert.deepEqual(seen, {
+    contentId,
+    providerId: "kerkerker.example-cloud-drive",
+    providerResourceId: "resource-2",
+    platformId: "baidu",
+    enabled: true,
+    includeLegacy: false,
+    limit: 10,
+  });
+});
+
 test("public resource center reads require content_id and force enabled identities", async () => {
   let seenQuery: unknown;
   const handlers = createResourceCenterRouteHandlers({
