@@ -90,9 +90,27 @@ async function parseBody(request: NextRequest): Promise<{
       throw new InvalidInstallationRequestError("插件安装请求体过大");
     }
   }
+  if (!request.body) {
+    throw new InvalidInstallationRequestError("请求体必须是 JSON 对象");
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel();
+      throw new InvalidInstallationRequestError("插件安装请求体过大");
+    }
+    chunks.push(value);
+  }
+
   let body: unknown;
   try {
-    body = await request.json();
+    const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+    body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     throw new InvalidInstallationRequestError("请求体必须是合法 JSON 对象");
   }
