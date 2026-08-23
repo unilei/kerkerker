@@ -117,7 +117,7 @@ KKPAN 目录同步的统一任务身份已经固定为 `resource.cloud-drive.cat
 
 每条成功应用的事件还会以追加式收据写入 `plugin_job_events`，唯一键为 `event_id` 和 `(run_id, sequence)`，默认与运行快照一样保留 30 天。为兼容不支持事务的单机 Mongo，同一次 CAS 先把脱敏事件作为 `pending_event_receipt` outbox 与最新快照一起保存，再追加收据并清除 outbox；追加失败返回 `500`，outbox 会阻止下一序号越过缺口，精确重放或下一事件会先排空它。终态 worker 不再重试时，管理员时间线也会合并仍在快照中的 pending 收据，因此保留期内事件不会静默消失。自由错误文本在落库前会清理嵌入 URL/DSN 的 userinfo 和敏感参数、Bearer/Basic、JWT 及常见密钥赋值；错误码不符合标准标识符时只保存 `UNCLASSIFIED_ERROR`。时间线不主动回填本能力上线前的旧运行。
 
-当前写入协议用于把 Go 刷新进度纳入统一可见性，不等于 worker 已由宿主租约驱动：宿主尚不能通过该入口取消 Go 进程或恢复其中断水位，HTTP 失败也没有跨进程持久 spool。生产只有在 Web 与 worker 配置同一独立密钥并显式设置 worker 上报模式后才启用；在引入第三方插件前，共享服务密钥必须升级为按插件作用域的凭据。
+当前写入协议用于把 Go 刷新进度纳入统一可见性，不等于 worker 已由宿主租约驱动：宿主尚不能通过该入口取消 Go 进程或恢复其中断水位。worker 可选用本地 0600 JSONL 持久 spool，HTTP 失败事件会在重启后按序重放。生产只有在 Web 与 worker 配置同一独立密钥并显式设置 worker 上报模式后才启用；在引入第三方插件前，共享服务密钥必须升级为按插件作用域的凭据。
 
 身份迁移前先运行 `npm run content-identity:audit -- --json`。该命令只读取 `content_identities`、`pan_resources` 和 `pan_sync_targets`，不创建索引、不生成 UUID、不写入数据；退出码 2 表示发现必须人工处理的身份或来源冲突。缺失 `content_id` 且能由唯一 Douban 引用推断的记录只计入待回填，不会被审计命令自动修复；写入仍须使用 `scripts/content-identity-backfill.ts --apply --maintenance` 的停写流程。
 
