@@ -202,6 +202,7 @@ function assertNegotiatedProtocol(
 
 async function checkRemoteHealth(
   runtime: RemoteRuntime,
+  entry: string,
   context: PluginContext,
   fetcher: typeof fetch
 ): Promise<void> {
@@ -209,7 +210,7 @@ async function checkRemoteHealth(
   const timeoutMs = runtime.health.timeoutMs || DEFAULT_HEALTH_TIMEOUT_MS;
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = AbortSignal.any([context.signal, timeoutSignal]);
-  const endpoint = healthUrl(runtime.entry, runtime.health.path);
+  const endpoint = healthUrl(entry, runtime.health.path);
   await assertSafeOutboundUrl(endpoint);
   const headers = {
     accept: "application/json, text/plain",
@@ -243,7 +244,12 @@ async function checkRemoteHealth(
 }
 
 function isDeclaredNetworkHost(entry: string, networkHosts: readonly string[]): boolean {
-  const entryUrl = new URL(entry);
+  let entryUrl: URL;
+  try {
+    entryUrl = new URL(entry);
+  } catch {
+    return false;
+  }
   const entryHost = entryUrl.hostname.toLowerCase();
   return networkHosts.some((declared) => {
     const value = declared.trim();
@@ -255,6 +261,13 @@ function isDeclaredNetworkHost(entry: string, networkHosts: readonly string[]): 
       return value.toLowerCase() === entryHost;
     }
   });
+}
+
+function configuredRemoteEntry(runtime: RemoteRuntime, context: PluginContext): string {
+  const configured = context.config.serviceUrl;
+  return typeof configured === "string" && configured.trim()
+    ? configured.trim()
+    : runtime.entry;
 }
 
 function publicContext(context: PluginContext) {
@@ -310,14 +323,15 @@ export async function invokeRemoteSidecar<T>(options: InvokeSidecarOptions): Pro
   if (options.manifest.runtime.mode !== "remote") {
     throw new PluginError("INVALID_RUNTIME", "只有 remote 插件可以调用 Sidecar");
   }
-  if (!isDeclaredNetworkHost(options.manifest.runtime.entry, options.manifest.permissions.networkHosts)) {
+  const runtime = options.manifest.runtime as RemoteRuntime;
+  const entry = configuredRemoteEntry(runtime, options.context);
+  if (!isDeclaredNetworkHost(entry, options.manifest.permissions.networkHosts)) {
     throw new PluginError(
       "CONFIGURATION_ERROR",
       "远程插件入口不在 manifest.permissions.networkHosts 白名单中",
       { path: "permissions.networkHosts" }
     );
   }
-  const runtime = options.manifest.runtime as RemoteRuntime;
   if (
     runtime.auth &&
     !options.manifest.permissions.secrets.includes(runtime.auth.secret)
@@ -328,7 +342,7 @@ export async function invokeRemoteSidecar<T>(options: InvokeSidecarOptions): Pro
       { path: "runtime.auth.secret" }
     );
   }
-  const endpoint = sidecarUrl(runtime.entry);
+  const endpoint = sidecarUrl(entry);
   await assertSafeOutboundUrl(endpoint);
   const fetcher = options.fetcher || fetch;
   const maxBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
@@ -340,7 +354,7 @@ export async function invokeRemoteSidecar<T>(options: InvokeSidecarOptions): Pro
   circuitBreaker.beforeRequest(circuitKey);
 
   try {
-    await checkRemoteHealth(runtime, options.context, fetcher);
+    await checkRemoteHealth(runtime, entry, options.context, fetcher);
 
     let response: SidecarFetchResponse;
     const headers = {
@@ -378,7 +392,18 @@ export async function invokeRemoteSidecar<T>(options: InvokeSidecarOptions): Pro
         ? (payload as { error?: { code?: unknown; message?: unknown } }).error
         : undefined;
       const message = typeof envelope?.message === "string" ? envelope.message : `远程插件 HTTP ${response.status}`;
-      throw new PluginError("UPSTREAM_ERROR", message, { path: typeof envelope?.code === "string" ? envelope.code : undefined });
+      const code = typeof envelope?.code === "string" ? envelope.code : "UPSTREAM_ERROR";
+      const propagated = new Set([
+        "CAPABILITY_UNAVAILABLE",
+        "UNSUPPORTED_CAPABILITY",
+        "CONFIGURATION_ERROR",
+        "EXECUTION_CANCELLED",
+      ]);
+      throw new PluginError(
+        propagated.has(code) ? code as PluginError["code"] : "UPSTREAM_ERROR",
+        message,
+        { path: code }
+      );
     }
     circuitBreaker.recordSuccess(circuitKey);
     return payload as T;

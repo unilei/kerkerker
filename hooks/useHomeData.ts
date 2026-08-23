@@ -35,8 +35,8 @@ function actionableCatalogMessage(
   }
   if (code === 'CONFIGURATION_ERROR') {
     return locale === 'en-US'
-      ? 'The English content source is not configured. Ask an administrator to check the TMDB API key and endpoint.'
-      : '英文内容源配置不完整，请让管理员检查 TMDB API 密钥和接口地址。';
+      ? 'The English content source is not configured. Ask an administrator to check the TMDB plugin service address and service authentication.'
+      : '英文内容源配置不完整，请让管理员检查 TMDB 插件服务地址和服务认证配置。';
   }
   const message = typeof payload?.message === 'string' ? payload.message.trim() : '';
   return message || `内容目录请求失败（HTTP ${status}）`;

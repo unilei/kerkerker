@@ -17,6 +17,20 @@ export const TMDB_CONTENT_PLUGIN_ID = "kerkerker.tmdb-content";
 const DEFAULT_TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const DEFAULT_TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
 const TMDB_SITE_BASE_URL = "https://www.themoviedb.org";
+const DEFAULT_TMDB_PLUGIN_URL = "https://iamyourfather.link0.me/plugin";
+
+function tmdbPluginUrl(): string {
+  const configured = process.env.TMDB_PLUGIN_URL?.trim();
+  return configured || DEFAULT_TMDB_PLUGIN_URL;
+}
+
+function tmdbPluginHost(): string {
+  try {
+    return new URL(tmdbPluginUrl()).hostname;
+  } catch {
+    return "iamyourfather.link0.me";
+  }
+}
 
 type TmdbKind = "movie" | "tv";
 
@@ -154,7 +168,7 @@ function safeBaseUrl(value: string, fallback: string, path: string): string {
 
 function tmdbBaseUrl(context: PluginContext): string {
   return safeBaseUrl(
-    contextString(context, "baseUrl") || process.env.TMDB_BASE_URL || "",
+    contextString(context, "baseUrl") || "",
     DEFAULT_TMDB_BASE_URL,
     "config.baseUrl"
   );
@@ -162,7 +176,7 @@ function tmdbBaseUrl(context: PluginContext): string {
 
 function tmdbImageBase(context: PluginContext, size: string): string {
   const configured = safeBaseUrl(
-    contextString(context, "imageBase") || process.env.TMDB_IMAGE_BASE || "",
+    contextString(context, "imageBase") || "",
     DEFAULT_TMDB_IMAGE_BASE,
     "config.imageBase"
   );
@@ -178,7 +192,9 @@ function imageUrl(context: PluginContext, filePath: string | null | undefined, s
 }
 
 function apiKey(context: PluginContext): string {
-  const configured = context.secrets.get("apiKey") || process.env.TMDB_API_KEY;
+  // Kept only for isolated adapter fixtures. Production invokes the remote
+  // runtime below, so the host never injects a TMDB provider key.
+  const configured = context.secrets.get("apiKey");
   if (!nonEmpty(configured)) {
     throw new PluginError("CONFIGURATION_ERROR", "TMDB API 密钥未配置", {
       path: "secrets.apiKey",
@@ -469,7 +485,13 @@ export const tmdbContentManifest: PluginManifest = {
   name: "Kerkerker TMDB Content",
   version: "1.0.0",
   contractVersion: "1.0.0",
-  runtime: { mode: "built-in", entry: "@/lib/plugins/adapters/tmdb-content" },
+  runtime: {
+    mode: "remote",
+    entry: tmdbPluginUrl(),
+    protocolVersions: ["1.0.0"],
+    health: { path: "/plugin/v1/health", timeoutMs: 5_000 },
+    auth: { type: "bearer", secret: "serviceToken" },
+  },
   capabilities: [
     { id: "content.catalog", version: "1.0.0" },
     { id: "content.calendar", version: "1.0.0" },
@@ -481,9 +503,8 @@ export const tmdbContentManifest: PluginManifest = {
   config: {
     version: "1.0",
     fields: [
-      { key: "baseUrl", type: "url", required: true },
-      { key: "imageBase", type: "url", required: true },
-      { key: "apiKey", type: "secret", required: true, secret: true },
+      { key: "serviceUrl", type: "url", required: true },
+      { key: "serviceToken", type: "secret", required: true, secret: true },
     ],
   },
   compliance: {
@@ -494,8 +515,8 @@ export const tmdbContentManifest: PluginManifest = {
     dataClassification: "licensed",
   },
   permissions: {
-    networkHosts: ["api.themoviedb.org", "image.tmdb.org"],
-    secrets: ["apiKey"],
+    networkHosts: [tmdbPluginHost()],
+    secrets: ["serviceToken"],
     storage: "none",
   },
 };

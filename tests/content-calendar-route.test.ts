@@ -124,23 +124,48 @@ test("content calendar route does not label non-Douban external IDs as douban_id
 test("en-default calendar uses TMDB without falling back to Douban", async () => {
   const previousFetch = globalThis.fetch;
   const previousProfile = process.env.KERKERKER_PLUGIN_PROFILE;
-  const previousKey = process.env.TMDB_API_KEY;
+  const previousToken = process.env.TMDB_PLUGIN_SERVICE_TOKEN;
   process.env.KERKERKER_PLUGIN_PROFILE = "en-default";
-  process.env.TMDB_API_KEY = "test-read-token";
+  process.env.TMDB_PLUGIN_SERVICE_TOKEN = "test-plugin-token";
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
-    assert.equal(url.pathname, "/3/discover/tv");
-    assert.equal(url.searchParams.get("air_date.gte"), "2026-08-20");
-    assert.equal(url.searchParams.get("air_date.lte"), "2026-08-26");
-    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer test-read-token");
+    const headers = { "x-kerkerker-contract-version": "1.0.0" };
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer test-plugin-token");
+    if (url.pathname === "/plugin/v1/health") {
+      return new Response(JSON.stringify({ status: "ready" }), { status: 200, headers });
+    }
+    assert.equal(url.pathname, "/plugin/v1/invoke");
+    const body = JSON.parse(String(init?.body)) as { capability: string; operation: string; request: { from: string; to: string } };
+    assert.equal(body.capability, "content.calendar");
+    assert.equal(body.operation, "calendar");
+    assert.equal(body.request.from, "2026-08-20");
+    assert.equal(body.request.to, "2026-08-26");
     return new Response(
       JSON.stringify({
-        page: 1,
-        total_pages: 1,
-        total_results: 1,
-        results: [{ id: 1399, name: "Game of Thrones", first_air_date: "2026-08-21" }],
+        items: [{
+          type: "series",
+          externalRefs: [{ providerId: "kerkerker.tmdb-content", externalId: "1399" }],
+          titles: [{ locale: "en-US", value: "Game of Thrones" }],
+          preview: { posterUrl: "https://image.example/got.jpg", rating: "8.7" },
+          releaseDate: "2026-08-21",
+          calendar: {
+            eventId: "1399:2026-08-21:1:1",
+            airDate: "2026-08-21",
+            seasonNumber: 1,
+            episodeNumber: 1,
+            posterUrl: "https://image.example/got.jpg",
+            rating: 8.7,
+          },
+          provenance: {
+            source: { providerId: "kerkerker.tmdb-content" },
+            pluginVersion: "1.0.0",
+            fetchedAt: "2026-08-23T00:00:00Z",
+          },
+        }],
+        total: 1,
+        hasMore: false,
       }),
-      { status: 200, headers: { "content-type": "application/json" } }
+      { status: 200, headers: { ...headers, "content-type": "application/json" } }
     );
   };
   try {
@@ -155,7 +180,7 @@ test("en-default calendar uses TMDB without falling back to Douban", async () =>
     globalThis.fetch = previousFetch;
     if (previousProfile === undefined) delete process.env.KERKERKER_PLUGIN_PROFILE;
     else process.env.KERKERKER_PLUGIN_PROFILE = previousProfile;
-    if (previousKey === undefined) delete process.env.TMDB_API_KEY;
-    else process.env.TMDB_API_KEY = previousKey;
+    if (previousToken === undefined) delete process.env.TMDB_PLUGIN_SERVICE_TOKEN;
+    else process.env.TMDB_PLUGIN_SERVICE_TOKEN = previousToken;
   }
 });

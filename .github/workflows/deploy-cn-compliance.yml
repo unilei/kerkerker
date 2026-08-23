@@ -144,6 +144,7 @@ jobs:
           DEPLOY_ADMIN_SESSION_SECRET: ${{ secrets.DEPLOY_ADMIN_SESSION_SECRET }}
           DEPLOY_KKPAN_SYNC_CRON_SECRET: ${{ secrets.DEPLOY_KKPAN_SYNC_CRON_SECRET }}
           DEPLOY_JOB_REPORT_TOKEN: ${{ secrets.DEPLOY_JOB_REPORT_TOKEN }}
+          DEPLOY_TMDB_PLUGIN_SERVICE_TOKEN: ${{ secrets.DEPLOY_TMDB_PLUGIN_SERVICE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -160,6 +161,10 @@ jobs:
           [[ "$DEPLOY_BIND" =~ ^[A-Za-z0-9_.:-]+$ ]] || { echo "Invalid DEPLOY_BIND" >&2; exit 1; }
           [[ -z "$DEPLOY_JOB_REPORT_TOKEN" || "$DEPLOY_JOB_REPORT_TOKEN" =~ ^[A-Za-z0-9._~-]{32,512}$ ]] || {
             echo "DEPLOY_JOB_REPORT_TOKEN must be empty or a 32-512 character URL-safe secret" >&2
+            exit 1
+          }
+          [[ "$DEPLOY_TMDB_PLUGIN_SERVICE_TOKEN" =~ ^[A-Za-z0-9._~-]{32,512}$ ]] || {
+            echo "DEPLOY_TMDB_PLUGIN_SERVICE_TOKEN must be a 32-512 character URL-safe secret" >&2
             exit 1
           }
 
@@ -219,9 +224,8 @@ jobs:
           CATALOG_JOB_MODE: ${{ vars.PAN_SYNC_CATALOG_JOB_MODE || 'off' }}
           PLUGIN_PROFILE: ${{ vars.KERKERKER_PLUGIN_PROFILE || 'cn-default' }}
           PLUGIN_REGION: ${{ vars.KERKERKER_PLUGIN_REGION || 'CN' }}
-          TMDB_API_KEY: ${{ secrets.DEPLOY_TMDB_API_KEY }}
-          TMDB_BASE_URL: ${{ secrets.DEPLOY_TMDB_BASE_URL || 'https://api.themoviedb.org/3' }}
-          TMDB_IMAGE_BASE: ${{ secrets.DEPLOY_TMDB_IMAGE_BASE || 'https://image.tmdb.org/t/p/original' }}
+          TMDB_PLUGIN_URL: ${{ secrets.DEPLOY_TMDB_PLUGIN_URL || 'https://iamyourfather.link0.me/plugin' }}
+          TMDB_PLUGIN_SERVICE_TOKEN: ${{ secrets.DEPLOY_TMDB_PLUGIN_SERVICE_TOKEN }}
           R2_PUBLIC_URL: ${{ secrets.DEPLOY_CLOUDFLARE_R2_PUBLIC_URL }}
           R2_UPLOAD_API_URL: ${{ secrets.DEPLOY_CLOUDFLARE_R2_UPLOAD_API_URL }}
           R2_UPLOAD_API_TOKEN: ${{ secrets.DEPLOY_CLOUDFLARE_R2_UPLOAD_API_TOKEN }}
@@ -257,9 +261,8 @@ jobs:
               ("PAN_SYNC_CATALOG_JOB_MODE", "CATALOG_JOB_MODE"),
               ("KERKERKER_PLUGIN_PROFILE", "PLUGIN_PROFILE"),
               ("KERKERKER_PLUGIN_REGION", "PLUGIN_REGION"),
-              ("TMDB_API_KEY", "TMDB_API_KEY"),
-              ("TMDB_BASE_URL", "TMDB_BASE_URL"),
-              ("TMDB_IMAGE_BASE", "TMDB_IMAGE_BASE"),
+              ("TMDB_PLUGIN_URL", "TMDB_PLUGIN_URL"),
+              ("TMDB_PLUGIN_SERVICE_TOKEN", "TMDB_PLUGIN_SERVICE_TOKEN"),
               ("CLOUDFLARE_R2_PUBLIC_URL", "R2_PUBLIC_URL"),
               ("CLOUDFLARE_R2_UPLOAD_API_URL", "R2_UPLOAD_API_URL"),
               ("CLOUDFLARE_R2_UPLOAD_API_TOKEN", "R2_UPLOAD_API_TOKEN"),

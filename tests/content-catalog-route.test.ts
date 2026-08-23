@@ -73,9 +73,9 @@ test("content catalog route keeps top250 as a catalog capability", async () => {
 
 test("content catalog route exposes an actionable status when the locale plugin is unavailable", async () => {
   const previousEnforce = process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE;
-  const previousTmdbKey = process.env.TMDB_API_KEY;
+  const previousServiceToken = process.env.TMDB_PLUGIN_SERVICE_TOKEN;
   process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE = "true";
-  process.env.TMDB_API_KEY = "test-tmdb-key";
+  process.env.TMDB_PLUGIN_SERVICE_TOKEN = "test-plugin-token";
   try {
     const response = await getContentCatalog(
       new NextRequest("http://localhost/api/content/catalog?view=featured", {
@@ -90,14 +90,14 @@ test("content catalog route exposes an actionable status when the locale plugin 
   } finally {
     if (previousEnforce === undefined) delete process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE;
     else process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE = previousEnforce;
-    if (previousTmdbKey === undefined) delete process.env.TMDB_API_KEY;
-    else process.env.TMDB_API_KEY = previousTmdbKey;
+    if (previousServiceToken === undefined) delete process.env.TMDB_PLUGIN_SERVICE_TOKEN;
+    else process.env.TMDB_PLUGIN_SERVICE_TOKEN = previousServiceToken;
   }
 });
 
 test("catalog route exposes actionable status for an unavailable locale plugin", async () => {
-  const previousKey = process.env.TMDB_API_KEY;
-  process.env.TMDB_API_KEY = "";
+  const previousToken = process.env.TMDB_PLUGIN_SERVICE_TOKEN;
+  process.env.TMDB_PLUGIN_SERVICE_TOKEN = "";
   try {
     const response = await getContentCatalog(
       new NextRequest("http://localhost/api/content/catalog?view=featured", {
@@ -111,7 +111,7 @@ test("catalog route exposes actionable status for an unavailable locale plugin",
     assert.equal(body.profile_id, "en-default");
     assert.match(body.message, /配置不完整/);
   } finally {
-    if (previousKey === undefined) delete process.env.TMDB_API_KEY;
-    else process.env.TMDB_API_KEY = previousKey;
+    if (previousToken === undefined) delete process.env.TMDB_PLUGIN_SERVICE_TOKEN;
+    else process.env.TMDB_PLUGIN_SERVICE_TOKEN = previousToken;
   }
 });

@@ -34,10 +34,11 @@ const RUNTIME_SETTINGS_LOADERS: Readonly<Record<string, RuntimeSettingsLoader>> 
     }),
     [TMDB_CONTENT_PLUGIN_ID]: () => ({
       config: {
-        baseUrl: process.env.TMDB_BASE_URL || "https://api.themoviedb.org/3",
-        imageBase: process.env.TMDB_IMAGE_BASE || "https://image.tmdb.org/t/p/w500",
+        serviceUrl:
+          process.env.TMDB_PLUGIN_URL ||
+          "https://iamyourfather.link0.me/plugin",
       },
-      secrets: { apiKey: process.env.TMDB_API_KEY },
+      secrets: { serviceToken: process.env.TMDB_PLUGIN_SERVICE_TOKEN },
     }),
   });
 
@@ -67,7 +68,7 @@ function assertRuntimeSettings(
       throw new PluginError(
         "CONFIGURATION_ERROR",
         `插件 ${manifest.id} 缺少必需配置：${field.key}`,
-        { path: `config.${field.key}` }
+        { path: `${field.secret ? "secrets" : "config"}.${field.key}` }
       );
     }
     if (value === undefined || value === null || value === "") continue;

@@ -177,12 +177,16 @@ KKPAN 目录同步的统一任务身份已经固定为 `resource.cloud-drive.cat
 
 `kerkerker-douban-service` 当前确实读取服务器侧的 `TMDB_API_KEY`，并用于 Go 服务内部的 Hero、日历和图片同步。该环境变量属于 Go 服务进程，Web Docker 容器无法直接读取；把它误写成 Web 的 `DEPLOY_TMDB_API_KEY` 会产生第二份密钥配置，也不是插件边界。
 
-当前 Web 内置 `kerkerker.tmdb-content` 直接访问 `api.themoviedb.org` 的实现属于迁移态兼容层，不能作为最终架构。正式实现必须二选一：
+当前 `kerkerker-douban-service` 已承载 `kerkerker.tmdb-content` 的 v1 远程运行时：
+`GET /plugin/v1/manifest`、受保护的 `GET /plugin/v1/health` 和
+`POST /plugin/v1/invoke`。Web 的插件注册使用现有 Sidecar 协议，只注入
+`TMDB_PLUGIN_URL` 与独立的 `TMDB_PLUGIN_SERVICE_TOKEN`；TMDB Key 只存在 Go 服务，
+不进入 Web 环境变量、浏览器、插件 DTO 或日志。
 
-1. **独立 TMDB 插件/Sidecar（推荐）**：TMDB Key 只注入 TMDB 插件或 Sidecar；Web 宿主只保存插件版本、启用状态和经过校验的 Sidecar 地址/服务凭据。
-2. **服务承载插件**：由 `kerkerker-douban-service` 暴露版本化、非通用代理的 TMDB 能力接口，Web 的 TMDB 适配器只调用该接口；TMDB Key 仍只存在 Go 服务，Web 只配置服务地址和独立的服务间认证。
-
-迁移完成前，不得通过读取另一个容器的 `.env`、共享宿主文件或把 TMDB Key 返回给 Web 来“自动发现”配置。部署验收必须同时检查：插件 Manifest 配置字段、配置版本、密钥注入位置、安装/启用状态和轮换回滚记录。
+后续可以把同一 Manifest 和契约迁移到独立 `kerkerker-plugin-tmdb` Sidecar，
+宿主调用边界不变。迁移过程中不得通过读取另一个容器的 `.env`、共享宿主文件或
+把 TMDB Key 返回给 Web 来“自动发现”配置。部署验收必须同时检查：插件 Manifest
+配置字段、配置版本、密钥注入位置、服务间认证、安装/启用状态和轮换回滚记录。
 
 ## 公共契约
 
