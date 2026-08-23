@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { Menu, X, Home, Film, Tv, Clock, Github, Calendar, Trophy, HardDrive } from "lucide-react";
+import { Menu, X, Home, Film, Tv, Clock, Calendar, Trophy, HardDrive } from "lucide-react";
 import { useLocale } from "@/components/providers/locale-provider";
 import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
 import { SEARCH_SITE_URL } from "@/lib/seo";
@@ -42,12 +42,6 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
       icon: HardDrive,
       external: true,
       highlight: true,
-    },
-    {
-      href: "https://github.com/unilei/kerkerker",
-      label: "GitHub",
-      icon: Github,
-      external: true,
     },
   ];
 
