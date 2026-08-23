@@ -4,21 +4,54 @@ import type { DoubanMovie } from '@/types/douban';
 import type { CategoryData, HeroData, HeroMovie } from '@/types/home';
 import type { CatalogResponse } from '@/types/content-catalog';
 import { useLocale } from '@/components/providers/locale-provider';
+import type { SupportedLocale } from '@/lib/locale';
 
 // SWR 缓存键
 const SWR_KEY_HERO = '/api/content/catalog?view=featured';
 const SWR_KEY_CATEGORIES = '/api/content/catalog?view=new-releases';
+
+interface CatalogErrorPayload {
+  readonly data?: CatalogResponse;
+  readonly message?: unknown;
+  readonly error_code?: unknown;
+  readonly profile_id?: unknown;
+}
+
+function localeFromKey(url: string): SupportedLocale {
+  const locale = url.slice(url.lastIndexOf('#') + 1);
+  return locale === 'en-US' ? 'en-US' : 'zh-CN';
+}
+
+function actionableCatalogMessage(
+  payload: CatalogErrorPayload | null,
+  status: number,
+  locale: SupportedLocale,
+): string {
+  const code = typeof payload?.error_code === 'string' ? payload.error_code : '';
+  if (code === 'CAPABILITY_UNAVAILABLE') {
+    return locale === 'en-US'
+      ? 'The English content source is not enabled. Ask an administrator to install and enable the TMDB content plugin in Settings > Plugins.'
+      : '英文内容源暂不可用，请让管理员在“设置 > 插件中心”安装并启用 TMDB 内容插件。';
+  }
+  if (code === 'CONFIGURATION_ERROR') {
+    return locale === 'en-US'
+      ? 'The English content source is not configured. Ask an administrator to check the TMDB API key and endpoint.'
+      : '英文内容源配置不完整，请让管理员检查 TMDB API 密钥和接口地址。';
+  }
+  const message = typeof payload?.message === 'string' ? payload.message.trim() : '';
+  return message || `内容目录请求失败（HTTP ${status}）`;
+}
 
 async function fetchCatalog(url: string): Promise<CatalogResponse> {
   const response = await fetch(url, {
     cache: 'no-store',
     signal: AbortSignal.timeout(15_000),
   });
+  const payload = (await response.json().catch(() => null)) as CatalogErrorPayload | null;
   if (!response.ok) {
-    throw new Error(`内容目录请求失败（HTTP ${response.status}）`);
+    throw new Error(actionableCatalogMessage(payload, response.status, localeFromKey(url)));
   }
-  const payload = (await response.json()) as { data?: CatalogResponse };
-  if (!payload.data) throw new Error('内容目录响应缺少数据');
+  if (!payload?.data) throw new Error('内容目录响应缺少数据');
   return payload.data;
 }
 

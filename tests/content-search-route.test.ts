@@ -61,8 +61,10 @@ test("content search validates query and profile before upstream access", async 
     const unknown = await searchContent(
       new NextRequest("http://localhost/api/content/search?q=test")
     );
-    assert.equal(unknown.status, 502);
+    assert.equal(unknown.status, 503);
     const body = await unknown.json();
+    assert.equal(body.error_code, "CONFIGURATION_ERROR");
+    assert.equal(body.profile_id, "unknown");
     assert.equal(body.data, null);
   } finally {
     if (previousProfile === undefined) delete process.env.KERKERKER_PLUGIN_PROFILE;

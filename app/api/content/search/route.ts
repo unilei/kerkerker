@@ -6,6 +6,7 @@ import {
   type ContentCandidate,
   type PluginPage,
 } from "@/lib/plugins";
+import { pluginFailureResponse } from "@/lib/plugins/http-error";
 
 function preferredTitle(candidate: ContentCandidate, locale: string): string {
   const exact = candidate.titles.find((item) => item.locale.toLowerCase() === locale.toLowerCase());
@@ -22,8 +23,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ code: 400, message: "q 最长 200 个字符", data: null }, { status: 400 });
   }
 
+  let profileId = "unknown";
   try {
-    const profileId = getRequestPluginProfileId(request);
+    profileId = getRequestPluginProfileId(request);
     const { context } = createProfileInvocation({
       profileId,
       capability: "content.search",
@@ -60,9 +62,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error("内容搜索失败:", error);
-    return NextResponse.json(
-      { code: 502, message: error instanceof Error ? error.message : "内容搜索失败", data: null },
-      { status: 502 }
-    );
+    return pluginFailureResponse(error, profileId, "内容搜索失败");
   }
 }

@@ -6,6 +6,7 @@ import {
   type ContentCalendarCandidate,
   type PluginPage,
 } from "@/lib/plugins";
+import { pluginFailureResponse } from "@/lib/plugins/http-error";
 import type { CalendarResponse } from "@/types/content-calendar";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -100,8 +101,9 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  let profileId = "unknown";
   try {
-    const profileId = getRequestPluginProfileId(request);
+    profileId = getRequestPluginProfileId(request);
     const { context } = createProfileInvocation({
       profileId,
       capability: "content.calendar",
@@ -142,9 +144,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ code: 200, message: "获取成功", data });
   } catch (error) {
     console.error("内容日历失败:", error);
-    return NextResponse.json(
-      { code: 502, message: error instanceof Error ? error.message : "内容日历失败", data: null },
-      { status: 502 }
-    );
+    return pluginFailureResponse(error, profileId, "内容日历失败");
   }
 }

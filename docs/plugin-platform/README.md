@@ -107,6 +107,18 @@ flowchart LR
 
 生产部署通过 `KERKERKER_PLUGIN_PROFILE` 选择活动画像（默认 `cn-default`），通过 `KERKERKER_PLUGIN_REGION` 选择策略区域（默认 `CN`）。前台语言切换将 allowlist 内的 `kk_locale` Cookie 映射为 `zh-CN -> cn-default` 或 `en-US -> en-default`，不会接受任意 profile 查询参数；没有 Cookie 时仍使用部署默认画像。合规门禁由 `KERKERKER_COMPLIANCE_MODE` 控制：迁移期使用 `audit` 记录缺失审批但保持兼容调用，完成策略登记后切换为 `enforce`；下架记录在两种模式下都立即阻断公开读取和插件回源。画像、区域和合规模式都不是公开请求参数；同一镜像在中文部署和英文部署中只需改变部署环境与画像配置，页面和宿主 DTO 保持不变。
 
+### 多语言 URL 与 SEO 基线
+
+Cookie 只用于记住用户偏好，不是可索引的语言标识。长期 SEO 方案必须为每个可索引页面提供稳定的语言路径，例如 `/zh-cn/` 与 `/en-us/`，并保留页面内容、标题、结构化数据和链接的完整翻译；不能仅通过 Cookie、`Accept-Language` 或客户端状态改变同一个 URL 的正文。Google 的[多语言站点指南](https://developers.google.com/search/docs/specialty/international/managing-multi-regional-sites)明确推荐为不同语言使用不同 URL，并用 `hreflang` 互相声明版本。
+
+路径迁移按以下规则执行：
+
+1. 先让 `/zh-cn/<path>` 和 `/en-us/<path>` 同时可访问，旧的无前缀 URL 保持兼容并返回 308 到默认中文版本；API 路径不加语言前缀，语言通过受信任的路径上下文注入请求画像。
+2. 每个语言页面使用自指 `canonical`，并输出指向自身、其它语言版本和 `x-default` 的完整双向 `hreflang` 集合；语言切换使用普通链接，不根据 IP 或浏览器语言自动重定向。
+3. 更新站点地图、内部链接、分享链接和详情页稳定 ID 后，再逐步收紧旧 URL 的重定向与索引策略。迁移完成前，Cookie 语言切换只改变当前会话，不声称已经提供可索引的英文 URL。
+
+这套路径规范是后续路由迁移和 SEO 验收标准；本阶段先修复插件不可用时的前台错误提示，避免在未完成全部页面迁移时产生半套语言 URL。
+
 宿主身份层位于 [`lib/content-identity-db.ts`](../../lib/content-identity-db.ts)，集合为 `content_identities`。它只接受精确的 `(provider_id, external_id)` 引用，以宿主 UUID 生成不可变 `content_id`；同一请求发现引用指向多个身份时会报冲突，禁止标题模糊合并。网盘资源和影片同步台账在迁移期双写 `content_id` 与旧 `douban_id`，旧 API 仍保持兼容。
 
 通用作业的管理员查询入口为 `GET /api/plugins/jobs`。它只查询已写入 `plugin_jobs` 的通用作业，支持 `status`、`run_id` 和 `limit`，响应明确标记 `writable=false`；单次运行的持久事件时间线通过 `GET /api/plugins/jobs/events?run_id=<run_id>` 查询，支持 `after_sequence` 和 `limit` 正向分页，即使当前已到末尾也返回可继续轮询的序号。通用宿主任务的生命周期操作使用受保护的 `POST /api/plugins/jobs/<run_id>`，请求体只接受 `{ "action": "cancel" | "retry", "reason"? }`：取消仅允许排队/运行/退避中的 host 任务，重试仅允许未取消的 `failed`/`partial` 任务；每次成功变更都会写入 `plugin.job.cancel` 或 `plugin.job.retry` 审计事件。影子投影、`external-report` 和 `metadata.source=pan-scheduler` 的迁移任务会被拒绝，必须走各自的 fencing/迁移控制路径。所有入口都使用显式管理员 DTO，不返回幂等键、执行 cursor、自由 metadata、事件内容摘要、内部 outbox 或 TTL 字段。旧 Pan 调度的 `runs`/`plugin_runs` 仍由 `/api/pan-resources/scheduler` 提供，不能通过通用生命周期入口修改。

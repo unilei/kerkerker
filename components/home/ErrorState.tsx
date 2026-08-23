@@ -1,9 +1,14 @@
+import { useLocale } from "@/components/providers/locale-provider";
+
 interface ErrorStateProps {
   error: string;
   onRetry: () => void;
 }
 
 export function ErrorState({ error, onRetry }: ErrorStateProps) {
+  const { locale } = useLocale();
+  const isEnglish = locale === "en-US";
+
   return (
     <div className="h-screen flex items-center justify-center">
       <div className="text-center px-4 max-w-md">
@@ -23,14 +28,14 @@ export function ErrorState({ error, onRetry }: ErrorStateProps) {
           </svg>
         </div>
         <h2 className="text-2xl font-bold text-white mb-2">
-          糟糕，出了点问题
+          {isEnglish ? "Something went wrong" : "糟糕，出了点问题"}
         </h2>
         <p className="text-gray-400 mb-6 text-sm">{error}</p>
         <button
           onClick={onRetry}
           className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-lg"
         >
-          重试
+          {isEnglish ? "Retry" : "重试"}
         </button>
       </div>
     </div>

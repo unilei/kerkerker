@@ -6,6 +6,7 @@ import {
   mirrorImageUrl,
   type ContentDetailCandidate,
 } from "@/lib/plugins";
+import { pluginFailureResponse } from "@/lib/plugins/http-error";
 import { findContentIdentityByExternalRef } from "@/lib/content-identity-db";
 
 interface RouteContext {
@@ -37,8 +38,9 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     );
   }
 
+  let profileId = "unknown";
   try {
-    const profileId = getRequestPluginProfileId(request);
+    profileId = getRequestPluginProfileId(request);
     const { context, pluginId } = createProfileInvocation({
       profileId,
       capability: "content.detail",
@@ -163,9 +165,6 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     });
   } catch (error) {
     console.error("内容详情失败:", error);
-    return NextResponse.json(
-      { code: 502, message: error instanceof Error ? error.message : "内容详情失败", data: null },
-      { status: 502 }
-    );
+    return pluginFailureResponse(error, profileId, "内容详情失败");
   }
 }

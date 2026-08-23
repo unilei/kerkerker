@@ -6,6 +6,7 @@ import {
   type ContentCatalogCandidate,
   type PluginPage,
 } from "@/lib/plugins";
+import { pluginFailureResponse } from "@/lib/plugins/http-error";
 import type {
   CatalogFilters,
   CatalogItem,
@@ -154,8 +155,9 @@ export async function GET(request: NextRequest) {
       }
     : undefined;
 
+  let profileId = "unknown";
   try {
-    const profileId = getRequestPluginProfileId(request);
+    profileId = getRequestPluginProfileId(request);
     const { context } = createProfileInvocation({
       profileId,
       capability: "content.catalog",
@@ -214,9 +216,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ code: 200, message: "获取成功", data });
   } catch (error) {
     console.error("内容目录失败:", error);
-    return NextResponse.json(
-      { code: 502, message: error instanceof Error ? error.message : "内容目录失败", data: null },
-      { status: 502 }
-    );
+    return pluginFailureResponse(error, profileId, "内容目录失败");
   }
 }

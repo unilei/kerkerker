@@ -3,6 +3,7 @@ import test from "node:test";
 import { NextRequest } from "next/server";
 
 import { GET as getContentCatalog } from "@/app/api/content/catalog/route";
+import { LOCALE_COOKIE_NAME } from "@/lib/locale";
 
 test("content catalog route maps profile candidates to the legacy subject page", async () => {
   const previousFetch = globalThis.fetch;
@@ -67,5 +68,50 @@ test("content catalog route keeps top250 as a catalog capability", async () => {
     assert.equal(body.data.pagination.hasMore, false);
   } finally {
     globalThis.fetch = previousFetch;
+  }
+});
+
+test("content catalog route exposes an actionable status when the locale plugin is unavailable", async () => {
+  const previousEnforce = process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE;
+  const previousTmdbKey = process.env.TMDB_API_KEY;
+  process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE = "true";
+  process.env.TMDB_API_KEY = "test-tmdb-key";
+  try {
+    const response = await getContentCatalog(
+      new NextRequest("http://localhost/api/content/catalog?view=featured", {
+        headers: { cookie: `${LOCALE_COOKIE_NAME}=en-US` },
+      })
+    );
+    const body = await response.json();
+    assert.equal(response.status, 503);
+    assert.equal(body.error_code, "CAPABILITY_UNAVAILABLE");
+    assert.equal(body.profile_id, "en-default");
+    assert.equal(body.data, null);
+  } finally {
+    if (previousEnforce === undefined) delete process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE;
+    else process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE = previousEnforce;
+    if (previousTmdbKey === undefined) delete process.env.TMDB_API_KEY;
+    else process.env.TMDB_API_KEY = previousTmdbKey;
+  }
+});
+
+test("catalog route exposes actionable status for an unavailable locale plugin", async () => {
+  const previousKey = process.env.TMDB_API_KEY;
+  process.env.TMDB_API_KEY = "";
+  try {
+    const response = await getContentCatalog(
+      new NextRequest("http://localhost/api/content/catalog?view=featured", {
+        headers: { cookie: "kk_locale=en-US" },
+      })
+    );
+    const body = await response.json();
+    assert.equal(response.status, 503);
+    assert.equal(body.code, 503);
+    assert.equal(body.error_code, "CONFIGURATION_ERROR");
+    assert.equal(body.profile_id, "en-default");
+    assert.match(body.message, /配置不完整/);
+  } finally {
+    if (previousKey === undefined) delete process.env.TMDB_API_KEY;
+    else process.env.TMDB_API_KEY = previousKey;
   }
 });
