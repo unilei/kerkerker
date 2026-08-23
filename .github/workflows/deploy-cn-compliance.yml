@@ -460,6 +460,7 @@ jobs:
           name: pagespeed-reports-${{ github.sha }}
           path: .lighthouseci
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 14
 
       - name: Enforce PageSpeed thresholds
