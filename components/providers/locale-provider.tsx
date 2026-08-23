@@ -12,11 +12,8 @@ import {
 import {
   DEFAULT_LOCALE,
   LOCALE_COOKIE_NAME,
-  parseSupportedLocale,
   type SupportedLocale,
 } from "@/lib/locale";
-
-const LOCAL_STORAGE_KEY = "kerkerker.locale";
 
 interface LocaleContextValue {
   locale: SupportedLocale;
@@ -24,22 +21,16 @@ interface LocaleContextValue {
 }
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 
-function readClientLocale(): SupportedLocale {
-  if (typeof document === "undefined") return DEFAULT_LOCALE;
-  const cookieValue = document.cookie
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${LOCALE_COOKIE_NAME}=`))
-    ?.split("=")[1];
-  return (
-    parseSupportedLocale(cookieValue ? decodeURIComponent(cookieValue) : null) ||
-    parseSupportedLocale(window.localStorage.getItem(LOCAL_STORAGE_KEY)) ||
-    DEFAULT_LOCALE
-  );
-}
-
-export function LocaleProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<SupportedLocale>(readClientLocale);
+export function LocaleProvider({
+  children,
+  initialLocale = DEFAULT_LOCALE,
+}: {
+  children: ReactNode;
+  initialLocale?: SupportedLocale;
+}) {
+  // The server layout passes the cookie-derived value so the first client
+  // render matches SSR. The cookie is the source of truth for API requests.
+  const [locale, setLocaleState] = useState<SupportedLocale>(initialLocale);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -48,7 +39,6 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   const setLocale = useCallback((nextLocale: SupportedLocale) => {
     setLocaleState(nextLocale);
     document.cookie = `${LOCALE_COOKIE_NAME}=${encodeURIComponent(nextLocale)}; Path=/; Max-Age=31536000; SameSite=Lax`;
-    window.localStorage.setItem(LOCAL_STORAGE_KEY, nextLocale);
     document.documentElement.lang = nextLocale;
   }, []);
 

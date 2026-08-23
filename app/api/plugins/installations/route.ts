@@ -226,25 +226,16 @@ export function createPluginInstallationsRouteHandlers(
           pluginVersion: descriptor.version,
           updatedBy: { type: "admin", ...(actor.id ? { id: actor.id } : {}) },
         });
-        try {
-          await dependencies.writeAudit({
-            idempotencyKey: `${requestAuditId(request)}:plugin.installation:${body.pluginId}:${body.action}`,
-            actor,
-            action: `plugin.installation.${body.action}`,
-            target: { type: "plugin", id: body.pluginId, pluginId: body.pluginId },
-            pluginId: body.pluginId,
-            pluginVersion: descriptor.version,
-            reason: safeAuditReason(body.action),
-            metadata: { status: record.status },
-          });
-        } catch (auditError) {
-          // The state mutation is already durable. Audit outage is visible in
-          // logs and must not make a successful install appear to fail.
-          console.warn(
-            "插件安装审计写入失败:",
-            auditError instanceof Error ? auditError.name : "unknown"
-          );
-        }
+        await dependencies.writeAudit({
+          idempotencyKey: `${requestAuditId(request)}:plugin.installation:${body.pluginId}:${body.action}`,
+          actor,
+          action: `plugin.installation.${body.action}`,
+          target: { type: "plugin", id: body.pluginId, pluginId: body.pluginId },
+          pluginId: body.pluginId,
+          pluginVersion: descriptor.version,
+          reason: safeAuditReason(body.action),
+          metadata: { status: record.status },
+        });
         return NextResponse.json({
           code: 200,
           message: "插件状态已更新",
