@@ -59,11 +59,16 @@ function toItem(candidate: ContentCatalogCandidate, locale: string): CatalogItem
   const external = candidate.externalRefs[0];
   const title = preferredTitle(candidate.titles, locale);
   if (!external || !title) return null;
+  // TMDB occasionally has no portrait poster but does have a backdrop. Keep
+  // the item visible instead of converting it into a default placeholder;
+  // cards can crop the landscape fallback while the provider remains the
+  // source of truth.
+  const posterUrl = candidate.preview?.posterUrl || candidate.preview?.backdropUrl || "";
   return {
     id: external.externalId,
     title,
     rating: candidate.preview?.rating || "",
-    posterUrl: candidate.preview?.posterUrl || "",
+    posterUrl,
     backdropUrl: candidate.preview?.backdropUrl,
     canonicalUrl: candidate.preview?.url || external.canonicalUrl || "",
     episodeInfo: candidate.preview?.episodeInfo,

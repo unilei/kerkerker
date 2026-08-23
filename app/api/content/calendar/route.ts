@@ -66,7 +66,10 @@ function toLegacyEntry(
     episode_number: calendar.episodeNumber,
     episode_name: calendar.episodeName || "",
     air_date: calendar.airDate,
-    poster: calendar.posterUrl || candidate.preview?.posterUrl || "",
+    // A TMDB title may expose a backdrop without a portrait poster. Reuse it
+    // as a visible fallback so the calendar does not silently render a
+    // placeholder for an otherwise valid show.
+    poster: calendar.posterUrl || candidate.preview?.posterUrl || candidate.preview?.backdropUrl || "",
     backdrop: calendar.backdropUrl,
     overview: preferredOverview(candidate.overview, locale),
     vote_average: Number.isFinite(rating) ? rating : 0,
@@ -110,18 +113,15 @@ export async function GET(request: NextRequest) {
       signal: request.signal,
       timeoutMs: 15_000,
     });
-    if (requestedRegion !== undefined && requestedRegion !== context.region) {
-      return NextResponse.json(
-        { code: 400, message: "region 必须与当前插件画像一致", data: null },
-        { status: 400 }
-      );
-    }
     const page = await invokeProfilePlugin<PluginPage<ContentCalendarCandidate>>({
       profileId,
       capability: "content.calendar",
       operation: "calendar",
       context,
-      request: { from: start, to: end, region: context.region },
+      // Region is an explicit calendar filter. The locale/profile still owns
+      // the provider and language, while the user may choose a supported
+      // airing market such as US, JP, or KR from the calendar UI.
+      request: { from: start, to: end, region: requestedRegion || context.region },
     });
 
     const days = new Map<string, CalendarResponse["days"][number]["entries"]>();

@@ -184,3 +184,37 @@ test("en-default calendar uses TMDB without falling back to Douban", async () =>
     else process.env.TMDB_PLUGIN_SERVICE_TOKEN = previousToken;
   }
 });
+
+test("calendar forwards an explicit airing region without switching the content profile", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousProfile = process.env.KERKERKER_PLUGIN_PROFILE;
+  const previousToken = process.env.TMDB_PLUGIN_SERVICE_TOKEN;
+  process.env.KERKERKER_PLUGIN_PROFILE = "en-default";
+  process.env.TMDB_PLUGIN_SERVICE_TOKEN = "test-plugin-token";
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    const headers = { "x-kerkerker-contract-version": "1.0.0" };
+    if (url.pathname === "/plugin/v1/health") {
+      return new Response(JSON.stringify({ status: "ready" }), { status: 200, headers });
+    }
+    const body = JSON.parse(String(init?.body)) as { request: { region: string } };
+    assert.equal(body.request.region, "JP");
+    return new Response(JSON.stringify({ items: [], total: 0, hasMore: false }), {
+      status: 200,
+      headers: { ...headers, "content-type": "application/json" },
+    });
+  };
+  try {
+    const response = await getContentCalendar(
+      new NextRequest("http://localhost/api/content/calendar?start_date=2026-08-20&end_date=2026-08-26&region=JP")
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).data.days, []);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousProfile === undefined) delete process.env.KERKERKER_PLUGIN_PROFILE;
+    else process.env.KERKERKER_PLUGIN_PROFILE = previousProfile;
+    if (previousToken === undefined) delete process.env.TMDB_PLUGIN_SERVICE_TOKEN;
+    else process.env.TMDB_PLUGIN_SERVICE_TOKEN = previousToken;
+  }
+});

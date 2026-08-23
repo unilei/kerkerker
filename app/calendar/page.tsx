@@ -18,14 +18,24 @@ import { SearchModal } from '@/components/home/SearchModal';
 import { Footer } from '@/components/home/Footer';
 
 const REGIONS = [
-  { code: 'CN', label: '中国', emoji: '🇨🇳' },
-  { code: 'US', label: '美国', emoji: '🇺🇸' },
-  { code: 'JP', label: '日本', emoji: '🇯🇵' },
-  { code: 'KR', label: '韩国', emoji: '🇰🇷' },
-  { code: 'GB', label: '英国', emoji: '🇬🇧' },
+  { code: 'CN', zhLabel: '中国', enLabel: 'China', emoji: '🇨🇳' },
+  { code: 'US', zhLabel: '美国', enLabel: 'United States', emoji: '🇺🇸' },
+  { code: 'JP', zhLabel: '日本', enLabel: 'Japan', emoji: '🇯🇵' },
+  { code: 'KR', zhLabel: '韩国', enLabel: 'South Korea', emoji: '🇰🇷' },
+  { code: 'GB', zhLabel: '英国', enLabel: 'United Kingdom', emoji: '🇬🇧' },
 ];
 
-function formatDate(dateStr: string): { main: string; sub: string; isToday: boolean; isTomorrow: boolean } {
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatDate(
+  dateStr: string,
+  locale: string,
+): { main: string; sub: string; isToday: boolean; isTomorrow: boolean } {
   const date = new Date(dateStr);
   const today = new Date();
   const tomorrow = new Date(today);
@@ -34,9 +44,14 @@ function formatDate(dateStr: string): { main: string; sub: string; isToday: bool
   const todayStr = today.toISOString().split('T')[0];
   const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-  const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-  const mainText = `${date.getMonth() + 1}月${date.getDate()}日`;
-  const subText = weekDays[date.getDay()];
+  const isEnglish = locale === 'en-US';
+  const mainText = new Intl.DateTimeFormat(isEnglish ? 'en-US' : 'zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+  }).format(date);
+  const subText = new Intl.DateTimeFormat(isEnglish ? 'en-US' : 'zh-CN', {
+    weekday: 'short',
+  }).format(date);
   
   return {
     main: mainText,
@@ -50,11 +65,13 @@ function formatDate(dateStr: string): { main: string; sub: string; isToday: bool
 function CalendarCard({ 
   entry, 
   onClick,
-  priority = false 
+  priority = false,
+  locale,
 }: { 
   entry: CalendarEntry; 
   onClick: () => void;
   priority?: boolean;
+  locale: string;
 }) {
   const [imageError, setImageError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -63,9 +80,10 @@ function CalendarCard({
   const imageUrl = getImageUrl(entry.poster || '');
 
   const displayName = entry.show_name_cn || entry.show_name;
+  const isEnglish = locale === 'en-US';
   const episodeInfo = entry.season_number > 0 
     ? `S${entry.season_number}E${entry.episode_number}` 
-    : `第${entry.episode_number}集`;
+    : isEnglish ? `Episode ${entry.episode_number}` : `第${entry.episode_number}集`;
 
   return (
     <div
@@ -125,10 +143,10 @@ function CalendarCard({
             {displayName}
           </h3>
           <p className="text-gray-300 text-xs mb-2">
-            {episodeInfo} · {entry.episode_name || '最新集'}
+            {episodeInfo} · {entry.episode_name || (isEnglish ? 'Latest episode' : '最新集')}
           </p>
           <button className="flex items-center justify-center gap-2 bg-white text-black px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-opacity-90 transition-all">
-            <span>查看详情</span>
+            <span>{isEnglish ? 'View details' : '查看详情'}</span>
             <ChevronRight className="w-3 h-3" />
           </button>
         </div>
@@ -152,12 +170,15 @@ function CalendarCard({
 // 日期分组组件
 function CalendarDaySection({ 
   day, 
-  onEntryClick 
+  onEntryClick,
+  locale,
 }: { 
   day: CalendarDay; 
   onEntryClick: (entry: CalendarEntry) => void;
+  locale: string;
 }) {
-  const dateInfo = formatDate(day.date);
+  const dateInfo = formatDate(day.date, locale);
+  const isEnglish = locale === 'en-US';
   
   if (!day.entries || day.entries.length === 0) return null;
 
@@ -167,13 +188,13 @@ function CalendarDaySection({
       <div className="flex items-center gap-3 mb-4">
         <div className={`w-2 h-2 rounded-full ${dateInfo.isToday ? 'bg-red-500' : dateInfo.isTomorrow ? 'bg-yellow-500' : 'bg-gray-500'}`} />
         <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
-          {dateInfo.isToday && <span className="text-red-500">今天</span>}
-          {dateInfo.isTomorrow && <span className="text-yellow-500">明天</span>}
+          {dateInfo.isToday && <span className="text-red-500">{isEnglish ? 'Today' : '今天'}</span>}
+          {dateInfo.isTomorrow && <span className="text-yellow-500">{isEnglish ? 'Tomorrow' : '明天'}</span>}
           <span>{dateInfo.main}</span>
           <span className="text-gray-400 text-base font-normal">{dateInfo.sub}</span>
         </h2>
         <span className="text-gray-500 text-sm">
-          {day.entries.length} 部剧集
+          {isEnglish ? `${day.entries.length} shows` : `${day.entries.length} 部剧集`}
         </span>
       </div>
 
@@ -186,6 +207,7 @@ function CalendarDaySection({
                 entry={entry}
                 onClick={() => onEntryClick(entry)}
                 priority={index < 5}
+                locale={locale}
               />
             </div>
           ))}
@@ -233,12 +255,20 @@ export default function CalendarPage() {
   const scrolled = useScrollState(50);
   const { toast, setToast } = useMovieMatch();
   const { locale } = useLocale();
+  const isEnglish = locale === 'en-US';
+  const defaultRegion = isEnglish ? 'US' : 'CN';
 
   const [calendarData, setCalendarData] = useState<CalendarResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [region, setRegion] = useState('CN');
+  const [region, setRegion] = useState(defaultRegion);
   const [weekOffset, setWeekOffset] = useState(0);
+
+  // The selected profile owns the provider region. Keep the calendar request
+  // aligned with it so switching to en-US never sends the cn-default region.
+  useEffect(() => {
+    setRegion(defaultRegion);
+  }, [defaultRegion]);
 
   // 计算日期范围
   const dateRange = useMemo(() => {
@@ -250,8 +280,8 @@ export default function CalendarPage() {
     endDate.setDate(startDate.getDate() + 6);
 
     return {
-      start: startDate.toISOString().split('T')[0],
-      end: endDate.toISOString().split('T')[0],
+      start: formatLocalDate(startDate),
+      end: formatLocalDate(endDate),
     };
   }, [weekOffset]);
 
@@ -276,14 +306,14 @@ export default function CalendarPage() {
         setCalendarData(payload.data);
       } catch (err) {
         console.error('Failed to fetch calendar:', err);
-        setError('获取日历数据失败，请稍后重试');
+        setError(isEnglish ? 'Unable to load the calendar. Please try again.' : '获取日历数据失败，请稍后重试');
       } finally {
         setLoading(false);
       }
     }
 
     fetchCalendar();
-  }, [dateRange, locale, region]);
+  }, [dateRange, isEnglish, locale, region]);
 
   // 过滤有内容的日期
   const daysWithContent = useMemo(() => {
@@ -317,7 +347,7 @@ export default function CalendarPage() {
             <div>
               <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white flex items-center gap-3">
                 <Calendar className="w-8 h-8 md:w-10 md:h-10 text-red-500" />
-                追剧日历
+                {isEnglish ? 'Release calendar' : '追剧日历'}
               </h1>
               <p className="text-gray-400 mt-2 text-sm md:text-base">
                 {dateRange.start.replace(/-/g, '/')} - {dateRange.end.replace(/-/g, '/')}
@@ -335,7 +365,7 @@ export default function CalendarPage() {
                 >
                   {REGIONS.map((r) => (
                     <option key={r.code} value={r.code} className="bg-gray-900 text-white">
-                      {r.emoji} {r.label}
+                      {r.emoji} {isEnglish ? r.enLabel : r.zhLabel}
                     </option>
                   ))}
                 </select>
@@ -359,7 +389,7 @@ export default function CalendarPage() {
                       : 'bg-white/10 text-gray-300 hover:bg-white/20 border border-white/10'
                   }`}
                 >
-                  本周
+                  {isEnglish ? 'This week' : '本周'}
                 </button>
                 <button
                   onClick={() => setWeekOffset((prev) => prev + 1)}
@@ -384,14 +414,14 @@ export default function CalendarPage() {
             onClick={() => setWeekOffset(0)}
             className="px-6 py-2.5 bg-red-600 rounded-xl hover:bg-red-700 transition-colors text-white font-medium"
           >
-            重试
+            {isEnglish ? 'Retry' : '重试'}
           </button>
         </div>
       ) : daysWithContent.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-32">
           <Calendar className="w-20 h-20 text-gray-700 mb-4" />
-          <p className="text-gray-400 text-xl font-medium">本周暂无剧集播出</p>
-          <p className="text-gray-500 text-sm mt-2">试试切换其他地区或时间范围</p>
+          <p className="text-gray-400 text-xl font-medium">{isEnglish ? 'No shows airing this week' : '本周暂无剧集播出'}</p>
+          <p className="text-gray-500 text-sm mt-2">{isEnglish ? 'Try another region or date range' : '试试切换其他地区或时间范围'}</p>
         </div>
       ) : (
         <div className="relative z-20 space-y-10 md:space-y-12 lg:space-y-16 pb-16 pt-8">
@@ -400,6 +430,7 @@ export default function CalendarPage() {
               key={day.date}
               day={day}
               onEntryClick={handleEntryClick}
+              locale={locale}
             />
           ))}
         </div>

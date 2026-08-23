@@ -303,6 +303,8 @@ TMDB ID、标题或年份不匹配而创建新身份；外部引用已经属于�
 
 日历页通过宿主的 [`/api/content/calendar`](../../app/api/content/calendar/route.ts) 使用 `content.calendar` 能力。日历事件的 `eventId`、播出日期、季集数、海报和评分属于排播元数据，不等同于内容身份；只有插件明确返回精确的豆瓣外部引用时，兼容 DTO 才填充 `douban_id`，否则页面保留标题搜索回退，不能把 `show_id` 猜成豆瓣 ID。
 
+TMDB 插件不会把剧集的 `first_air_date` 当作单集播出日；它会读取剧集详情中的 `last_episode_to_air` 与 `next_episode_to_air`，按请求日期范围筛选真实排播事件。插件图片则统一交给 Go 服务的 R2 镜像器：已有映射立即复用，未命中的 TMDB/Douban 图片在后台同步，首个请求保留来源地址作为降级路径。
+
 普通分类、首页和浏览页通过 [`/api/content/catalog`](../../app/api/content/catalog/route.ts) 使用 `content.catalog` 能力。宿主声明 `category`、`featured`、`new-releases`、`sections`、`latest` 五种受控 view；`sections` 只接受 `movies | series`，`latest` 只接受宿主定义的内容类型、类型、年份、地区和排序意图。候选统一映射为供应商无关的 `items + sections + pagination`；迁移中的分类页暂时保留 `subjects` 兼容字段。插件负责把 view、key 和排序意图映射到自己的上游接口，页面不得导入具体内容服务，也不得把 `/hero`、`/new`、`sort=time` 等供应商协议写进公共契约。如果某个来源没有 Top 250 或其他分类，插件必须返回标准能力/上游错误，不能用另一分类静默替代。
 
 `content.search` 使用可选 `intent` 区分交互搜索和后台资源匹配。`interactive` 可以合并插件声明的搜索结果；`resource-match` 必须保持来源建议顺序和宿主限定的候选数量，严格片名、年份容差与是否允许写入旧 `douban_id` 的策略仍由宿主管理，不能下沉给插件。兼容数据库尚未迁移完时，非 Douban 外部引用必须明确拒绝，不能静默写入旧命名空间。
