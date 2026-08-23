@@ -22,7 +22,6 @@ interface LocaleContextValue {
   locale: SupportedLocale;
   setLocale: (locale: SupportedLocale) => void;
 }
-
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 
 function readClientLocale(): SupportedLocale {
@@ -62,4 +61,3 @@ export function useLocale(): LocaleContextValue {
   if (!context) throw new Error("useLocale must be used within LocaleProvider");
   return context;
 }
-

@@ -46,4 +46,3 @@ export function LanguageSwitcher({ compact = false }: { compact?: boolean }) {
     </div>
   );
 }
-

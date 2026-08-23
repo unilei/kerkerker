@@ -14,7 +14,6 @@ test("public locale cookie selects only the corresponding built-in profile", () 
   assert.equal(getRequestPluginProfileId(request), "en-default");
   assert.equal(getRequestLocale(request), "en-US");
 });
-
 test("missing or invalid locale cookies preserve the deployment default", () => {
   const missing = new NextRequest("http://localhost/api/content/catalog");
   assert.equal(getRequestPluginProfileId(missing), "cn-default");
@@ -26,4 +25,3 @@ test("missing or invalid locale cookies preserve the deployment default", () => 
   assert.equal(getRequestPluginProfileId(invalid), "cn-default");
   assert.equal(getRequestLocale(invalid), "zh-CN");
 });
-

@@ -18,7 +18,6 @@ export function getRequestPluginProfileId(request: Pick<NextRequest, "cookies">)
   );
   return locale ? profileIdForLocale(locale) : getActivePluginProfileId();
 }
-
 export function getRequestLocale(request: Pick<NextRequest, "cookies">): string {
   const locale = parseSupportedLocale(
     request.cookies.get(LOCALE_COOKIE_NAME)?.value
@@ -26,4 +25,3 @@ export function getRequestLocale(request: Pick<NextRequest, "cookies">): string 
   if (locale) return locale;
   return getActivePluginProfileId() === "en-default" ? "en-US" : "zh-CN";
 }
-
