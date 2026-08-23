@@ -8,6 +8,14 @@ import {
   LOCALE_COOKIE_NAME,
   parseSupportedLocale,
 } from "@/lib/locale";
+import {
+  absoluteUrl,
+  SITE_DESCRIPTION,
+  SITE_IMAGE_URL,
+  SITE_NAME,
+  SITE_URL,
+} from "@/lib/seo";
+import { StructuredData } from "@/components/seo/StructuredData";
 import { cookies } from "next/headers";
 import "./globals.css";
 
@@ -22,9 +30,45 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "爱盼 - 影视信息与网盘资源导航",
-  description:
-    "爱盼 - 聚合豆瓣影视资料与公开网盘资源信息，提供影片介绍、评分、上映信息检索与导航服务",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: `${SITE_NAME} | 影视信息与网盘资源导航`,
+    template: `%s | ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  category: "entertainment",
+  creator: SITE_NAME,
+  publisher: SITE_NAME,
+  alternates: { canonical: "/" },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
+  openGraph: {
+    type: "website",
+    url: SITE_URL,
+    title: `${SITE_NAME} | 影视信息与网盘资源导航`,
+    description: SITE_DESCRIPTION,
+    siteName: SITE_NAME,
+    locale: "zh_CN",
+    alternateLocale: ["en_US"],
+    images: [{ url: SITE_IMAGE_URL, alt: `${SITE_NAME} logo` }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${SITE_NAME} | 影视信息与网盘资源导航`,
+    description: SITE_DESCRIPTION,
+    images: [SITE_IMAGE_URL],
+  },
+  icons: { icon: absoluteUrl("/favicon.ico") },
 };
 
 export default async function RootLayout({
@@ -73,6 +117,7 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         suppressHydrationWarning
       >
+        <StructuredData />
         <LocaleProvider initialLocale={locale}>
           <SWRProvider>{children}</SWRProvider>
         </LocaleProvider>

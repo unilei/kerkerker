@@ -20,6 +20,8 @@ WORKDIR /app
 # build-args 注入实际服务地址，服务端运行时仍会从 Compose 环境读取配置。
 ARG NEXT_PUBLIC_DOUBAN_API_URL
 ENV NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
+ARG NEXT_PUBLIC_SITE_URL
+ENV NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
 
 # 复制依赖
 COPY --from=deps /app/node_modules ./node_modules

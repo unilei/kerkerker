@@ -7,6 +7,8 @@ import type {
   ContentCandidate,
   ContentCatalogCandidate,
   ContentCatalogRequest,
+  ContentDetailCandidate,
+  ContentDetailRequest,
   ContentSearchRequest,
   PluginPage,
 } from "@/lib/plugins/types";
@@ -21,7 +23,11 @@ export interface ContentHostExecutionOptions {
 }
 
 function invocationOptions(
-  capability: "content.catalog" | "content.calendar" | "content.search",
+  capability:
+    | "content.catalog"
+    | "content.calendar"
+    | "content.detail"
+    | "content.search",
   options: ContentHostExecutionOptions
 ) {
   const profileId = options.profileId || getActivePluginProfileId();
@@ -72,6 +78,19 @@ export async function searchContent(
     ...invocation,
     capability: "content.search",
     operation: "search",
+    request,
+  });
+}
+
+export async function getContentDetail(
+  request: ContentDetailRequest,
+  options: ContentHostExecutionOptions = {}
+): Promise<ContentDetailCandidate | null> {
+  const invocation = invocationOptions("content.detail", options);
+  return invokeProfilePlugin<ContentDetailCandidate | null>({
+    ...invocation,
+    capability: "content.detail",
+    operation: "detail",
     request,
   });
 }

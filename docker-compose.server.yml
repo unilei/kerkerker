@@ -17,6 +17,7 @@ services:
       - MONGODB_URI=mongodb://mongodb:27017/kerkerker
       - MONGODB_DB_NAME=${MONGODB_DB_NAME:-kerkerker}
       - NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
+      - NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL:-https://www.aipan.me}
       - KERKERKER_PLUGIN_PROFILE=${KERKERKER_PLUGIN_PROFILE:-cn-default}
       - KERKERKER_PLUGIN_REGION=${KERKERKER_PLUGIN_REGION:-CN}
       - TMDB_PLUGIN_URL=${TMDB_PLUGIN_URL:-https://iamyourfather.link0.me/plugin}

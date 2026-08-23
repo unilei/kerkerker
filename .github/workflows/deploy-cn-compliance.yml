@@ -117,6 +117,7 @@ jobs:
           push: true
           build-args: |
             NEXT_PUBLIC_DOUBAN_API_URL=${{ secrets.DEPLOY_DOUBAN_API_URL || 'http://host.docker.internal:8081' }}
+            NEXT_PUBLIC_SITE_URL=${{ vars.SITE_URL || 'https://www.aipan.me' }}
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
             ${{ env.IMAGE_NAME }}:cn-compliance-latest
@@ -208,6 +209,7 @@ jobs:
           DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
           DEPLOY_PORT: ${{ env.DEPLOY_PORT }}
           DEPLOY_BIND: ${{ env.DEPLOY_BIND }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://www.aipan.me' }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
           IMAGE_TAG: ${{ needs.publish.outputs.image_tag }}
           ADMIN_PASSWORD: ${{ secrets.DEPLOY_ADMIN_PASSWORD }}
@@ -253,6 +255,7 @@ jobs:
               ("KERKERKER_JOB_REPORT_TOKEN", "JOB_REPORT_TOKEN"),
               ("MONGODB_DB_NAME", "MONGODB_DB_NAME"),
               ("NEXT_PUBLIC_DOUBAN_API_URL", "DOUBAN_API_URL"),
+              ("NEXT_PUBLIC_SITE_URL", "SITE_URL"),
               ("KKPAN_API_BASE", "KKPAN_API_BASE"),
               ("NEXT_PUBLIC_DANMU_API_URL", "DANMU_API_URL"),
               ("NEXT_PUBLIC_DANMU_API_TOKEN", "DANMU_API_TOKEN"),
@@ -402,3 +405,71 @@ jobs:
           echo "Deployed ${IMAGE_NAME}:${IMAGE_TAG} from ${GITHUB_REF_NAME}"
           echo "Server path: ${DEPLOY_PATH}"
           echo "Server port: ${DEPLOY_PORT}"
+
+  lighthouse:
+    name: PageSpeed / Lighthouse
+    needs: deploy
+    if: github.repository_owner == 'unilei'
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_PUBLIC_URL: ${{ vars.DEPLOY_PUBLIC_URL || 'https://www.aipan.me' }}
+    steps:
+      - name: Checkout audit configuration
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate public audit URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const value = process.env.DEPLOY_PUBLIC_URL;
+            const url = new URL(value);
+            if (url.protocol !== "https:" || url.username || url.password) {
+              throw new Error("DEPLOY_PUBLIC_URL must be an HTTPS URL without credentials");
+            }
+            console.log(`Auditing ${url.origin}`);
+          '
+          curl --fail --silent --show-error --location --retry 8 --retry-delay 5 \
+            --max-time 30 "$DEPLOY_PUBLIC_URL/api/health" >/dev/null
+
+      - name: Run mobile PageSpeed audit
+        id: mobile
+        continue-on-error: true
+        env:
+          LHCI_FORM_FACTOR: mobile
+          LHCI_OUTPUT_DIR: .lighthouseci/mobile
+        run: npx --yes @lhci/cli@0.15.1 autorun --config=./lighthouserc.cjs
+
+      - name: Run desktop PageSpeed audit
+        id: desktop
+        continue-on-error: true
+        env:
+          LHCI_FORM_FACTOR: desktop
+          LHCI_OUTPUT_DIR: .lighthouseci/desktop
+        run: npx --yes @lhci/cli@0.15.1 autorun --config=./lighthouserc.cjs
+
+      - name: Upload PageSpeed reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pagespeed-reports-${{ github.sha }}
+          path: .lighthouseci
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce PageSpeed thresholds
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mobile_outcome='${{ steps.mobile.outcome }}'
+          desktop_outcome='${{ steps.desktop.outcome }}'
+          if [ "$mobile_outcome" != success ] || [ "$desktop_outcome" != success ]; then
+            echo "PageSpeed audit failed: mobile=$mobile_outcome desktop=$desktop_outcome" >&2
+            exit 1
+          fi

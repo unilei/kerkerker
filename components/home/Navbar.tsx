@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { Menu, X, Home, Film, Tv, Clock, Github, Calendar, Trophy } from "lucide-react";
+import { Menu, X, Home, Film, Tv, Clock, Github, Calendar, Trophy, HardDrive } from "lucide-react";
 import { useLocale } from "@/components/providers/locale-provider";
 import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
+import { SEARCH_SITE_URL } from "@/lib/seo";
 
 interface NavbarProps {
   scrolled: boolean;
@@ -35,6 +36,13 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
     { href: "/calendar", label: isEnglish ? "Calendar" : "追剧日历", icon: Calendar },
     { href: "/browse/latest", label: isEnglish ? "Latest" : "最新", icon: Clock },
     { href: "/category/top250", label: isEnglish ? "Top 250" : "Top250", icon: Trophy },
+    {
+      href: SEARCH_SITE_URL,
+      label: isEnglish ? "Cloud Search" : "网盘搜索",
+      icon: HardDrive,
+      external: true,
+      highlight: true,
+    },
     {
       href: "https://github.com/unilei/kerkerker",
       label: "GitHub",
@@ -91,6 +99,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                     key={item.href}
                     href={item.href!}
                     target={item.external ? "_blank" : undefined}
+                    rel={item.external ? "noopener noreferrer" : undefined}
                     className="text-gray-400 hover:text-white transition-colors text-sm font-medium"
                   >
                     {item.label}
@@ -168,8 +177,13 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                   key={item.href}
                   href={item.href!}
                   target={item.external ? "_blank" : undefined}
+                  rel={item.external ? "noopener noreferrer" : undefined}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-300 hover:text-white hover:bg-white/10 transition-all duration-200 group"
+                  className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
+                    item.highlight
+                      ? "text-red-300 hover:text-white hover:bg-red-600/20"
+                      : "text-gray-300 hover:text-white hover:bg-white/10"
+                  }`}
                 >
                   <Icon className="w-5 h-5 text-gray-400 group-hover:text-red-500 transition-colors" />
                   <span className="text-base font-medium">{item.label}</span>
