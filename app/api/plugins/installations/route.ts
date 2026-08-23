@@ -36,7 +36,13 @@ export interface PluginInstallationsRouteDependencies {
 const defaultDependencies: PluginInstallationsRouteDependencies = {
   listPlugins: () => pluginRegistry.list(),
   getStore: getPluginInstallationStore,
-  writeAudit: recordAudit,
+  async writeAudit(input) {
+    // The in-memory installation store is intentionally only a local/test
+    // fallback. In that mode there is no durable audit backend either, so do
+    // not turn a useful local state transition into a misleading 500.
+    if (!process.env.MONGODB_URI) return;
+    await recordAudit(input);
+  },
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
