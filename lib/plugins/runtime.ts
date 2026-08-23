@@ -11,6 +11,10 @@ import { pluginProfileRegistry as defaultProfileRegistry } from "@/lib/plugins/b
 import type { PluginProfileRegistry } from "@/lib/plugins/profiles";
 import { checkPluginCompliance } from "@/lib/plugins/compliance";
 import { invokeRemoteSidecar } from "@/lib/plugins/sidecar";
+import {
+  requireUsable,
+  type PluginInstallationStore,
+} from "@/lib/plugins/installation";
 
 /** Operations are allow-listed; the host never executes a request-supplied method name. */
 const OPERATIONS_BY_CAPABILITY: Readonly<Record<PluginCapability, readonly PluginOperation[]>> = {
@@ -27,6 +31,9 @@ const OPERATIONS_BY_CAPABILITY: Readonly<Record<PluginCapability, readonly Plugi
 
 export interface InvokePluginOptions {
   readonly registry?: PluginRegistry;
+  /** Test/host override for the installation gate. Production defaults to on. */
+  readonly enforceInstallation?: boolean;
+  readonly installationStore?: PluginInstallationStore;
   readonly pluginId: string;
   readonly capability: PluginCapability;
   readonly operation: PluginOperation;
@@ -57,6 +64,21 @@ export async function invokePlugin<T>(options: InvokePluginOptions): Promise<T> 
   } catch (error) {
     if (isPluginError(error)) throw error;
     throw new PluginError("CONFIGURATION_ERROR", "插件注册状态不可用", { cause: error });
+  }
+
+  // Custom registries are used by isolated contract tests and package
+  // validation. Only the sealed host registry is executable in production;
+  // it must have an explicit operator installation and enablement record.
+  const enforceInstallation =
+    options.enforceInstallation ??
+    (registry === defaultRegistry &&
+      (process.env.NODE_ENV === "production" ||
+        process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE === "true"));
+  if (enforceInstallation && registry === defaultRegistry) {
+    await requireUsable(options.pluginId, {
+      version: plugin.manifest.version,
+      ...(options.installationStore ? { store: options.installationStore } : {}),
+    });
   }
 
   await checkPluginCompliance({

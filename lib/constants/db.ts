@@ -27,6 +27,8 @@ export const COLLECTIONS = {
   PAN_SYNC_RUN_EVENTS: 'pan_sync_run_events',
   /** 插件合规审批与运行策略 */
   PLUGIN_POLICIES: 'plugin_policies',
+  /** Trusted static plugin installation lifecycle state */
+  PLUGIN_INSTALLATIONS: 'plugin_installations',
   /** 不可静默覆盖的合规审计事件 */
   AUDIT_EVENTS: 'audit_events',
   /** 内容、资源、插件或来源的下架记录 */

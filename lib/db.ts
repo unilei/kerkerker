@@ -319,6 +319,21 @@ async function initializeDatabase(db: Db) {
     // queryable for operational review.
     await ensureComplianceIndexes(db);
 
+    // Plugin installation is host-owned state only. The plugin ID is looked
+    // up in the sealed static registry; this collection never stores code or
+    // module paths.
+    const pluginInstallationsCollection = db.collection(
+      COLLECTIONS.PLUGIN_INSTALLATIONS
+    );
+    await pluginInstallationsCollection.createIndex(
+      { plugin_id: 1 },
+      { unique: true, name: "plugin_installation_identity" }
+    );
+    await pluginInstallationsCollection.createIndex(
+      { status: 1, updated_at: -1 },
+      { name: "plugin_installation_status" }
+    );
+
     globalForMongo.initialized = true;
     console.log('✅ MongoDB 数据库初始化完成');
   } catch (error) {
