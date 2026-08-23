@@ -48,6 +48,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 | 已完成 | 内容身份 UUID、外部引用、资源/同步台账的 `content_id` 权威写入及迁移脚本预览/维护模式 | `lib/content-identity-db.ts`、`lib/pan-resources-db.ts`、`lib/pan/catalog-sync.ts`、`scripts/content-identity-backfill.ts` |
 | 已完成 | Douban 图片 R2 镜像、Mongo 持久化和部署门禁 | `kerkerker-douban-service`、`.github/workflows` |
 | 已完成 | TMDB 内容插件与 `en-default` 的 catalog/detail/search/calendar/image 最小闭环 | `lib/plugins/adapters/tmdb-content.ts`、`lib/plugins/builtin-profiles.ts` |
+| 已完成 | 前台 `zh-CN`/`en-US` 语言切换、画像 Cookie 映射、插件手动安装/启用生命周期和运行时安装门禁 | `components/home/LanguageSwitcher.tsx`、`lib/plugins/installation.ts`、`app/api/plugins/installations/route.ts` |
 | 已完成 | 当前生产部署健康、Mongo、R2 和 Top250 烟测 | GitHub Actions 部署流程 |
 
 ### 2.2 当前明确的缺口
@@ -55,7 +56,7 @@ Kerkerker 的产品目标是一个可合规运营、可切换内容来源、可�
 1. 合规策略、审计事件、下架记录、公开资源过滤和后台操作面板已在本分支落地；生产仍处于 `audit` 迁移模式，必须完成每个插件的材料登记后再切换 `enforce`。
 2. 旧资源模型仍保留 `douban_id`、`source=kkpan` 和 `kkpan_id` 作为迁移兼容字段；资源 repository 已要求 `content_id`，后台资源/单片同步 API 已支持 content-only；只读身份审计命令已交付，但生产全量报告、冲突处理和“零旧写”证据尚未完成。
 3. 公共契约 v1 已有独立包和 CI 校验；Sidecar 已支持健康检查、服务间认证、协议版本协商、进程内熔断，画像仅在上游错误时按声明顺序回退；跨实例健康状态、重试上限和集中式健康摘除仍未完成。
-4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；管理员精确跨来源 `content_id` 映射入口和详情图片 R2 持久化已交付，仍需完成英文 UI smoke 和运营审批。
+4. TMDB 内容插件和 `en-default` 画像的最小读路径已完成并通过部署验证；管理员精确跨来源 `content_id` 映射入口、详情图片 R2 持久化、前台语言切换和插件安装门禁已交付，仍需完成英文 UI smoke 和运营审批。
 5. 上游 Top250 的公开路径曾出现 `/api/v1/250` 返回 404；当前已完成端点确认和回归烟测，后续只保留部署门禁防回归。
 6. Go 刷新器已能通过可选 stdout/HTTPS `kerkerker.plugin-job.v1` 协议把有序进度和追加式事件时间线写入宿主，并支持 worker 侧 0600 JSONL 持久 spool 与重启重放；仍未由宿主租约驱动，也没有远程取消和断点恢复。Web 网盘任务仍由旧调度器写入。通用宿主执行器壳层已经交付，按静态 `job_id` 注册表领取、心跳、取消和 fencing 写入，但默认不接管旧 Pan 任务；后台已有任务中心、只读 `plugin_runs` 兼容视图，完整双写、宿主租约和执行器迁移仍属于阶段 3/7。
 

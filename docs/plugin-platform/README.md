@@ -95,13 +95,17 @@ flowchart LR
 
 当前分支已经落地第一批可运行地基：[`lib/plugins/registry.ts`](../../lib/plugins/registry.ts) 提供封存式静态注册，[`lib/plugins/runtime.ts`](../../lib/plugins/runtime.ts) 提供按能力和操作的统一服务端调用边界，Douban、TMDB 与 KKPAN 适配器分别位于 [`lib/plugins/adapters/douban-content.ts`](../../lib/plugins/adapters/douban-content.ts)、[`lib/plugins/adapters/tmdb-content.ts`](../../lib/plugins/adapters/tmdb-content.ts) 和 [`lib/plugins/adapters/kkpan-cloud-drive.ts`](../../lib/plugins/adapters/kkpan-cloud-drive.ts)。管理端只能通过受保护的 [`GET /api/plugins`](../../app/api/plugins/route.ts) 查看已注册的非秘密 Manifest 元数据；该接口不支持上传、动态加载或任意插件执行。
 
+静态注册不等于默认可用。宿主在 [`plugin_installations`](../../lib/constants/db.ts) 中为每个注册插件保存独立的安装生命周期：`available -> installed -> enabled`，也支持 `disabled`、`failed` 和卸载回到 `available`。管理员通过受保护的 [`/api/plugins/installations`](../../app/api/plugins/installations/route.ts) 在后台插件中心手动安装、启用、停用或卸载；安装记录只引用已经锁定的静态插件版本，不保存代码、模块路径或管理员提供的可执行内容。生产运行时统一调用 [`requireUsable`](../../lib/plugins/installation.ts)，未安装或未启用的插件不能被 API、任务、回源或公开资源读取使用。
+
+卸载或停用插件不会删除影片、网盘资源、图片镜像、同步记录和审计记录；这些数据保留用于审计、迁移和重新安装。来源插件不可用时，公开资源读取会隐藏对应来源，管理员仍可以查看历史记录并处理恢复。没有 MongoDB 的本地测试进程可以使用内存状态仓库；生产配置 MongoDB 但连接失败时必须 fail-closed。首次部署不会自动安装任何插件，管理员需要先安装并启用所需的 Douban、KKPAN 或 TMDB 插件。
+
 兼容的 [`GET /api/kkpan/search`](../../app/api/kkpan/search/route.ts) 已经改为通过 `cn-default` 画像调用 `resource.cloud-drive.search`，旧响应字段保留，后台无需一次性改版。宿主会创建带超时和取消信号的 `PluginContext`，并在返回前校验来源插件、资源 ID 和网盘品牌。需要原始页指纹、跨页唯一 ID 和漂移校验的全量增量/失效任务仍暂留在同步兼容层；只有当插件契约提供等价的快照或稳定游标保证后，才允许迁移到通用分页调用。
 
 第二阶段已加入 [`lib/plugins/profiles.ts`](../../lib/plugins/profiles.ts) 的静态发布画像注册：画像固定 `locale`、`region` 和按能力排列的插件优先级，启动时校验插件是否声明该能力并支持该语言/地区；`cn-default` 绑定 Douban 内容与 KKPAN 网盘，`en-default` 的 catalog、calendar、detail、search 和 image 已绑定 TMDB，不复制页面代码，也不会回退到 Douban。运行时通过 `invokeProfilePlugin` 解析画像后再调用插件，未配置能力会返回 `CAPABILITY_UNAVAILABLE`，不会静默选择其他供应商。
 
 宿主运行配置由 [`lib/plugins/invocation.ts`](../../lib/plugins/invocation.ts) 集中注入并按 Manifest 的必填字段、URL 类型和精确网络主机权限校验；API 路由和后台任务不得自行读取供应商环境变量。服务端页面之外的目录发现、搜索和日历任务统一通过 [`lib/plugins/content-host.ts`](../../lib/plugins/content-host.ts) 调用活动画像，`run_id`、超时和取消信号沿同一上下文传播，不通过内部 HTTP 绕回 API 路由。
 
-生产部署通过 `KERKERKER_PLUGIN_PROFILE` 选择活动画像（默认 `cn-default`），通过 `KERKERKER_PLUGIN_REGION` 选择策略区域（默认 `CN`）。合规门禁由 `KERKERKER_COMPLIANCE_MODE` 控制：迁移期使用 `audit` 记录缺失审批但保持兼容调用，完成策略登记后切换为 `enforce`；下架记录在两种模式下都立即阻断公开读取和插件回源。画像、区域和合规模式都不是公开请求参数；同一镜像在中文部署和英文部署中只需改变部署环境与画像配置，页面和宿主 DTO 保持不变。
+生产部署通过 `KERKERKER_PLUGIN_PROFILE` 选择活动画像（默认 `cn-default`），通过 `KERKERKER_PLUGIN_REGION` 选择策略区域（默认 `CN`）。前台语言切换将 allowlist 内的 `kk_locale` Cookie 映射为 `zh-CN -> cn-default` 或 `en-US -> en-default`，不会接受任意 profile 查询参数；没有 Cookie 时仍使用部署默认画像。合规门禁由 `KERKERKER_COMPLIANCE_MODE` 控制：迁移期使用 `audit` 记录缺失审批但保持兼容调用，完成策略登记后切换为 `enforce`；下架记录在两种模式下都立即阻断公开读取和插件回源。画像、区域和合规模式都不是公开请求参数；同一镜像在中文部署和英文部署中只需改变部署环境与画像配置，页面和宿主 DTO 保持不变。
 
 宿主身份层位于 [`lib/content-identity-db.ts`](../../lib/content-identity-db.ts)，集合为 `content_identities`。它只接受精确的 `(provider_id, external_id)` 引用，以宿主 UUID 生成不可变 `content_id`；同一请求发现引用指向多个身份时会报冲突，禁止标题模糊合并。网盘资源和影片同步台账在迁移期双写 `content_id` 与旧 `douban_id`，旧 API 仍保持兼容。
 
@@ -345,6 +349,7 @@ sequenceDiagram
 - 对用户可见的数据必须支持纠错、下架和来源追踪；删除和禁用不能只清理缓存而遗漏持久层。
 - 测试夹具、日志和错误报告必须去除真实密钥、个人信息和未授权内容。
 - 插件停用后不得再启动任务或回源；历史数据按策略标记、隐藏或删除，并保留必要审计记录。
+- 插件首次使用必须经过管理员安装和启用；运行时不能把静态注册、合规审批或历史数据存在误认为可用资格。
 
 ## 迁移路线
 
