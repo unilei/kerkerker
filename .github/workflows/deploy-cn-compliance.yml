@@ -222,6 +222,10 @@ jobs:
           TMDB_API_KEY: ${{ secrets.DEPLOY_TMDB_API_KEY }}
           TMDB_BASE_URL: ${{ secrets.DEPLOY_TMDB_BASE_URL || 'https://api.themoviedb.org/3' }}
           TMDB_IMAGE_BASE: ${{ secrets.DEPLOY_TMDB_IMAGE_BASE || 'https://image.tmdb.org/t/p/original' }}
+          R2_PUBLIC_URL: ${{ secrets.DEPLOY_CLOUDFLARE_R2_PUBLIC_URL }}
+          R2_UPLOAD_API_URL: ${{ secrets.DEPLOY_CLOUDFLARE_R2_UPLOAD_API_URL }}
+          R2_UPLOAD_API_TOKEN: ${{ secrets.DEPLOY_CLOUDFLARE_R2_UPLOAD_API_TOKEN }}
+          R2_MAX_IMAGE_BYTES: ${{ vars.CLOUDFLARE_R2_MAX_IMAGE_BYTES || '10485760' }}
           KEY_FILE: ${{ steps.ssh.outputs.key_file }}
           KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
         shell: bash
@@ -256,6 +260,10 @@ jobs:
               ("TMDB_API_KEY", "TMDB_API_KEY"),
               ("TMDB_BASE_URL", "TMDB_BASE_URL"),
               ("TMDB_IMAGE_BASE", "TMDB_IMAGE_BASE"),
+              ("CLOUDFLARE_R2_PUBLIC_URL", "R2_PUBLIC_URL"),
+              ("CLOUDFLARE_R2_UPLOAD_API_URL", "R2_UPLOAD_API_URL"),
+              ("CLOUDFLARE_R2_UPLOAD_API_TOKEN", "R2_UPLOAD_API_TOKEN"),
+              ("CLOUDFLARE_R2_MAX_IMAGE_BYTES", "R2_MAX_IMAGE_BYTES"),
           )
 
           def quote(value: str) -> str:

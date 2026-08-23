@@ -7,6 +7,8 @@
 export const COLLECTIONS = {
   /** 宿主内容身份与外部来源 ID 映射 */
   CONTENT_IDENTITIES: 'content_identities',
+  /** 宿主 asset.image 原图与镜像对象的持久化台账 */
+  IMAGE_MIRRORS: 'image_mirrors',
   /** 网盘资源 */
   PAN_RESOURCES: 'pan_resources',
   /** 网盘资源来源身份迁移的可回滚备份 */

@@ -3,6 +3,7 @@ import {
   createProfileInvocation,
   getActivePluginProfileId,
   invokeProfilePlugin,
+  mirrorImageUrl,
   type ContentDetailCandidate,
 } from "@/lib/plugins";
 import { findContentIdentityByExternalRef } from "@/lib/content-identity-db";
@@ -103,6 +104,25 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       }];
     });
 
+    const mirror = async (url: string | undefined, purpose: string) => {
+      if (!url || !hostContentId) return url || "";
+      return mirrorImageUrl({
+        contentId: hostContentId,
+        providerId: external.providerId,
+        externalId: external.externalId,
+        purpose,
+        originalUrl: url,
+      });
+    };
+    const cover = await mirror(detail.preview?.posterUrl, "poster");
+    const photos = await Promise.all(
+      (details.photos || []).map(async (photo) => ({
+        id: photo.id,
+        image: await mirror(photo.url, "still"),
+        thumb: await mirror(photo.thumbUrl || photo.url, "still-thumb"),
+      }))
+    );
+
     return NextResponse.json({
       code: 200,
       message: "获取成功",
@@ -115,7 +135,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
           ? { internal_id: Number(sourceInternalId) }
           : {}),
         title,
-        cover: detail.preview?.posterUrl || "",
+        cover,
         rate: details.rating || detail.preview?.rating || "",
         types: details.genres || [],
         directors: details.directors || [],
@@ -131,11 +151,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
               author: { name: details.shortComment.author },
             }
           : undefined,
-        photos: (details.photos || []).map((photo) => ({
-          id: photo.id,
-          image: photo.url,
-          thumb: photo.thumbUrl || photo.url,
-        })),
+        photos,
         comments: (details.comments || []).map((comment) => ({
           id: comment.id,
           content: comment.content,

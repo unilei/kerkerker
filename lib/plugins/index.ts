@@ -20,6 +20,7 @@ export * from "@/lib/plugins/content-host";
 export * from "@/lib/plugins/resource-host";
 export * from "@/lib/plugins/media-host";
 export * from "@/lib/plugins/resource-center";
+export * from "@/lib/plugins/image-mirror-runtime";
 export * from "@/lib/plugins/types";
 export * from "@/lib/plugins/errors";
 export * from "@/lib/plugins/compliance";
