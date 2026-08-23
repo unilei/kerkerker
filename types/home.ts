@@ -12,6 +12,8 @@ export interface NewApiMovie {
 
 export interface CategoryData {
   name: string;
+  /** Provider-neutral section key used for stable navigation across locales. */
+  key?: string;
   data: NewApiMovie[];
 }
 

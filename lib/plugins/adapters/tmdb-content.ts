@@ -302,6 +302,11 @@ function catalogEndpoint(
     include_adult: false,
   };
 
+  if (view === "category" && request.key === "top250") {
+    params.vote_count_gte = 200;
+    return { path: "/movie/top_rated", kind: "movie", params };
+  }
+
   if (view === "latest" || view === "new-releases") {
     const kind = requestedKind || "movie";
     const dateSort = kind === "tv" ? "first_air_date.desc" : "primary_release_date.desc";

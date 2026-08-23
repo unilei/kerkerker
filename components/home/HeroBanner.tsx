@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { DoubanMovie } from "@/types/douban";
 import type { HeroData } from "@/types/home";
 import { getImageUrl } from "@/lib/utils/image-utils";
+import { useLocale } from "@/components/providers/locale-provider";
 
 interface HeroBannerProps {
   heroMovies: DoubanMovie[];
@@ -16,6 +17,8 @@ export function HeroBanner({
   onMovieClick,
 }: HeroBannerProps) {
   const [currentHeroIndex, setCurrentHeroIndex] = useState(0);
+  const { locale } = useLocale();
+  const isEnglish = locale === "en-US";
 
   // 自动轮播 - 页面不可见时暂停
   useEffect(() => {
@@ -134,7 +137,7 @@ export function HeroBanner({
                       {movie.rate && (
                         <div className="flex items-center text-yellow-400 font-bold bg-black/30 px-2 py-1 rounded backdrop-blur-md">
                           <span className="text-lg">{movie.rate}</span>
-                          <span className="text-xs ml-1">分</span>
+                          <span className="text-xs ml-1">{isEnglish ? "rating" : "分"}</span>
                         </div>
                       )}
 
@@ -189,7 +192,7 @@ export function HeroBanner({
                         onClick={() => onMovieClick(movie)}
                         className="group flex items-center gap-3 bg-white text-black px-8 py-3.5 rounded-xl font-bold hover:bg-primary hover:scale-105 transition-all duration-300 shadow-lg shadow-white/5"
                       >
-                        <span className="text-lg">查看详情</span>
+                        <span className="text-lg">{isEnglish ? "View details" : "查看详情"}</span>
                         <ChevronRight className="w-6 h-6" />
                       </button>
                     </div>

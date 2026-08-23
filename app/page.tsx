@@ -25,6 +25,23 @@ import { Footer } from "@/components/home/Footer";
 // Utils
 import { getCategoryIcon, getCategoryPath } from "@/lib/utils/category-icons";
 
+function categoryHref(category: { key?: string; name: string }): string {
+  switch (category.key) {
+    case "movies":
+      return "/browse/movies";
+    case "series":
+      return "/browse/tv";
+    case "latest":
+    case "latest-movies":
+    case "latest-series":
+      return "/browse/latest";
+    case "top250":
+      return "/category/top250";
+    default:
+      return `/category/${getCategoryPath(category.name)}`;
+  }
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [showSearch, setShowSearch] = useState(false);
@@ -94,9 +111,7 @@ export default function HomePage() {
                       movies={movies}
                       onMovieClick={handleMovieClick}
                       onViewMore={() =>
-                        router.push(
-                          `/category/${getCategoryPath(category.name)}`
-                        )
+                        router.push(categoryHref(category))
                       }
                     />
                   );

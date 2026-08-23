@@ -1,4 +1,10 @@
+"use client";
+
+import { useLocale } from "@/components/providers/locale-provider";
+
 export function Footer() {
+  const { locale } = useLocale();
+  const isEnglish = locale === "en-US";
   return (
     <footer className="mt-20 border-t border-gray-800 bg-gradient-to-b from-black to-gray-950">
       <div className="mx-auto px-4 md:px-12 py-12">
@@ -16,26 +22,32 @@ export function Footer() {
                 clipRule="evenodd"
               />
             </svg>
-            免责声明
+            {isEnglish ? "Disclaimer" : "免责声明"}
           </h3>
           <div className="space-y-3 text-sm text-gray-400 leading-relaxed">
             <p>
-              本站为
-              <span className="text-white font-medium">技术学习和交流平台</span>
-              ，仅提供影视信息检索和导航服务。所有视频资源均来自互联网公开资源，本站不存储任何影视文件。
+              {isEnglish ? (
+                <>This is a <span className="text-white font-medium">learning and information platform</span> providing movie and TV metadata navigation. We do not store video files.</>
+              ) : (
+                <>本站为<span className="text-white font-medium">技术学习和交流平台</span>，仅提供影视信息检索和导航服务。所有视频资源均来自互联网公开资源，本站不存储任何影视文件。</>
+              )}
             </p>
             <p>
-              本站提供的所有链接和资源均来自第三方网站，其版权归原作者及原网站所有。如果您认为本站侵犯了您的版权或权益，请联系我们，我们会及时删除相关内容。
+              {isEnglish
+                ? "Links and resources come from third-party websites and remain the property of their respective owners. Contact us if you believe content infringes your rights."
+                : "本站提供的所有链接和资源均来自第三方网站，其版权归原作者及原网站所有。如果您认为本站侵犯了您的版权或权益，请联系我们，我们会及时删除相关内容。"}
             </p>
             <p>
-              本站尊重知识产权，支持正版影视。我们
-              <span className="text-white font-medium">
-                强烈建议用户通过正规渠道
-              </span>
-              （如爱奇艺、腾讯视频、优酷等）观看影视内容，以支持影视创作者。
+              {isEnglish ? (
+                <>We respect intellectual property and <span className="text-white font-medium">strongly recommend official services</span> for watching content and supporting creators.</>
+              ) : (
+                <>本站尊重知识产权，支持正版影视。我们<span className="text-white font-medium">强烈建议用户通过正规渠道</span>（如爱奇艺、腾讯视频、优酷等）观看影视内容，以支持影视创作者。</>
+              )}
             </p>
             <p className="text-xs text-gray-500 mt-4">
-              使用本站服务即表示您同意遵守相关法律法规，并自行承担使用本站服务可能产生的风险和责任。
+              {isEnglish
+                ? "By using this service, you agree to follow applicable laws and accept responsibility for your use."
+                : "使用本站服务即表示您同意遵守相关法律法规，并自行承担使用本站服务可能产生的风险和责任。"}
             </p>
           </div>
         </div>
@@ -48,7 +60,7 @@ export function Footer() {
           <div className="flex items-center gap-2">
             <span>© 2026 爱盼</span>
             <span className="text-gray-700">|</span>
-            <span>仅供学习交流使用</span>
+            <span>{isEnglish ? "For learning and discussion" : "仅供学习交流使用"}</span>
           </div>
 
           <div className="flex items-center gap-6">
@@ -84,7 +96,7 @@ export function Footer() {
                   d="M5 10l7-7m0 0l7 7m-7-7v18"
                 />
               </svg>
-              回到顶部
+              {isEnglish ? "Back to top" : "回到顶部"}
             </button>
           </div>
         </div>

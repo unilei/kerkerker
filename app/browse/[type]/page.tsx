@@ -2,7 +2,6 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
 import {
   Film,
@@ -37,6 +36,7 @@ import type {
 // ============ 页面配置 ============
 interface PageConfig {
   title: string;
+  titleEn: string;
   emoji: string;
   catalogView: Extract<CatalogView, "sections" | "latest">;
   catalogKey?: "movies" | "series";
@@ -50,6 +50,7 @@ interface PageConfig {
 const PAGE_CONFIG: Record<string, PageConfig> = {
   movies: {
     title: "电影",
+    titleEn: "Movies",
     emoji: "🎬",
     catalogView: "sections",
     catalogKey: "movies",
@@ -61,6 +62,7 @@ const PAGE_CONFIG: Record<string, PageConfig> = {
   },
   tv: {
     title: "电视剧",
+    titleEn: "TV Shows",
     emoji: "📺",
     catalogView: "sections",
     catalogKey: "series",
@@ -72,6 +74,7 @@ const PAGE_CONFIG: Record<string, PageConfig> = {
   },
   latest: {
     title: "最新",
+    titleEn: "Latest",
     emoji: "🆕",
     catalogView: "latest",
     gradient: "from-green-500/5 via-transparent to-blue-500/5",
@@ -194,6 +197,7 @@ const CATEGORY_ICONS: Record<string, React.JSX.Element> = {
 // ============ 类型定义 ============
 interface CategoryData {
   name: string;
+  key?: string;
   data: CatalogItem[];
 }
 
@@ -211,11 +215,40 @@ const SORT_INTENT: Record<string, NonNullable<CatalogFilters["sort"]>> = {
 };
 const ITEMS_PER_PAGE = 30;
 
+const TMDB_GENRE_IDS: Readonly<Record<string, string>> = {
+  剧情: "18", 科幻: "878", 动作: "28", 喜剧: "35", 爱情: "10749", 冒险: "12",
+  儿童: "10751", 歌舞: "10402", 音乐: "10402", 奇幻: "14", 动画: "16", 恐怖: "27",
+  惊悚: "53", 战争: "10752", 传记: "36", 纪录片: "99", 犯罪: "80", 悬疑: "9648",
+  家庭: "10751", 运动: "28", 历史: "36",
+};
+
+const TMDB_REGION_CODES: Readonly<Record<string, string>> = {
+  大陆: "CN", 香港: "HK", 台湾: "TW", 美国: "US", 日本: "JP", 韩国: "KR",
+  英国: "GB", 法国: "FR", 德国: "DE", 印度: "IN", 泰国: "TH", 瑞典: "SE",
+  巴西: "BR", 加拿大: "CA", 俄罗斯: "RU", 意大利: "IT", 西班牙: "ES", 澳大利亚: "AU",
+};
+
+const ENGLISH_FILTER_LABELS: Readonly<Record<string, string>> = {
+  全部: "All", 类型: "Genre", 年代: "Year", 地区: "Region", 排序: "Sort",
+  剧情: "Drama", 科幻: "Science fiction", 动作: "Action", 喜剧: "Comedy", 爱情: "Romance",
+  冒险: "Adventure", 儿童: "Family", 歌舞: "Musical", 音乐: "Music", 奇幻: "Fantasy",
+  动画: "Animation", 恐怖: "Horror", 惊悚: "Thriller", 战争: "War", 传记: "Biography",
+  纪录片: "Documentary", 犯罪: "Crime", 悬疑: "Mystery", 灾难: "Disaster", 古装: "Costume",
+  武侠: "Wuxia", 家庭: "Family", 短片: "Short", 校园: "School", 文艺: "Arthouse",
+  运动: "Sport", 青春: "Youth", 励志: "Inspiring", 美食: "Food", 治愈: "Healing",
+  历史: "History", 真人秀: "Reality", 脱口秀: "Talk show", 热门: "Popular", 时间: "Release date", 评分: "Rating",
+  大陆: "Mainland China", 香港: "Hong Kong", 台湾: "Taiwan", 亚洲: "Asia", 海外: "International", 欧美: "Western",
+  美国: "United States", 日本: "Japan", 韩国: "South Korea", 英国: "United Kingdom", 法国: "France", 德国: "Germany",
+  印度: "India", 泰国: "Thailand", 瑞典: "Sweden", 巴西: "Brazil", 加拿大: "Canada", 俄罗斯: "Russia",
+  意大利: "Italy", 西班牙: "Spain", 澳大利亚: "Australia",
+};
+
 function catalogUrl(
   config: PageConfig,
   filters: Filters,
   page: number,
-  limit: number
+  limit: number,
+  locale: string
 ): string {
   const params = new URLSearchParams({
     view: config.catalogView,
@@ -224,9 +257,15 @@ function catalogUrl(
   });
   if (config.catalogKey) params.set("key", config.catalogKey);
   if (config.catalogView === "latest") {
-    if (filters.genre) params.set("genre", filters.genre);
+    if (filters.genre) {
+      const genre = locale === "en-US" ? TMDB_GENRE_IDS[filters.genre] : filters.genre;
+      if (genre) params.set("genre", genre);
+    }
     if (filters.year) params.set("year", filters.year);
-    if (filters.region) params.set("region", filters.region);
+    if (filters.region) {
+      const region = locale === "en-US" ? TMDB_REGION_CODES[filters.region] : filters.region;
+      if (region) params.set("region", region);
+    }
     if (filters.sort) params.set("sort", SORT_INTENT[filters.sort]);
   }
   return `/api/content/catalog?${params.toString()}`;
@@ -237,12 +276,18 @@ async function fetchCatalog(url: string): Promise<CatalogResponse> {
     cache: "no-store",
     signal: AbortSignal.timeout(15_000),
   });
-  const payload = (await response.json()) as {
+  const payload = (await response.json().catch(() => null)) as {
     data?: CatalogResponse;
     message?: string;
+    error_code?: string;
   };
-  if (!response.ok || !payload.data) {
-    throw new Error(payload.message || `内容目录请求失败（HTTP ${response.status}）`);
+  if (!response.ok || !payload?.data) {
+    const isEnglish = url.includes("#en-US");
+    throw new Error(
+      isEnglish
+        ? payload.message || `Catalog request failed (HTTP ${response.status})`
+        : payload.message || `内容目录请求失败（HTTP ${response.status}）`
+    );
   }
   return payload.data;
 }
@@ -253,16 +298,18 @@ function FilterRow({
   options,
   value,
   onChange,
+  isEnglish,
 }: {
   label: string;
   options: string[];
   value: string;
   onChange: (value: string) => void;
+  isEnglish: boolean;
 }) {
   return (
     <div className="flex items-start gap-3 py-2 border-b border-gray-800/50 last:border-b-0">
       <span className="text-gray-400 text-sm whitespace-nowrap min-w-12 pt-1">
-        {label}：
+        {isEnglish ? ENGLISH_FILTER_LABELS[label] || label : label}:
       </span>
       <div className="flex flex-wrap gap-x-4 gap-y-2">
         {options.map((option) => {
@@ -277,7 +324,7 @@ function FilterRow({
                   : "text-gray-300 hover:text-white"
               }`}
             >
-              {option}
+              {isEnglish ? ENGLISH_FILTER_LABELS[option] || option : option}
             </button>
           );
         })}
@@ -292,45 +339,26 @@ export default function BrowsePage() {
   const params = useParams();
   const pageType = (params.type as string) || "movies";
   const { locale } = useLocale();
+  const isEnglish = locale === "en-US";
 
   const config = PAGE_CONFIG[pageType] || PAGE_CONFIG.movies;
 
   // 使用影片点击 hook（与首页一致，点击后跳转详情页）
   const { handleMovieClick, toast, setToast } = useMovieMatch();
 
-  // 筛选与客户端分页状态
-  const [page, setPage] = useState(1);
+  // 筛选状态；所有目录统一跟随插件游标分页。
   const [filters, setFilters] = useState<Filters>(() => ({
     genre: "",
     year: "",
     region: "",
     sort: "",
   }));
-  const hasActiveFilters = Boolean(
-    filters.genre || filters.year || filters.region || filters.sort
-  );
-  const useServerPagination = config.catalogView === "latest" && hasActiveFilters;
-
-  const baseCatalogKey = useServerPagination
-    ? null
-    : `${catalogUrl(config, filters, 1, ITEMS_PER_PAGE)}#${locale}`;
-  const {
-    data: baseData,
-    error: baseError,
-    isLoading: baseLoading,
-    mutate: mutateBase,
-  } = useSWR<CatalogResponse>(baseCatalogKey, fetchCatalog, {
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-  });
-
   const getPageKey = useCallback(
     (pageIndex: number, previousPageData: CatalogResponse | null) => {
-      if (!useServerPagination) return null;
       if (previousPageData && !previousPageData.pagination.hasMore) return null;
-      return `${catalogUrl(config, filters, pageIndex + 1, ITEMS_PER_PAGE)}#${locale}`;
+      return `${catalogUrl(config, filters, pageIndex + 1, ITEMS_PER_PAGE, locale)}#${locale}`;
     },
-    [config, filters, locale, useServerPagination]
+    [config, filters, locale]
   );
   const {
     data: pagedData,
@@ -346,17 +374,36 @@ export default function BrowsePage() {
     revalidateOnReconnect: false,
   });
 
-  const categories = useMemo<CategoryData[]>(
-    () =>
-      (baseData?.sections || []).map((section) => ({
-        name: section.title,
-        data: section.items,
-      })),
-    [baseData]
-  );
+  const categories = useMemo<CategoryData[]>(() => {
+    const sectionsByKey = new Map<string, CategoryData>();
+    for (const catalogPage of pagedData || []) {
+      for (const section of catalogPage.sections || []) {
+        const existing = sectionsByKey.get(section.key);
+        if (existing) {
+          existing.data.push(...section.items);
+        } else {
+          sectionsByKey.set(section.key, {
+            key: section.key,
+            name: section.title,
+            data: [...section.items],
+          });
+        }
+      }
+    }
+    if (sectionsByKey.size > 0) return [...sectionsByKey.values()];
+    const items = (pagedData || []).flatMap((catalogPage) => catalogPage.items || []);
+    if (items.length === 0) return [];
+    return [{
+      key: config.catalogKey || config.catalogView,
+      name: config.catalogKey === "series"
+        ? (isEnglish ? "TV shows" : "电视剧")
+        : (isEnglish ? "Movies" : "电影"),
+      data: items,
+    }];
+  }, [config.catalogKey, config.catalogView, isEnglish, pagedData]);
 
   const allMovies = useMemo(() => {
-    const pages = useServerPagination ? pagedData || [] : baseData ? [baseData] : [];
+    const pages = pagedData || [];
     const items: CatalogItem[] = [];
     const seenIds = new Set<string>();
     for (const catalogPage of pages) {
@@ -367,22 +414,14 @@ export default function BrowsePage() {
       }
     }
     return items;
-  }, [baseData, pagedData, useServerPagination]);
+  }, [pagedData]);
 
-  // 未筛选时由浏览器分页；筛选结果遵循插件返回的服务端游标。
-  const movies = useServerPagination
-    ? allMovies
-    : allMovies.slice(0, page * ITEMS_PER_PAGE);
-  const loading = useServerPagination
-    ? pagedLoading && !pagedData
-    : baseLoading && !baseData;
-  const loadingMore = useServerPagination && pagedValidating && Boolean(pagedData);
-  const requestError = useServerPagination ? pagedError : baseError;
+  const movies = allMovies;
+  const loading = pagedLoading && !pagedData;
+  const loadingMore = pagedValidating && Boolean(pagedData);
+  const requestError = pagedError;
   const error = requestError instanceof Error ? requestError.message : null;
   const hasMore = useMemo(() => {
-    if (!useServerPagination) {
-      return allMovies.length > page * ITEMS_PER_PAGE;
-    }
     if (!pagedData || pagedData.length === 0) return true;
     const lastPage = pagedData[pagedData.length - 1];
     if (!lastPage.pagination.hasMore) return false;
@@ -396,7 +435,7 @@ export default function BrowsePage() {
       )
     );
     return lastPage.items.some((item) => !previousIds.has(item.id));
-  }, [allMovies.length, page, pagedData, useServerPagination]);
+  }, [pagedData]);
 
   // 滚动位置恢复（等待加载完成后恢复）
   useScrollRestoration(`browse-${pageType}`, { delay: 100, enabled: !loading });
@@ -423,21 +462,13 @@ export default function BrowsePage() {
   // 加载更多
   const loadMore = useCallback(() => {
     if (!loadingMore && hasMore) {
-      if (useServerPagination) {
-        void setSize(size + 1);
-      } else {
-        setPage((currentPage) => currentPage + 1);
-      }
+      void setSize(size + 1);
     }
-  }, [hasMore, loadingMore, setSize, size, useServerPagination]);
+  }, [hasMore, loadingMore, setSize, size]);
 
   const refetch = useCallback(async () => {
-    if (useServerPagination) {
-      await mutatePaged();
-    } else {
-      await mutateBase();
-    }
-  }, [mutateBase, mutatePaged, useServerPagination]);
+    await mutatePaged();
+  }, [mutatePaged]);
 
   const goBack = () => {
     router.push("/");
@@ -445,22 +476,24 @@ export default function BrowsePage() {
 
   // 更新筛选器
   const updateFilter = (key: keyof Filters, value: string) => {
-    setPage(1);
     setFilters((prev) => ({ ...prev, [key]: value }));
   };
 
   const resetFilters = () => {
-    setPage(1);
     setFilters({ genre: "", year: "", region: "", sort: "" });
   };
 
   // 获取统计文字
   const getStatsText = () => {
-    if (loading) return "正在加载精彩内容...";
+    if (loading) return isEnglish ? "Loading content..." : "正在加载精彩内容...";
     if (config.hasCategories) {
-      return `探索 ${categories.length} 个精选分类`;
+      return isEnglish
+        ? `Explore ${categories.length} curated sections`
+        : `探索 ${categories.length} 个精选分类`;
     }
-    return `发现 ${movies.length} 部影视作品`;
+    return isEnglish
+      ? `${movies.length} titles found`
+      : `发现 ${movies.length} 部影视作品`;
   };
 
   return (
@@ -488,7 +521,7 @@ export default function BrowsePage() {
                   />
                 </svg>
               </div>
-              <span className="text-sm md:text-base font-medium">返回</span>
+              <span className="text-sm md:text-base font-medium">{isEnglish ? "Back" : "返回"}</span>
             </button>
             <h1 className="text-2xl md:text-3xl font-bold tracking-tight bg-gradient-to-r from-red-600 to-red-500 bg-clip-text text-transparent">
               爱盼
@@ -516,7 +549,7 @@ export default function BrowsePage() {
             <div className="text-4xl md:text-5xl">{config.emoji}</div>
             <div>
               <h1 className="text-2xl lg:text-4xl font-bold text-white mb-1 tracking-tight">
-                {config.title}
+                {isEnglish ? config.titleEn : config.title}
               </h1>
               <p className="text-sm md:text-base text-gray-400">
                 {getStatsText()}
@@ -534,24 +567,28 @@ export default function BrowsePage() {
             options={GENRE_OPTIONS}
             value={filters.genre}
             onChange={(v) => updateFilter("genre", v)}
+            isEnglish={isEnglish}
           />
           <FilterRow
             label="年代"
             options={YEAR_OPTIONS}
             value={filters.year}
             onChange={(v) => updateFilter("year", v)}
+            isEnglish={isEnglish}
           />
           <FilterRow
             label="地区"
             options={REGION_OPTIONS}
             value={filters.region}
             onChange={(v) => updateFilter("region", v)}
+            isEnglish={isEnglish}
           />
           <FilterRow
             label="排序"
             options={SORT_OPTIONS}
             value={filters.sort}
             onChange={(v) => updateFilter("sort", v)}
+            isEnglish={isEnglish}
           />
         </div>
       )}
@@ -562,7 +599,7 @@ export default function BrowsePage() {
           <div className="flex items-center justify-center py-32">
             <div className="text-center">
               <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-700 border-t-red-600 mx-auto mb-4" />
-              <p className="text-gray-400 text-lg">正在加载精彩内容...</p>
+              <p className="text-gray-400 text-lg">{isEnglish ? "Loading content..." : "正在加载精彩内容..."}</p>
             </div>
           </div>
         ) : error ? (
@@ -574,7 +611,7 @@ export default function BrowsePage() {
                 className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-lg shadow-red-600/20 flex items-center gap-2 mx-auto"
               >
                 <RefreshCw className="w-4 h-4" />
-                重新加载
+                {isEnglish ? "Retry" : "重新加载"}
               </button>
             </div>
           </div>
@@ -585,7 +622,7 @@ export default function BrowsePage() {
               const categoryMovies = category.data.map(convertToDoubanMovie);
 
               return (
-                <div key={index} className="group">
+                <div key={category.key || index} className="group">
                   <div className="flex items-center justify-between mb-4 mt-2">
                     <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-3">
                       <span>{getCategoryIcon(category.name)}</span>
@@ -594,7 +631,7 @@ export default function BrowsePage() {
                       </span>
                     </h2>
                     <div className="text-sm text-gray-500">
-                      {categoryMovies.length} 部
+                      {categoryMovies.length} {isEnglish ? "titles" : "部"}
                     </div>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-8 gap-3 md:gap-4 lg:gap-5">
@@ -610,6 +647,25 @@ export default function BrowsePage() {
                 </div>
               );
             })}
+            {(hasMore || loadingMore || movies.length > 0) && (
+              <div className="flex justify-center pt-2">
+                {loadingMore ? (
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-gray-600 border-t-red-500" />
+                    <span>{isEnglish ? "Loading..." : "加载中..."}</span>
+                  </div>
+                ) : hasMore ? (
+                  <button
+                    onClick={loadMore}
+                    className="px-8 py-3 bg-white/5 hover:bg-white/10 text-white rounded-lg font-medium transition-colors border border-white/10 hover:border-white/20"
+                  >
+                    {isEnglish ? "Load more" : "加载更多"}
+                  </button>
+                ) : (
+                  <p className="text-gray-500 text-sm">{isEnglish ? "All available titles loaded" : "已加载全部内容"}</p>
+                )}
+              </div>
+            )}
           </div>
         ) : movies.length === 0 ? (
           // 空状态 (latest)
@@ -618,15 +674,15 @@ export default function BrowsePage() {
               <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Film className="w-10 h-10 text-gray-600" />
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">暂无内容</h3>
+              <h3 className="text-xl font-bold text-white mb-2">{isEnglish ? "No content" : "暂无内容"}</h3>
               <p className="text-gray-400 mb-6">
-                没有找到符合筛选条件的影视作品
+                {isEnglish ? "No titles match the selected filters" : "没有找到符合筛选条件的影视作品"}
               </p>
               <button
                 onClick={resetFilters}
                 className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
               >
-                重置筛选条件
+                {isEnglish ? "Reset filters" : "重置筛选条件"}
               </button>
             </div>
           </div>
@@ -648,22 +704,22 @@ export default function BrowsePage() {
             </div>
 
             {/* 加载更多按钮 */}
-            {config.hasFilters && (
+            {(hasMore || loadingMore || movies.length > 0) && (
               <div className="flex justify-center mt-8">
                 {loadingMore ? (
                   <div className="flex items-center gap-2 text-gray-400">
                     <div className="animate-spin rounded-full h-5 w-5 border-2 border-gray-600 border-t-red-500" />
-                    <span>加载中...</span>
+                    <span>{isEnglish ? "Loading..." : "加载中..."}</span>
                   </div>
                 ) : hasMore ? (
                   <button
                     onClick={loadMore}
                     className="px-8 py-3 bg-white/5 hover:bg-white/10 text-white rounded-lg font-medium transition-colors border border-white/10 hover:border-white/20"
                   >
-                    加载更多
+                    {isEnglish ? "Load more" : "加载更多"}
                   </button>
                 ) : movies.length > 0 ? (
-                  <p className="text-gray-500 text-sm">已加载全部内容</p>
+                  <p className="text-gray-500 text-sm">{isEnglish ? "All available titles loaded" : "已加载全部内容"}</p>
                 ) : null}
               </div>
             )}

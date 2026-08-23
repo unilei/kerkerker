@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import type { DoubanMovie } from "@/types/douban";
 import DoubanCard from "@/components/DoubanCard";
+import { useLocale } from "@/components/providers/locale-provider";
 
 interface CategoryRowProps {
   title: string;
@@ -17,6 +18,7 @@ export function CategoryRow({
   onMovieClick,
   onViewMore,
 }: CategoryRowProps) {
+  const { locale } = useLocale();
   const INITIAL_DISPLAY_COUNT = 15;
   const displayMovies = movies.slice(0, INITIAL_DISPLAY_COUNT);
   const hasMore = movies.length > INITIAL_DISPLAY_COUNT;
@@ -34,7 +36,7 @@ export function CategoryRow({
             onClick={onViewMore}
             className="text-sm text-gray-400 hover:text-white transition-colors flex items-center space-x-1 group"
           >
-            <span>查看全部</span>
+            <span>{locale === "en-US" ? "View all" : "查看全部"}</span>
             <svg
               className="w-4 h-4 group-hover:translate-x-1 transition-transform"
               fill="none"

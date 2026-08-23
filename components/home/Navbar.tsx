@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { Menu, X, Home, Film, Tv, Clock, Github, Calendar } from "lucide-react";
+import { Menu, X, Home, Film, Tv, Clock, Github, Calendar, Trophy } from "lucide-react";
 import { useLocale } from "@/components/providers/locale-provider";
 import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
 
@@ -34,6 +34,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
     { href: "/browse/tv", label: isEnglish ? "TV" : "电视剧", icon: Tv },
     { href: "/calendar", label: isEnglish ? "Calendar" : "追剧日历", icon: Calendar },
     { href: "/browse/latest", label: isEnglish ? "Latest" : "最新", icon: Clock },
+    { href: "/category/top250", label: isEnglish ? "Top 250" : "Top250", icon: Trophy },
     {
       href: "https://github.com/unilei/kerkerker",
       label: "GitHub",

@@ -20,6 +20,7 @@ import { useCategoryData } from "@/hooks/useCategoryData";
 import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import { Toast } from "@/components/Toast";
 import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
+import { useLocale } from "@/components/providers/locale-provider";
 
 // URL 路径到分类配置的映射
 const CATEGORY_CONFIG: Record<
@@ -123,10 +124,26 @@ const CATEGORY_CONFIG: Record<
   },
 };
 
+const CATEGORY_EN_NAMES: Readonly<Record<string, string>> = {
+  in_theaters: "Now playing",
+  top250: "Top 250",
+  hot_movies: "Popular movies",
+  hot_tv: "Popular TV shows",
+  us_tv: "US TV shows",
+  jp_tv: "Japanese TV",
+  kr_tv: "Korean TV",
+  anime: "Japanese animation",
+  chinese_tv: "Chinese TV",
+  variety: "Variety shows",
+  documentary: "Documentaries",
+};
+
 export default function CategoryPage() {
   const router = useRouter();
   const params = useParams();
   const categoryType = params.type as string;
+  const { locale } = useLocale();
+  const isEnglish = locale === "en-US";
 
   // 使用影片点击 hook
   const { handleMovieClick, toast, setToast } = useMovieMatch();
@@ -143,6 +160,9 @@ export default function CategoryPage() {
     bgColor1: "bg-gray-500/10",
     bgColor2: "bg-gray-500/10",
   };
+  const pageTitle = isEnglish
+    ? CATEGORY_EN_NAMES[categoryType] || "Titles"
+    : config.name;
 
   // 滚动位置恢复（等待加载完成后恢复）
   useScrollRestoration(`category-${categoryType}`, {
@@ -179,7 +199,7 @@ export default function CategoryPage() {
                   />
                 </svg>
               </div>
-              <span className="text-sm md:text-base font-medium">返回</span>
+              <span className="text-sm md:text-base font-medium">{isEnglish ? "Back" : "返回"}</span>
             </button>
             <h1 className="text-2xl md:text-3xl font-bold tracking-tight bg-gradient-to-r from-red-600 to-red-500 bg-clip-text text-transparent">
               爱盼
@@ -206,7 +226,7 @@ export default function CategoryPage() {
           <div className="flex items-center gap-4">
             <div className="text-2xl md:text-4xl">{config.emoji}</div>
             <h1 className="text-4xl md:text-4xl font-bold text-white mb-2 tracking-tight">
-              {config.name}
+              {pageTitle}
             </h1>
           </div>
         </div>
@@ -218,7 +238,7 @@ export default function CategoryPage() {
           <div className="flex items-center justify-center py-32">
             <div className="text-center">
               <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-700 border-t-red-600 mx-auto mb-4" />
-              <p className="text-gray-400 text-lg">正在加载精彩内容...</p>
+              <p className="text-gray-400 text-lg">{isEnglish ? "Loading content..." : "正在加载精彩内容..."}</p>
             </div>
           </div>
         ) : error ? (
@@ -229,7 +249,7 @@ export default function CategoryPage() {
                 onClick={refetch}
                 className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-lg shadow-red-600/20"
               >
-                重新加载
+                {isEnglish ? "Retry" : "重新加载"}
               </button>
             </div>
           </div>
@@ -239,13 +259,13 @@ export default function CategoryPage() {
               <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Film className="w-10 h-10 text-gray-600" />
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">暂无内容</h3>
-              <p className="text-gray-400 mb-6">该分类暂无影片数据</p>
+              <h3 className="text-xl font-bold text-white mb-2">{isEnglish ? "No content" : "暂无内容"}</h3>
+              <p className="text-gray-400 mb-6">{isEnglish ? "No titles are available in this category" : "该分类暂无影片数据"}</p>
               <button
                 onClick={goBack}
                 className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
               >
-                返回首页
+                {isEnglish ? "Back to home" : "返回首页"}
               </button>
             </div>
           </div>
@@ -273,7 +293,7 @@ export default function CategoryPage() {
                   {loadingMore ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>加载中...</span>
+                      <span>{isEnglish ? "Loading..." : "加载中..."}</span>
                     </>
                   ) : (
                     <>
@@ -290,7 +310,7 @@ export default function CategoryPage() {
                           d="M19 9l-7 7-7-7"
                         />
                       </svg>
-                      <span>加载更多</span>
+                      <span>{isEnglish ? "Load more" : "加载更多"}</span>
                     </>
                   )}
                 </button>
@@ -314,7 +334,7 @@ export default function CategoryPage() {
                       d="M5 13l4 4L19 7"
                     />
                   </svg>
-                  <span>已加载全部 {movies.length} 部影片</span>
+                  <span>{isEnglish ? `All ${movies.length} titles loaded` : `已加载全部 ${movies.length} 部影片`}</span>
                 </div>
               </div>
             )}

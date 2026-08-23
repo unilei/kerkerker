@@ -124,8 +124,9 @@ export function useHomeData(): UseHomeDataReturn {
       return [];
     }
 
-    return categoryData.sections.map((section) => ({
+    const sections = categoryData.sections.map((section) => ({
       name: section.title,
+      key: section.key,
       data: section.items.map((item) => ({
         id: item.id,
         title: item.title,
@@ -135,7 +136,26 @@ export function useHomeData(): UseHomeDataReturn {
         episode_info: item.episodeInfo,
       })),
     }));
-  }, [categoryData]);
+
+    // Some providers (notably TMDB) return a flat page for new releases
+    // without provider-specific section metadata. Keep the home page useful
+    // by presenting that page as one stable, source-neutral section.
+    if (sections.length > 0 || !Array.isArray(categoryData.items) || categoryData.items.length === 0) {
+      return sections;
+    }
+    return [{
+      name: locale === "en-US" ? "Latest releases" : "最新内容",
+      key: "latest",
+      data: categoryData.items.map((item) => ({
+        id: item.id,
+        title: item.title,
+        rate: item.rating,
+        cover: item.posterUrl,
+        url: item.canonicalUrl,
+        episode_info: item.episodeInfo,
+      })),
+    }];
+  }, [categoryData, locale]);
 
   // 刷新所有数据
   const refetch = useCallback(async () => {

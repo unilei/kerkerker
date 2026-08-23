@@ -67,12 +67,26 @@ export function useCategoryData(categoryType: string): UseCategoryDataReturn {
         cache: 'no-store',
         signal: AbortSignal.timeout(15_000),
       });
-      if (!response.ok) throw new Error(`catalog request failed: ${response.status}`);
-      const payload = (await response.json()) as { data?: CatalogResponse };
-      if (!payload.data) throw new Error('catalog response missing data');
+      const payload = (await response.json().catch(() => null)) as {
+        data?: CatalogResponse;
+        message?: string;
+        error_code?: string;
+      } | null;
+      if (!response.ok) {
+        const configuredMessage = typeof payload?.message === "string" ? payload.message.trim() : "";
+        const isEnglish = locale === "en-US";
+        throw new Error(
+          isEnglish
+            ? configuredMessage || `Catalog request failed (HTTP ${response.status})`
+            : configuredMessage || `目录请求失败（HTTP ${response.status}）`
+        );
+      }
+      if (!payload?.data) {
+        throw new Error(locale === "en-US" ? "Catalog response is missing data" : "目录响应缺少数据");
+      }
       return payload.data;
     },
-    [categoryType, isTop250]
+    [categoryType, isTop250, locale]
   );
 
   const {

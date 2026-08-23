@@ -1,8 +1,12 @@
+import { useLocale } from "@/components/providers/locale-provider";
+
 interface EmptyStateProps {
   onRetry: () => void;
 }
 
 export function EmptyState({ onRetry }: EmptyStateProps) {
+  const { locale } = useLocale();
+  const isEnglish = locale === "en-US";
   return (
     <div className="h-screen flex items-center justify-center">
       <div className="text-center px-4 max-w-md">
@@ -21,13 +25,13 @@ export function EmptyState({ onRetry }: EmptyStateProps) {
             />
           </svg>
         </div>
-        <h2 className="text-2xl font-bold text-white mb-2">暂无内容</h2>
-        <p className="text-gray-400 mb-6 text-sm">当前没有可显示的内容</p>
+        <h2 className="text-2xl font-bold text-white mb-2">{isEnglish ? "No content" : "暂无内容"}</h2>
+        <p className="text-gray-400 mb-6 text-sm">{isEnglish ? "There is no content to display" : "当前没有可显示的内容"}</p>
         <button
           onClick={onRetry}
           className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors"
         >
-          刷新
+          {isEnglish ? "Refresh" : "刷新"}
         </button>
       </div>
     </div>
