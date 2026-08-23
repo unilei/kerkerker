@@ -3,7 +3,7 @@ import { requireAdminRequest } from '@/lib/admin-route';
 import { formatBytes } from '@/lib/kkpan';
 import {
   createProfileInvocation,
-  getActivePluginProfileId,
+  getRequestPluginProfileId,
   invokeProfilePlugin,
   type CloudDriveResourceCandidate,
   type PluginPage,
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const profileId = getActivePluginProfileId();
+    const profileId = getRequestPluginProfileId(request);
     const { context } = createProfileInvocation({
       profileId,
       capability: 'resource.cloud-drive',

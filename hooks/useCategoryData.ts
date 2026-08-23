@@ -2,6 +2,7 @@ import useSWRInfinite from 'swr/infinite';
 import { useMemo, useCallback } from 'react';
 import type { DoubanMovie } from '@/types/douban';
 import type { CatalogResponse, CatalogSubject } from '@/types/content-catalog';
+import { useLocale } from '@/components/providers/locale-provider';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -36,6 +37,7 @@ interface UseCategoryDataReturn {
  * 使用 SWR Infinite 实现无限滚动缓存
  */
 export function useCategoryData(categoryType: string): UseCategoryDataReturn {
+  const { locale } = useLocale();
   const isTop250 = categoryType === 'top250';
 
   // 生成 SWR key
@@ -46,15 +48,15 @@ export function useCategoryData(categoryType: string): UseCategoryDataReturn {
       // 如果上一页没有更多数据，停止
       if (previousPageData && !isTop250 && !previousPageData.pagination?.hasMore) return null;
       // 返回 key
-      return `category-${categoryType}-page-${pageIndex + 1}`;
+      return `category-${categoryType}-page-${pageIndex + 1}-locale-${locale}`;
     },
-    [categoryType, isTop250]
+    [categoryType, isTop250, locale]
   );
 
   // 数据获取函数
   const fetcher = useCallback(
     async (key: string): Promise<CatalogResponse> => {
-      const pageMatch = key.match(/page-(\d+)$/);
+      const pageMatch = key.match(/page-(\d+)(?:-|$)/);
       const page = pageMatch ? parseInt(pageMatch[1], 10) : 1;
       const params = new URLSearchParams({
         category: isTop250 ? 'top250' : categoryType,

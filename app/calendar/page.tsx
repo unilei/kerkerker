@@ -10,6 +10,7 @@ import { getImageUrl } from '@/lib/utils/image-utils';
 // Hooks
 import { useScrollState } from '@/hooks/useScrollState';
 import { useMovieMatch } from '@/hooks/useMovieMatch';
+import { useLocale } from '@/components/providers/locale-provider';
 
 // Components
 import { Navbar } from '@/components/home/Navbar';
@@ -231,6 +232,7 @@ export default function CalendarPage() {
   const [showSearch, setShowSearch] = useState(false);
   const scrolled = useScrollState(50);
   const { toast, setToast } = useMovieMatch();
+  const { locale } = useLocale();
 
   const [calendarData, setCalendarData] = useState<CalendarResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -264,7 +266,7 @@ export default function CalendarPage() {
           end_date: dateRange.end,
           region,
         });
-        const response = await fetch(`/api/content/calendar?${params.toString()}`, {
+        const response = await fetch(`/api/content/calendar?${params.toString()}#${locale}`, {
           cache: 'no-store',
           signal: AbortSignal.timeout(15_000),
         });
@@ -281,7 +283,7 @@ export default function CalendarPage() {
     }
 
     fetchCalendar();
-  }, [dateRange, region]);
+  }, [dateRange, locale, region]);
 
   // 过滤有内容的日期
   const daysWithContent = useMemo(() => {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createProfileInvocation,
-  getActivePluginProfileId,
+  getRequestPluginProfileId,
   invokeProfilePlugin,
   mirrorImageUrl,
   type ContentDetailCandidate,
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   }
 
   try {
-    const profileId = getActivePluginProfileId();
+    const profileId = getRequestPluginProfileId(request);
     const { context, pluginId } = createProfileInvocation({
       profileId,
       capability: "content.detail",

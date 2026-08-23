@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { DoubanMovie } from "@/types/douban";
 import DoubanCard from "@/components/DoubanCard";
 import { useMovieMatch } from "@/hooks/useMovieMatch";
+import { useLocale } from "@/components/providers/locale-provider";
+import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
 interface ContentSearchItem {
   id: string;
   provider_id: string;
@@ -53,6 +55,7 @@ function SearchContent() {
   const searchParams = useSearchParams();
   const queryKeyword = searchParams.get("q") || "";
   const { handleMovieClick } = useMovieMatch();
+  const { locale } = useLocale();
 
   const [searchKeyword, setSearchKeyword] = useState(queryKeyword);
   const [searchResults, setSearchResults] = useState<DoubanMovie[]>([]);
@@ -74,7 +77,7 @@ function SearchContent() {
       setSearched(true);
       try {
         const response = await fetch(
-          `/api/content/search?q=${encodeURIComponent(queryKeyword.trim())}`,
+          `/api/content/search?q=${encodeURIComponent(queryKeyword.trim())}#${locale}`,
           { cache: "no-store", signal: AbortSignal.timeout(15_000) }
         );
         if (!response.ok) throw new Error(`内容搜索失败（HTTP ${response.status}）`);
@@ -96,7 +99,7 @@ function SearchContent() {
     return () => {
       cancelled = true;
     };
-  }, [queryKeyword]);
+  }, [locale, queryKeyword]);
 
   // 处理搜索提交
   const handleSearch = () => {
@@ -143,6 +146,7 @@ function SearchContent() {
                 <span className="text-white ml-1">搜索</span>
               </h1>
             </div>
+            <LanguageSwitcher compact />
             {/* 搜索框 */}
             <div className="flex-1 max-w-2xl mx-auto">
               <div className="relative group">

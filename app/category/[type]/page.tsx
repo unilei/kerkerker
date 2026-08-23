@@ -19,6 +19,7 @@ import { useMovieMatch } from "@/hooks/useMovieMatch";
 import { useCategoryData } from "@/hooks/useCategoryData";
 import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import { Toast } from "@/components/Toast";
+import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
 
 // URL 路径到分类配置的映射
 const CATEGORY_CONFIG: Record<
@@ -183,6 +184,7 @@ export default function CategoryPage() {
             <h1 className="text-2xl md:text-3xl font-bold tracking-tight bg-gradient-to-r from-red-600 to-red-500 bg-clip-text text-transparent">
               爱盼
             </h1>
+            <LanguageSwitcher compact />
           </div>
         </div>
       </nav>

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { Menu, X, Home, Film, Tv, Clock, Github, Calendar } from "lucide-react";
+import { useLocale } from "@/components/providers/locale-provider";
+import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
 
 interface NavbarProps {
   scrolled: boolean;
@@ -11,6 +13,8 @@ interface NavbarProps {
 
 export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { locale } = useLocale();
+  const isEnglish = locale === "en-US";
 
   // 防止移动端菜单打开时页面滚动
   useEffect(() => {
@@ -25,14 +29,14 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
   }, [isMobileMenuOpen]);
 
   const navItems = [
-    { href: "/", label: "首页", icon: Home },
-    { href: "/browse/movies", label: "电影", icon: Film },
-    { href: "/browse/tv", label: "电视剧", icon: Tv },
-    { href: "/calendar", label: "追剧日历", icon: Calendar },
-    { href: "/browse/latest", label: "最新", icon: Clock },
+    { href: "/", label: isEnglish ? "Home" : "首页", icon: Home },
+    { href: "/browse/movies", label: isEnglish ? "Movies" : "电影", icon: Film },
+    { href: "/browse/tv", label: isEnglish ? "TV" : "电视剧", icon: Tv },
+    { href: "/calendar", label: isEnglish ? "Calendar" : "追剧日历", icon: Calendar },
+    { href: "/browse/latest", label: isEnglish ? "Latest" : "最新", icon: Clock },
     {
       href: "https://github.com/unilei/kerkerker",
-      label: "Github",
+      label: "GitHub",
       icon: Github,
       external: true,
     },
@@ -100,7 +104,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
             <button
               onClick={onSearchOpen}
               className="p-2 hover:bg-white/10 rounded-full transition-colors"
-              aria-label="搜索"
+              aria-label={isEnglish ? "Search" : "搜索"}
             >
               <svg
                 className="w-5 h-5 md:w-6 md:h-6 text-white"
@@ -116,6 +120,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                 />
               </svg>
             </button>
+            <LanguageSwitcher compact />
           </div>
         </div>
       </nav>
@@ -147,6 +152,9 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
               <h2 className="text-red-600 text-2xl font-bold tracking-tight">
                 爱盼
               </h2>
+            </div>
+            <div className="mt-4">
+              <LanguageSwitcher />
             </div>
           </div>
 

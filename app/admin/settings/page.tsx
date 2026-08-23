@@ -7,12 +7,13 @@ import { PanResourcesTab } from "@/components/admin/PanResourcesTab";
 import { PluginCompliancePanel } from "@/components/admin/PluginCompliancePanel";
 import { DatabaseSettingsTab } from "@/components/admin/DatabaseSettingsTab";
 import { PluginJobCenter } from "@/components/admin/PluginJobCenter";
+import { PluginInstallationCenter } from "@/components/admin/PluginInstallationCenter";
 import type { ToastState, ConfirmState } from "@/components/admin/types";
-import { HardDrive, Database, ShieldCheck, ListChecks } from "lucide-react";
+import { HardDrive, Database, ShieldCheck, ListChecks, Package } from "lucide-react";
 
-type TabType = "pan" | "jobs" | "compliance" | "database";
+type TabType = "pan" | "jobs" | "compliance" | "database" | "plugins";
 
-const VALID_TABS: TabType[] = ["pan", "jobs", "compliance", "database"];
+const VALID_TABS: TabType[] = ["pan", "jobs", "compliance", "database", "plugins"];
 
 function SettingsContent() {
   const router = useRouter();
@@ -51,6 +52,7 @@ function SettingsContent() {
 
   const tabs = [
     { id: "pan" as TabType, name: "网盘资源", icon: HardDrive },
+    { id: "plugins" as TabType, name: "插件中心", icon: Package },
     { id: "jobs" as TabType, name: "任务中心", icon: ListChecks },
     { id: "compliance" as TabType, name: "合规", icon: ShieldCheck },
     { id: "database" as TabType, name: "数据库", icon: Database },
@@ -121,6 +123,10 @@ function SettingsContent() {
 
         {activeTab === "jobs" && (
           <PluginJobCenter onShowToast={setToast} onShowConfirm={setConfirm} />
+        )}
+
+        {activeTab === "plugins" && (
+          <PluginInstallationCenter onShowToast={setToast} onShowConfirm={setConfirm} />
         )}
 
         {activeTab === "compliance" && (

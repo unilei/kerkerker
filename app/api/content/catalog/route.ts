@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createProfileInvocation,
-  getActivePluginProfileId,
+  getRequestPluginProfileId,
   invokeProfilePlugin,
   type ContentCatalogCandidate,
   type PluginPage,
@@ -155,7 +155,7 @@ export async function GET(request: NextRequest) {
     : undefined;
 
   try {
-    const profileId = getActivePluginProfileId();
+    const profileId = getRequestPluginProfileId(request);
     const { context } = createProfileInvocation({
       profileId,
       capability: "content.catalog",

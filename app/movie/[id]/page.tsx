@@ -18,6 +18,8 @@ import Link from "next/link";
 import { getImageUrl } from "@/lib/utils/image-utils";
 import { loadMovieCache } from "@/hooks/useMovieMatch";
 import { PanResourceSection } from "@/components/movie/PanResourceSection";
+import { useLocale } from "@/components/providers/locale-provider";
+import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
 
 // 完整的电影详情
 interface MovieDetail {
@@ -66,6 +68,7 @@ export default function MovieDetailPage() {
   const router = useRouter();
 
   const doubanId = params.id as string;
+  const { locale } = useLocale();
 
   // 电影详情状态
   const [movieDetail, setMovieDetail] = useState<MovieDetail | null>(null);
@@ -108,7 +111,7 @@ export default function MovieDetailPage() {
     const fetchApiDetail = async () => {
       try {
         const response = await fetch(
-          `/api/content/detail/${encodeURIComponent(doubanId)}`,
+          `/api/content/detail/${encodeURIComponent(doubanId)}#${locale}`,
           { cache: "no-store", signal: AbortSignal.timeout(15_000) }
         );
         if (!response.ok) return;
@@ -157,7 +160,7 @@ export default function MovieDetailPage() {
     if (doubanId) {
       fetchApiDetail();
     }
-  }, [doubanId]);
+  }, [doubanId, locale]);
 
   // 便捷访问
   const title = movieDetail?.title || "";
@@ -195,6 +198,7 @@ export default function MovieDetailPage() {
               <span className="text-red-600">爱盼</span>
               <span className="text-white ml-1">详情</span>
             </h1>
+            <LanguageSwitcher compact />
           </div>
         </div>
       </nav>

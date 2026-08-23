@@ -25,6 +25,8 @@ import { DoubanMovie } from "@/types/douban";
 import { useMovieMatch } from "@/hooks/useMovieMatch";
 import { useScrollRestoration } from "@/hooks/useScrollRestoration";
 import { Toast } from "@/components/Toast";
+import { useLocale } from "@/components/providers/locale-provider";
+import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
 import type {
   CatalogFilters,
   CatalogItem,
@@ -289,6 +291,7 @@ export default function BrowsePage() {
   const router = useRouter();
   const params = useParams();
   const pageType = (params.type as string) || "movies";
+  const { locale } = useLocale();
 
   const config = PAGE_CONFIG[pageType] || PAGE_CONFIG.movies;
 
@@ -310,7 +313,7 @@ export default function BrowsePage() {
 
   const baseCatalogKey = useServerPagination
     ? null
-    : catalogUrl(config, filters, 1, ITEMS_PER_PAGE);
+    : `${catalogUrl(config, filters, 1, ITEMS_PER_PAGE)}#${locale}`;
   const {
     data: baseData,
     error: baseError,
@@ -325,9 +328,9 @@ export default function BrowsePage() {
     (pageIndex: number, previousPageData: CatalogResponse | null) => {
       if (!useServerPagination) return null;
       if (previousPageData && !previousPageData.pagination.hasMore) return null;
-      return catalogUrl(config, filters, pageIndex + 1, ITEMS_PER_PAGE);
+      return `${catalogUrl(config, filters, pageIndex + 1, ITEMS_PER_PAGE)}#${locale}`;
     },
-    [config, filters, useServerPagination]
+    [config, filters, locale, useServerPagination]
   );
   const {
     data: pagedData,
@@ -490,6 +493,7 @@ export default function BrowsePage() {
             <h1 className="text-2xl md:text-3xl font-bold tracking-tight bg-gradient-to-r from-red-600 to-red-500 bg-clip-text text-transparent">
               爱盼
             </h1>
+            <LanguageSwitcher compact />
           </div>
         </div>
       </nav>

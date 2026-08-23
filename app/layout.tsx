@@ -2,6 +2,13 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { SWRProvider } from "@/components/providers/swr-provider";
+import { LocaleProvider } from "@/components/providers/locale-provider";
+import {
+  DEFAULT_LOCALE,
+  LOCALE_COOKIE_NAME,
+  parseSupportedLocale,
+} from "@/lib/locale";
+import { cookies } from "next/headers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,13 +27,17 @@ export const metadata: Metadata = {
     "爱盼 - 聚合豆瓣影视资料与公开网盘资源信息，提供影片介绍、评分、上映信息检索与导航服务",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale =
+    parseSupportedLocale((await cookies()).get(LOCALE_COOKIE_NAME)?.value) ||
+    DEFAULT_LOCALE;
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang={locale} suppressHydrationWarning>
       <head>
         {/* 移动端布局优化 - 适配刘海屏与沉浸式状态栏 */}
         <meta
@@ -62,7 +73,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         suppressHydrationWarning
       >
-        <SWRProvider>{children}</SWRProvider>
+        <LocaleProvider>
+          <SWRProvider>{children}</SWRProvider>
+        </LocaleProvider>
       </body>
     </html>
   );

@@ -3,6 +3,7 @@ import { useCallback, useMemo } from 'react';
 import type { DoubanMovie } from '@/types/douban';
 import type { CategoryData, HeroData, HeroMovie } from '@/types/home';
 import type { CatalogResponse } from '@/types/content-catalog';
+import { useLocale } from '@/components/providers/locale-provider';
 
 // SWR 缓存键
 const SWR_KEY_HERO = '/api/content/catalog?view=featured';
@@ -35,20 +36,25 @@ interface UseHomeDataReturn {
  * 使用 SWR 实现缓存，页面返回时不会重复加载
  */
 export function useHomeData(): UseHomeDataReturn {
+  const { locale } = useLocale();
+  // The fragment is intentionally client-only: it partitions SWR caches while
+  // the locale preference itself travels to the server in the kk_locale cookie.
+  const heroKey = `${SWR_KEY_HERO}#${locale}`;
+  const categoriesKey = `${SWR_KEY_CATEGORIES}#${locale}`;
   // Hero Banner 数据
   const {
     data: heroData,
     error: heroError,
     isLoading: heroLoading,
     mutate: mutateHero,
-  } = useSWR<CatalogResponse>(SWR_KEY_HERO, fetchCatalog);
+  } = useSWR<CatalogResponse>(heroKey, fetchCatalog);
 
   // 分类数据
   const {
     data: categoryData,
     error: categoryError,
     mutate: mutateCategories,
-  } = useSWR<CatalogResponse>(SWR_KEY_CATEGORIES, fetchCatalog);
+  } = useSWR<CatalogResponse>(categoriesKey, fetchCatalog);
 
   // 转换 Hero 数据格式
   const { heroMovies, heroDataList } = useMemo(() => {

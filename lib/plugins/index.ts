@@ -8,6 +8,10 @@ export {
   getActivePluginProfileId,
   pluginProfileRegistry,
 } from "@/lib/plugins/builtin-profiles";
+export {
+  getRequestLocale,
+  getRequestPluginProfileId,
+} from "@/lib/plugins/request-profile";
 export { doubanContentPlugin, doubanContentManifest } from "@/lib/plugins/adapters/douban-content";
 export { kkpanCloudDrivePlugin, kkpanCloudDriveManifest } from "@/lib/plugins/adapters/kkpan-cloud-drive";
 export { tmdbContentPlugin, tmdbContentManifest } from "@/lib/plugins/adapters/tmdb-content";
@@ -27,3 +31,4 @@ export * from "@/lib/plugins/compliance";
 export * from "@/lib/plugins/job-runner";
 export * from "@/lib/plugins/job-executor";
 export * from "@/lib/plugins/mongo-job-store";
+export * from "@/lib/plugins/installation";

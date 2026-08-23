@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createProfileInvocation,
-  getActivePluginProfileId,
+  getRequestPluginProfileId,
   invokeProfilePlugin,
   type ContentCandidate,
   type PluginPage,
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const profileId = getActivePluginProfileId();
+    const profileId = getRequestPluginProfileId(request);
     const { context } = createProfileInvocation({
       profileId,
       capability: "content.search",
