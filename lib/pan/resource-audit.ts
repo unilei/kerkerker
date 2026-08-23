@@ -11,6 +11,7 @@ import {
   requestAuditId,
 } from "@/lib/compliance-route";
 import type { PanResource } from "@/types/pan-resource";
+import { requireUsable } from "@/lib/plugins/installation";
 
 type ResourceMutation = "create" | "update" | "delete";
 
@@ -29,6 +30,22 @@ export type ResourcePolicyLookup = (options: {
   contentId?: string;
 }) => Promise<{ allowed: boolean; wouldDeny?: boolean; reason?: string }>;
 
+export type ResourceInstallationLookup = (pluginId: string) => Promise<boolean>;
+
+const defaultInstallationLookup: ResourceInstallationLookup = async (pluginId) => {
+  const enforce =
+    process.env.NODE_ENV === "production" ||
+    process.env.KERKERKER_PLUGIN_INSTALLATION_ENFORCE === "true";
+  if (!enforce) return true;
+  try {
+    await requireUsable(pluginId);
+    return true;
+  } catch (error) {
+    if (process.env.KERKERKER_COMPLIANCE_MODE === "enforce") throw error;
+    return false;
+  }
+};
+
 /**
  * Apply takedown policy to public resource responses. Admin listings are
  * intentionally not filtered so operators can inspect and remediate records.
@@ -40,7 +57,8 @@ export async function filterPublicPanResources<T extends PanResource>(
   resources: readonly T[],
   lookup: ActiveTakedownLookup = getActiveTakedown,
   scope: { contentId?: string } = {},
-  policyLookup: ResourcePolicyLookup = ensurePluginAllowed
+  policyLookup: ResourcePolicyLookup = ensurePluginAllowed,
+  installationLookup: ResourceInstallationLookup = defaultInstallationLookup
 ): Promise<T[]> {
   if (resources.length === 0) return [];
 
@@ -106,6 +124,7 @@ export async function filterPublicPanResources<T extends PanResource>(
   );
 
   const policyBlocked = new Set<string>();
+  const installationBlocked = new Set<string>();
   const providerIds = [
     ...new Set(
       resources
@@ -114,6 +133,20 @@ export async function filterPublicPanResources<T extends PanResource>(
     ),
   ];
   if (providerIds.length > 0) {
+    try {
+      const installationResults = await Promise.all(
+        providerIds.map(async (providerId) => ({
+          providerId,
+          installed: await installationLookup(providerId),
+        }))
+      );
+      for (const result of installationResults) {
+        if (!result.installed) installationBlocked.add(result.providerId);
+      }
+    } catch (error) {
+      if (complianceModeFromEnvironment() === "enforce") throw error;
+      console.warn("公开网盘资源插件安装状态暂不可用，审计模式保留兼容读取", error);
+    }
     try {
       const policyResults = await Promise.all(
         providerIds.map(async (providerId) => ({
@@ -141,6 +174,7 @@ export async function filterPublicPanResources<T extends PanResource>(
     if (resource.content_id && blocked.has(`content:${resource.content_id}`)) return false;
     if (resource.provider_id && blocked.has(`provider:${resource.provider_id}`)) return false;
     if (resource.provider_id && policyBlocked.has(resource.provider_id)) return false;
+    if (resource.provider_id && installationBlocked.has(resource.provider_id)) return false;
     return !blocked.has(`resource:${resource.id}`);
   });
 }

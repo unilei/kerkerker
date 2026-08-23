@@ -359,3 +359,28 @@ test("public pan resources are hidden when the provider policy denies access", a
   );
   assert.deepEqual(filtered, []);
 });
+
+test("public pan resources are hidden when the source plugin is not usable", async () => {
+  const resources: PanResource[] = [
+    {
+      id: "resource-installation-blocked",
+      douban_id: "4",
+      provider_id: "kerkerker.kkpan-cloud-drive",
+      provider_resource_id: "4",
+      brand: "quark",
+      title: "blocked until install",
+      url: "https://example.test/blocked-installation",
+      enabled: true,
+      created_at: "2026-08-21T00:00:00.000Z",
+      updated_at: "2026-08-21T00:00:00.000Z",
+    },
+  ];
+  const filtered = await filterPublicPanResources(
+    resources,
+    async () => null,
+    {},
+    async () => ({ allowed: true }),
+    async () => false
+  );
+  assert.deepEqual(filtered, []);
+});
