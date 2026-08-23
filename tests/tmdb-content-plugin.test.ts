@@ -172,6 +172,7 @@ test("TMDB catalog maps latest-series discovery and paging", async () => {
     const url = new URL(requestUrl);
     assert.equal(url.pathname, "/3/discover/tv");
     assert.equal(url.searchParams.get("sort_by"), "first_air_date.desc");
+    assert.match(url.searchParams.get("first_air_date.lte") || "", /^20\d\d-\d\d-\d\d$/);
     assert.equal(url.searchParams.get("language"), "en-US");
     assert.equal(page.total, 45);
     assert.equal(page.nextCursor, "2");

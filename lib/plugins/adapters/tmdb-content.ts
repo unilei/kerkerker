@@ -315,6 +315,8 @@ function catalogEndpoint(
       : request.filters?.sort === "recommended"
         ? "popularity.desc"
         : dateSort;
+    const today = new Date().toISOString().slice(0, 10);
+    params[kind === "tv" ? "first_air_date.lte" : "primary_release_date.lte"] = today;
     if (request.filters?.year) {
       params[kind === "tv" ? "first_air_date_year" : "primary_release_year"] = request.filters.year;
     }
