@@ -23,10 +23,16 @@ function isImageResponse(response: Response): boolean {
   return response.ok && (response.headers.get('content-type') || '').toLowerCase().startsWith('image/');
 }
 
-async function fetchCandidate(url: string, timeout: number, headers: HeadersInit = {}): Promise<Response> {
+async function fetchCandidate(
+  url: string,
+  timeout: number,
+  headers: HeadersInit = {},
+  signal?: AbortSignal,
+): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(timeout);
   const response = await fetch(url, {
     headers,
-    signal: AbortSignal.timeout(timeout),
+    signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
   });
   if (isImageResponse(response)) return response;
   await response.body?.cancel().catch(() => undefined);
@@ -46,13 +52,32 @@ async function fetchImageWithProxy(url: string): Promise<Response> {
   // Race it with the configured proxies so a slow/broken proxy cannot turn a
   // valid image into the UI placeholder, while retaining a fallback for
   // regions where the CDN is blocked.
-  const direct = fetchCandidate(url, 8_000, browserHeaders);
-  const proxyAttempts = PROXY_POOL.map((proxy) =>
-    fetchCandidate(proxy.url(url), proxy.timeout, browserHeaders)
-  );
+  const candidates = [
+    { url, timeout: 8_000 },
+    ...PROXY_POOL.map((proxy) => ({ url: proxy.url(url), timeout: proxy.timeout })),
+  ];
+  const attempts = candidates.map((candidate) => {
+    const controller = new AbortController();
+    return {
+      controller,
+      // Each request gets its own controller so only losing races are
+      // cancelled after a winner has produced a readable Response.
+      promise: fetchCandidate(candidate.url, candidate.timeout, browserHeaders, controller.signal),
+    };
+  });
+
   try {
-    return await Promise.any([direct, ...proxyAttempts]);
+    const winner = await Promise.any(
+      attempts.map((attempt, index) =>
+        attempt.promise.then((response) => ({ index, response }))
+      )
+    );
+    attempts.forEach((attempt, index) => {
+      if (index !== winner.index) attempt.controller.abort();
+    });
+    return winner.response;
   } catch {
+    attempts.forEach((attempt) => attempt.controller.abort());
     throw new Error('所有获取方式都失败');
   }
 }

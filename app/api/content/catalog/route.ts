@@ -167,7 +167,9 @@ export async function GET(request: NextRequest) {
       profileId,
       capability: "content.catalog",
       signal: request.signal,
-      timeoutMs: 15_000,
+      // Top 250 aggregates thirteen provider pages; give the remote plugin
+      // enough time to complete its bounded parallel fetch.
+      timeoutMs: 30_000,
     });
     const result = await invokeProfilePlugin<PluginPage<ContentCatalogCandidate>>({
       profileId,

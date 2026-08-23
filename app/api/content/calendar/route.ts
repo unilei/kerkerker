@@ -70,7 +70,7 @@ function toLegacyEntry(
     // as a visible fallback so the calendar does not silently render a
     // placeholder for an otherwise valid show.
     poster: calendar.posterUrl || candidate.preview?.posterUrl || candidate.preview?.backdropUrl || "",
-    backdrop: calendar.backdropUrl,
+    backdrop: calendar.backdropUrl || candidate.preview?.backdropUrl || candidate.preview?.posterUrl,
     overview: preferredOverview(candidate.overview, locale),
     vote_average: Number.isFinite(rating) ? rating : 0,
     ...(external
@@ -111,7 +111,9 @@ export async function GET(request: NextRequest) {
       profileId,
       capability: "content.calendar",
       signal: request.signal,
-      timeoutMs: 15_000,
+      // Calendar resolves episode schedules after the show-level discovery
+      // call, so its provider fan-out needs a longer server deadline.
+      timeoutMs: 30_000,
     });
     const page = await invokeProfilePlugin<PluginPage<ContentCalendarCandidate>>({
       profileId,

@@ -32,17 +32,25 @@ function formatLocalDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function parseLocalDate(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
 function formatDate(
   dateStr: string,
   locale: string,
 ): { main: string; sub: string; isToday: boolean; isTomorrow: boolean } {
-  const date = new Date(dateStr);
+  // ISO date-only values represent a calendar day, not a UTC instant. Parse
+  // them in the browser's local calendar so users west of UTC do not see the
+  // previous day in the heading.
+  const date = parseLocalDate(dateStr);
   const today = new Date();
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
   
-  const todayStr = today.toISOString().split('T')[0];
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const todayStr = formatLocalDate(today);
+  const tomorrowStr = formatLocalDate(tomorrow);
 
   const isEnglish = locale === 'en-US';
   const mainText = new Intl.DateTimeFormat(isEnglish ? 'en-US' : 'zh-CN', {
@@ -262,13 +270,17 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [region, setRegion] = useState(defaultRegion);
+  const [regionLocale, setRegionLocale] = useState(locale);
   const [weekOffset, setWeekOffset] = useState(0);
 
   // The selected profile owns the provider region. Keep the calendar request
   // aligned with it so switching to en-US never sends the cn-default region.
   useEffect(() => {
     setRegion(defaultRegion);
-  }, [defaultRegion]);
+    setRegionLocale(locale);
+    setCalendarData(null);
+    setLoading(true);
+  }, [defaultRegion, locale]);
 
   // 计算日期范围
   const dateRange = useMemo(() => {
@@ -287,6 +299,10 @@ export default function CalendarPage() {
 
   // 加载日历数据
   useEffect(() => {
+    // Wait for the profile's default region to be synchronized after a
+    // locale switch. This prevents one transient en-US + CN request.
+    if (regionLocale !== locale) return;
+
     async function fetchCalendar() {
       setLoading(true);
       setError(null);
@@ -298,7 +314,7 @@ export default function CalendarPage() {
         });
         const response = await fetch(`/api/content/calendar?${params.toString()}#${locale}`, {
           cache: 'no-store',
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(30_000),
         });
         if (!response.ok) throw new Error(`calendar request failed: ${response.status}`);
         const payload = (await response.json()) as { data?: CalendarResponse };
@@ -313,7 +329,7 @@ export default function CalendarPage() {
     }
 
     fetchCalendar();
-  }, [dateRange, isEnglish, locale, region]);
+  }, [dateRange, isEnglish, locale, region, regionLocale]);
 
   // 过滤有内容的日期
   const daysWithContent = useMemo(() => {

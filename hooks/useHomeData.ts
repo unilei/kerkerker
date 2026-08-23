@@ -45,7 +45,7 @@ function actionableCatalogMessage(
 async function fetchCatalog(url: string): Promise<CatalogResponse> {
   const response = await fetch(url, {
     cache: 'no-store',
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(30_000),
   });
   const payload = (await response.json().catch(() => null)) as CatalogErrorPayload | null;
   if (!response.ok) {

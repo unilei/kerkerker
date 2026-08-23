@@ -65,7 +65,7 @@ export function useCategoryData(categoryType: string): UseCategoryDataReturn {
       });
       const response = await fetch(`/api/content/catalog?${params.toString()}`, {
         cache: 'no-store',
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(30_000),
       });
       const payload = (await response.json().catch(() => null)) as {
         data?: CatalogResponse;

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ChevronRight, Star } from 'lucide-react';
 import { DoubanMovie } from '@/types/douban';
 import { getImageUrl } from '@/lib/utils/image-utils';
+import { useLocale } from '@/components/providers/locale-provider';
 
 interface DoubanCardProps {
   movie: DoubanMovie;
@@ -15,6 +16,8 @@ interface DoubanCardProps {
 export default function DoubanCard({ movie, onSelect, priority = false }: DoubanCardProps) {
   const [imageError, setImageError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const { locale } = useLocale();
+  const isEnglish = locale === 'en-US';
  
   // 豆瓣图片已镜像到 R2 直连，仅被墙图床（TMDB）走代理
   const imageUrl = getImageUrl(movie.cover);
@@ -85,7 +88,7 @@ export default function DoubanCard({ movie, onSelect, priority = false }: Douban
         {/* 详情按钮 */}
         <div className="mt-3 flex items-center space-x-2">
           <button className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg text-sm font-semibold hover:bg-opacity-90 hover:scale-105 transition-all duration-200 shadow-lg">
-            <span>查看详情</span>
+            <span>{isEnglish ? 'View details' : '查看详情'}</span>
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>

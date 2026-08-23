@@ -126,7 +126,7 @@ const CATEGORY_CONFIG: Record<
 
 const CATEGORY_EN_NAMES: Readonly<Record<string, string>> = {
   in_theaters: "Now playing",
-  top250: "Top 250",
+  top250: "TMDB Top Rated 250",
   hot_movies: "Popular movies",
   hot_tv: "Popular TV shows",
   us_tv: "US TV shows",
