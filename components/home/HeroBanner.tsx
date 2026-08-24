@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
+  HardDrive,
+} from "lucide-react";
 import type { DoubanMovie } from "@/types/douban";
 import type { HeroData } from "@/types/home";
+import { SEARCH_SITE_URL } from "@/lib/seo";
 import { getImageUrl } from "@/lib/utils/image-utils";
 import { useLocale } from "@/components/providers/locale-provider";
 
@@ -86,8 +92,11 @@ export function HeroBanner({
           return (
             <div
               key={movie.id}
+              aria-hidden={!isActive}
               className={`absolute inset-0 transition-opacity duration-700 ease-in-out ${
-                isActive ? "opacity-100 z-10" : "opacity-0 z-0"
+                isActive
+                  ? "pointer-events-auto z-10 opacity-100"
+                  : "pointer-events-none z-0 opacity-0"
               }`}
             >
               {/* 背景图层 */}
@@ -115,8 +124,9 @@ export function HeroBanner({
                 />
 
                 {/* 智能遮罩系统 */}
-                <div className="absolute inset-0 bg-linear-to-t from-black/75 via-black/30 to-transparent opacity-80" />
+                <div className="absolute inset-0 bg-linear-to-t from-black/70 via-black/25 to-transparent" />
                 <div className="absolute inset-0 bg-linear-to-r from-black/55 via-black/15 to-transparent hidden md:block" />
+                <div className="absolute inset-x-0 bottom-0 h-[48%] bg-linear-to-t from-black via-black/70 to-transparent" />
               </div>
 
               {/* 内容区域 */}
@@ -176,27 +186,45 @@ export function HeroBanner({
                     {/* 简介 - 仅PC端显示 */}
                     {heroData.description && (
                       <p
-                        className="hidden md:block text-gray-300 text-base lg:text-lg mb-8 max-w-2xl leading-relaxed drop-shadow-md"
-                        style={{
-                          display: "-webkit-box",
-                          WebkitLineClamp: 3,
-                          WebkitBoxOrient: "vertical",
-                          overflow: "hidden",
-                        }}
+                        className="mb-8 hidden max-w-2xl overflow-hidden text-base leading-relaxed text-gray-300 drop-shadow-md md:line-clamp-3 lg:text-lg"
                       >
                         {heroData.description}
                       </p>
                     )}
 
                     {/* 操作按钮 */}
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-3">
                       <button
                         onClick={() => onMovieClick(movie)}
-                        className="group flex items-center gap-3 bg-white text-black px-8 py-3.5 rounded-xl font-bold hover:bg-primary hover:scale-105 transition-all duration-300 shadow-lg shadow-white/5"
+                        tabIndex={isActive ? 0 : -1}
+                        className="group flex min-h-12 items-center gap-3 rounded-md bg-white px-5 py-3 font-bold text-black shadow-lg shadow-black/20 transition-colors duration-200 hover:bg-white/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white md:px-7"
                       >
-                        <span className="text-lg">{isEnglish ? "View details" : "查看详情"}</span>
-                        <ChevronRight className="w-6 h-6" />
+                        <span className="text-base md:text-lg">
+                          {isEnglish ? "View details" : "查看详情"}
+                        </span>
+                        <ChevronRight className="h-5 w-5 md:h-6 md:w-6" />
                       </button>
+                      <a
+                        href={SEARCH_SITE_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        tabIndex={isActive ? 0 : -1}
+                        className="flex min-h-12 items-center gap-3 rounded-md bg-zinc-700/75 px-5 py-3 font-semibold text-white backdrop-blur-sm transition-colors duration-200 hover:bg-zinc-600/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white md:px-6"
+                        aria-label={
+                          isEnglish
+                            ? "Open cloud drive search in a new tab"
+                            : "在新标签页打开网盘搜索"
+                        }
+                      >
+                        <HardDrive className="h-5 w-5" aria-hidden="true" />
+                        <span className="text-base">
+                          {isEnglish ? "Cloud search" : "网盘搜索"}
+                        </span>
+                        <ArrowUpRight
+                          className="h-4 w-4 text-white/70"
+                          aria-hidden="true"
+                        />
+                      </a>
                     </div>
                   </div>
                 </div>
@@ -222,7 +250,7 @@ export function HeroBanner({
         </button>
 
         {/* 指示器 */}
-        <div className="absolute hidden md:flex bottom-6 left-1/2 -translate-x-1/2 z-20 items-center gap-2">
+        <div className="absolute hidden md:flex bottom-5 left-1/2 -translate-x-1/2 z-20 items-center gap-2">
           {heroMovies.map((_, index) => (
             <button
               key={index}
