@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildPanSyncTargetUpserts,
   preparePanSyncTargetInputs,
   scanContentCatalogPages,
   upsertPanSyncTargets,
@@ -77,6 +78,26 @@ test("pan sync target preparation resolves content_id when the caller omits it",
 
   assert.deepEqual(resolved, ["1292052"]);
   assert.equal(targets[0]?.content_id, CONTENT_ID_A);
+});
+
+test("pan sync target upsert writes each field through only one Mongo operator", () => {
+  const operations = buildPanSyncTargetUpserts(
+    [{
+      douban_id: "1292052",
+      content_id: CONTENT_ID_A,
+      title: "测试影片",
+    }],
+    "2026-08-24T00:00:00.000Z"
+  );
+  const update = operations[0]?.updateOne.update;
+
+  assert.ok(update);
+  assert.equal(update.$set.content_id, CONTENT_ID_A);
+  assert.equal("content_id" in update.$setOnInsert, false);
+  assert.deepEqual(
+    Object.keys(update.$set).filter((key) => key in update.$setOnInsert),
+    []
+  );
 });
 
 test("pan sync target preparation rejects a caller content_id that disagrees with Douban identity", async () => {

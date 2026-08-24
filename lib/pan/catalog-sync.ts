@@ -174,6 +174,37 @@ export type PanSyncContentIdResolver = (
   doubanId: string
 ) => Promise<string>;
 
+export function buildPanSyncTargetUpserts(
+  inputs: PreparedPanSyncTargetInput[],
+  now: string
+) {
+  return inputs.map((input) => ({
+    updateOne: {
+      filter: { douban_id: input.douban_id },
+      update: {
+        $set: {
+          title: input.title,
+          content_id: input.content_id,
+          ...(input.cover !== undefined ? { cover: input.cover } : {}),
+          ...(input.year !== undefined ? { year: input.year } : {}),
+          ...(input.internal_id !== undefined
+            ? { internal_id: input.internal_id }
+            : {}),
+          updated_at: now,
+        },
+        $setOnInsert: {
+          douban_id: input.douban_id,
+          status: "pending" as const,
+          attempts: 0,
+          resources_count: 0,
+          created_at: now,
+        },
+      },
+      upsert: true,
+    },
+  }));
+}
+
 async function resolveDoubanContentId(doubanId: string): Promise<string> {
   const identity = await resolveContentIdentity([
     { providerId: DOUBAN_CONTENT_PLUGIN_ID, externalId: doubanId },
@@ -232,35 +263,9 @@ export async function upsertPanSyncTargets(
 
   const now = new Date().toISOString();
   const coll = await collection();
-  const result = await coll.bulkWrite(
-    validated.map((input) => ({
-      updateOne: {
-        filter: { douban_id: input.douban_id },
-        update: {
-          $set: {
-            title: input.title,
-            content_id: input.content_id,
-            ...(input.cover !== undefined ? { cover: input.cover } : {}),
-            ...(input.year !== undefined ? { year: input.year } : {}),
-            ...(input.internal_id !== undefined
-              ? { internal_id: input.internal_id }
-              : {}),
-            updated_at: now,
-          },
-          $setOnInsert: {
-            douban_id: input.douban_id,
-            content_id: input.content_id,
-            status: "pending" as const,
-            attempts: 0,
-            resources_count: 0,
-            created_at: now,
-          },
-        },
-        upsert: true,
-      },
-    })),
-    { ordered: false }
-  );
+  const result = await coll.bulkWrite(buildPanSyncTargetUpserts(validated, now), {
+    ordered: false,
+  });
   return result.upsertedCount + result.modifiedCount;
 }
 

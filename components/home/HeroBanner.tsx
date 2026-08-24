@@ -27,9 +27,11 @@ export function HeroBanner({
     let timer: NodeJS.Timeout;
 
     const startTimer = () => {
+      if (document.hidden) return;
+      clearInterval(timer);
       timer = setInterval(() => {
         setCurrentHeroIndex((prevIndex) => (prevIndex + 1) % heroMovies.length);
-      }, 5000);
+      }, 8000);
     };
 
     const stopTimer = () => {
@@ -98,7 +100,7 @@ export function HeroBanner({
                   loading={index === 0 ? "eager" : "lazy"}
                   fetchPriority={index === 0 ? "high" : "auto"}
                   decoding="async"
-                  className="block md:hidden w-full h-full object-cover"
+                  className="block md:hidden w-full h-full object-cover brightness-110"
                 />
 
                 {/* PC端：16:9 横向海报 */}
@@ -109,12 +111,12 @@ export function HeroBanner({
                   loading={index === 0 ? "eager" : "lazy"}
                   fetchPriority={index === 0 ? "high" : "auto"}
                   decoding="async"
-                  className="hidden md:block w-full h-full object-cover object-top"
+                  className="hidden md:block w-full h-full object-cover object-top brightness-110"
                 />
 
                 {/* 智能遮罩系统 */}
-                <div className="absolute inset-0 bg-linear-to-t from-black via-black/60 to-transparent opacity-90" />
-                <div className="absolute inset-0 bg-linear-to-r from-black/80 via-black/40 to-transparent hidden md:block" />
+                <div className="absolute inset-0 bg-linear-to-t from-black/75 via-black/30 to-transparent opacity-80" />
+                <div className="absolute inset-0 bg-linear-to-r from-black/55 via-black/15 to-transparent hidden md:block" />
               </div>
 
               {/* 内容区域 */}
@@ -253,8 +255,8 @@ function HeroBannerSkeleton() {
       </div>
 
       {/* 渐变遮罩 */}
-      <div className="absolute inset-0 bg-linear-to-t from-black via-black/60 to-transparent opacity-90" />
-      <div className="absolute inset-0 bg-linear-to-r from-black/80 via-black/40 to-transparent hidden md:block" />
+      <div className="absolute inset-0 bg-linear-to-t from-black/75 via-black/30 to-transparent opacity-80" />
+      <div className="absolute inset-0 bg-linear-to-r from-black/55 via-black/15 to-transparent hidden md:block" />
 
       {/* 内容骨架 */}
       <div className="absolute inset-0 flex items-end">

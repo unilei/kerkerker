@@ -1,7 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Search, Loader2, Film, RefreshCw, DatabaseZap } from "lucide-react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
+import {
+  CalendarClock,
+  DatabaseZap,
+  Film,
+  Loader2,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
 import {
   PAN_BRAND_CONFIGS,
   type PanResource,
@@ -65,6 +73,71 @@ interface SyncStatsView {
 const inputClass =
   "flex-1 bg-[#333] border border-[#444] rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-[#E50914] transition-colors";
 
+type Tool = "catalog" | "scheduler" | "kkpan" | "search" | "resource";
+
+function ToolModal({
+  open,
+  title,
+  description,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  description?: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="flex max-h-[min(92vh,960px)] w-full max-w-6xl flex-col overflow-hidden border border-[#444] bg-[#141414] shadow-2xl sm:rounded-lg">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[#333] bg-[#181818] px-4 py-3 sm:px-6">
+          <div className="min-w-0">
+            <h2 className="flex items-center gap-2 text-base font-medium text-white">
+              {title}
+            </h2>
+            {description && <p className="mt-1 text-xs text-gray-500">{description}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded p-2 text-gray-400 transition-colors hover:bg-[#333] hover:text-white"
+            title="关闭"
+            aria-label="关闭"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="min-h-0 overflow-y-auto p-3 sm:p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 async function fetchContentDetail(id: string): Promise<ContentDetailResponse | null> {
   const response = await fetch(`/api/content/detail/${encodeURIComponent(id)}`, {
     cache: "no-store",
@@ -84,6 +157,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
 
   // 选中的影片
   const [selectedMovie, setSelectedMovie] = useState<SelectedMovie | null>(null);
+  const [activeTool, setActiveTool] = useState<Tool | null>(null);
 
   // 最近录入（未选中影片时展示）
   const [recentResources, setRecentResources] = useState<PanResource[]>([]);
@@ -93,6 +167,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
   const [syncingMode, setSyncingMode] = useState<"incremental" | "backfill" | null>(null);
   const [syncResult, setSyncResult] = useState<SyncStatsView | null>(null);
   const [backfillLimit, setBackfillLimit] = useState("100");
+  const closeTool = useCallback(() => setActiveTool(null), []);
 
   // 加载同步状态
   const loadSyncState = useCallback(async () => {
@@ -239,6 +314,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
       year?: string;
     }) => {
       setSelectedMovie(movie);
+      setActiveTool("resource");
       setSearchResults([]);
       setHasSearched(false);
       setSearchQuery("");
@@ -255,6 +331,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
       cover: item.cover,
       year: item.year,
     });
+    setActiveTool("resource");
     setSearchResults([]);
     setHasSearched(false);
     setSearchQuery("");
@@ -270,6 +347,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
     }
 
     setSelectedMovie({ douban_id: id, title: `豆瓣 ${id}` });
+    setActiveTool("resource");
     setSearchResults([]);
     setHasSearched(false);
     setSearchQuery("");
@@ -299,6 +377,7 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
       content_id: resource.content_id,
       title: resource.movie_title || `豆瓣 ${doubanId}`,
     });
+    setActiveTool("resource");
     enrichMovie(doubanId);
   };
 
@@ -308,272 +387,296 @@ export function PanResourcesTab({ onShowToast, onShowConfirm }: PanResourcesTabP
 
   return (
     <div className="space-y-6">
-      {/* 说明 */}
-      <div className="bg-[#181818] border border-[#333] rounded-lg p-4">
-        <p className="text-sm text-gray-400">
-          为影片录入夸克 / 百度 / 迅雷 / 光鸭 / UC 网盘分享链接。支持整段粘贴资源文本自动解析，
-          也可直接到影片详情页点「管理」录入。录入后会在详情页「网盘资源」区块展示。
+      <div className="border-b border-[#333] pb-5">
+        <h2 className="text-lg font-medium text-white">网盘资源工作台</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          选择需要执行的操作，配置和长列表会在独立窗口中打开。
         </p>
       </div>
 
-      <PanCatalogSyncPanel
-        onShowToast={onShowToast}
-        onSelectMovie={handleSelectCatalogMovie}
-      />
-
-      <PanSyncSchedulerPanel onShowToast={onShowToast} />
-
-      {/* kkpans 自动同步 */}
-      <div className="bg-[#181818] border border-[#333] rounded-lg p-6">
-        <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-          <RefreshCw size={18} className="text-[#E50914]" />
-          kkpans 自动同步
-        </h3>
-
-        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 mb-4">
-          <span>
-            上次增量：{syncState?.last_incremental_at?.slice(0, 19).replace("T", " ") || "从未"}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => setActiveTool("catalog")}
+          className="group flex min-h-28 items-start gap-4 rounded-lg border border-[#333] bg-[#181818] p-5 text-left transition-colors hover:border-[#555] hover:bg-[#1d1d1d]"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-red-950/50 text-[#E50914]">
+            <DatabaseZap size={20} />
           </span>
-          <span>
-            上次补库：{syncState?.last_backfill_at?.slice(0, 19).replace("T", " ") || "从未"}
+          <span className="min-w-0">
+            <span className="block font-medium text-white">影片同步中心</span>
+            <span className="mt-1 block text-xs leading-5 text-gray-500">
+              发现站内影片、查看同步状态并重新同步单片。
+            </span>
           </span>
-        </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTool("scheduler")}
+          className="group flex min-h-28 items-start gap-4 rounded-lg border border-[#333] bg-[#181818] p-5 text-left transition-colors hover:border-[#555] hover:bg-[#1d1d1d]"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-blue-950/50 text-blue-300">
+            <CalendarClock size={20} />
+          </span>
+          <span className="min-w-0">
+            <span className="block font-medium text-white">自动同步与日志</span>
+            <span className="mt-1 block text-xs leading-5 text-gray-500">
+              配置每日任务，查看实时进度和最近运行日志。
+            </span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTool("kkpan")}
+          className="group flex min-h-28 items-start gap-4 rounded-lg border border-[#333] bg-[#181818] p-5 text-left transition-colors hover:border-[#555] hover:bg-[#1d1d1d]"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-emerald-950/50 text-emerald-300">
+            <RefreshCw size={20} />
+          </span>
+          <span className="min-w-0">
+            <span className="block font-medium text-white">kkpans 数据同步</span>
+            <span className="mt-1 block text-xs leading-5 text-gray-500">
+              拉取最新转存记录，或按豆瓣热榜批量补库。
+            </span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTool("search")}
+          className="group flex min-h-28 items-start gap-4 rounded-lg border border-[#333] bg-[#181818] p-5 text-left transition-colors hover:border-[#555] hover:bg-[#1d1d1d]"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-amber-950/50 text-amber-300">
+            <Search size={20} />
+          </span>
+          <span className="min-w-0">
+            <span className="block font-medium text-white">查找并录入资源</span>
+            <span className="mt-1 block text-xs leading-5 text-gray-500">
+              按片名或豆瓣 ID 找到影片，再管理网盘链接。
+            </span>
+          </span>
+        </button>
+      </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => handleSync("incremental")}
-            disabled={syncingMode !== null}
-            className="px-4 py-2 bg-[#E50914] hover:bg-[#f6121d] disabled:opacity-50 text-white text-sm rounded transition-colors flex items-center gap-2"
-          >
-            {syncingMode === "incremental" ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-            增量同步（最新转存）
-          </button>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleSync("backfill")}
-              disabled={syncingMode !== null}
-              className="px-4 py-2 bg-[#333] hover:bg-[#444] disabled:opacity-50 text-white text-sm rounded transition-colors flex items-center gap-2"
-            >
-              {syncingMode === "backfill" ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <DatabaseZap size={14} />
-              )}
-              批量补库（豆瓣热榜）
-            </button>
-            <input
-              type="number"
-              min={1}
-              max={200}
-              value={backfillLimit}
-              onChange={(e) => setBackfillLimit(e.target.value)}
-              className="w-20 bg-[#333] border border-[#444] rounded px-2 py-2 text-sm text-white focus:outline-none focus:border-[#E50914]"
-              title="补库影片数上限"
-            />
-            <span className="text-xs text-gray-500">部影片</span>
+      <section className="border-t border-[#333] pt-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-medium text-white">最近录入</h3>
+            <p className="mt-1 text-xs text-gray-600">点击影片可继续管理资源</p>
           </div>
+          <button
+            type="button"
+            onClick={() => setActiveTool("search")}
+            className="flex items-center gap-1.5 rounded bg-[#333] px-3 py-2 text-xs text-white transition-colors hover:bg-[#444]"
+          >
+            <Film size={14} />
+            录入影片
+          </button>
         </div>
+        {recentResources.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-500">
+            暂无网盘资源
+          </p>
+        ) : (
+          <div className="grid gap-2 lg:grid-cols-2">
+            {recentResources.slice(0, 8).map((resource) => (
+              <button
+                key={resource.id}
+                type="button"
+                onClick={() => handleSelectRecent(resource)}
+                className="flex min-w-0 items-center gap-3 rounded border border-[#333] bg-[#181818] px-4 py-3 text-left transition-colors hover:border-[#555] hover:bg-[#202020]"
+              >
+                <BrandBadge brand={resource.brand} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-white">
+                    {resource.movie_title || `豆瓣 ${resource.douban_id}`}
+                    <span className="text-gray-500"> · {resource.title}</span>
+                  </span>
+                  <span className="mt-0.5 block text-xs text-gray-600">
+                    {PAN_BRAND_CONFIGS[resource.brand].name} · {resource.updated_at?.slice(0, 10)}
+                    {!resource.enabled ? " · 已禁用" : ""}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
 
-        {/* 同步结果统计 */}
-        {syncResult && (
-          <div className="mt-4 bg-[#222] border border-[#333] rounded-lg p-4 text-sm text-gray-300">
-            <p className="text-white font-medium mb-2">
-              {syncResult.mode === "backfill" ? "批量补库" : "增量同步"}结果
-              <span className="text-gray-500 ml-2 text-xs">
-                耗时 {(syncResult.durationMs / 1000).toFixed(1)}s
-              </span>
-            </p>
-            <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
-              <span>拉到资源 <b className="text-white">{syncResult.pulled}</b></span>
-              <span className="text-green-400">新入库 <b>{syncResult.imported}</b></span>
-              <span>已存在跳过 <b className="text-white">{syncResult.skippedExisting}</b></span>
-              <span>未匹配影片 <b className="text-white">{syncResult.unmatched}</b></span>
-              {syncResult.mode === "incremental" && (
-                <span className="text-amber-400">
-                  失效禁用 <b>{syncResult.disabled}</b>，换新 <b>{syncResult.refreshed ?? 0}</b>（检查 {syncResult.checkedTitles} 部）
-                </span>
-              )}
-              {(syncResult.categoryErrors ||
-                syncResult.searchErrors ||
-                syncResult.doubanErrors ||
-                syncResult.sourceErrors) && (
-                <span className="text-red-400">
-                  上游错误{" "}
-                  {(
-                    (syncResult.categoryErrors || 0) +
-                    (syncResult.searchErrors || 0) +
-                    (syncResult.doubanErrors || 0) +
-                    (syncResult.sourceErrors || 0)
-                  )}
-                </span>
-              )}
+      <ToolModal
+        open={activeTool === "catalog"}
+        title="影片网盘同步中心"
+        description="发现站内影片、区分同步状态并执行单片或批量同步。"
+        onClose={closeTool}
+      >
+        <PanCatalogSyncPanel
+          onShowToast={onShowToast}
+          onSelectMovie={handleSelectCatalogMovie}
+        />
+      </ToolModal>
+
+      <ToolModal
+        open={activeTool === "scheduler"}
+        title="自动同步与运行日志"
+        description="定时任务由应用内部执行，配置、进度和日志都保存在数据库中。"
+        onClose={closeTool}
+      >
+        <PanSyncSchedulerPanel onShowToast={onShowToast} />
+      </ToolModal>
+
+      <ToolModal
+        open={activeTool === "kkpan"}
+        title="kkpans 数据同步"
+        description="只同步已成功转存的资源。"
+        onClose={closeTool}
+      >
+        <section className="rounded-lg border border-[#333] bg-[#181818] p-4 sm:p-6">
+          <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-gray-500">
+            <span>上次增量：{syncState?.last_incremental_at?.slice(0, 19).replace("T", " ") || "从未"}</span>
+            <span>上次补库：{syncState?.last_backfill_at?.slice(0, 19).replace("T", " ") || "从未"}</span>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => handleSync("incremental")}
+              disabled={syncingMode !== null}
+              className="flex items-center justify-center gap-2 rounded bg-[#E50914] px-4 py-2.5 text-sm text-white transition-colors hover:bg-[#f6121d] disabled:opacity-50"
+            >
+              {syncingMode === "incremental" ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              增量同步
+            </button>
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleSync("backfill")}
+                disabled={syncingMode !== null}
+                className="flex flex-1 items-center justify-center gap-2 rounded bg-[#333] px-4 py-2.5 text-sm text-white transition-colors hover:bg-[#444] disabled:opacity-50 sm:flex-none"
+              >
+                {syncingMode === "backfill" ? <Loader2 size={14} className="animate-spin" /> : <DatabaseZap size={14} />}
+                批量补库
+              </button>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={backfillLimit}
+                onChange={(event) => setBackfillLimit(event.target.value)}
+                className="w-20 rounded border border-[#444] bg-[#333] px-2 py-2.5 text-sm text-white focus:border-[#E50914] focus:outline-none"
+                aria-label="补库影片数上限"
+              />
+              <span className="shrink-0 text-xs text-gray-500">部</span>
             </div>
           </div>
-        )}
-
-        <p className="mt-3 text-xs text-gray-600">
-          增量同步拉取 kkpans 最新转存成功的资源，自动匹配豆瓣影片入库，并对 kkpan 来源的旧资源做失效检测；
-          批量补库按豆瓣热门影片逐片搜索 kkpans 入库。仅转存成功的资源会被同步。
-        </p>
-      </div>
-
-      {/* 影片搜索 */}
-      <div className="bg-[#181818] border border-[#333] rounded-lg p-6">
-        <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-          <Film size={18} className="text-[#E50914]" />
-          查找影片
-        </h3>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="输入影片名称搜索，或直接输入豆瓣 ID"
-            className={inputClass}
-          />
-          <button
-            onClick={handleSearch}
-            disabled={isSearching}
-            className="px-4 py-2 bg-[#E50914] hover:bg-[#f6121d] disabled:opacity-50 text-white rounded transition-colors flex items-center gap-2 shrink-0"
-          >
-            {isSearching ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <Search size={16} />
-            )}
-            搜索
-          </button>
-          <button
-            onClick={handleDirectId}
-            className="px-4 py-2 bg-[#333] hover:bg-[#444] text-white rounded transition-colors shrink-0"
-          >
-            用 ID 直达
-          </button>
-        </div>
-
-        {/* 搜索结果 */}
-        {hasSearched && (
-          <div className="mt-4">
-            {searchResults.length === 0 ? (
-              <p className="text-sm text-gray-500 py-4 text-center">
-                {isSearching ? "搜索中..." : "未找到相关影片"}
+          {syncResult && (
+            <div className="mt-5 border-t border-[#333] pt-4 text-xs text-gray-400">
+              <p className="mb-2 text-sm font-medium text-white">
+                {syncResult.mode === "backfill" ? "批量补库" : "增量同步"}完成
+                <span className="ml-2 text-xs font-normal text-gray-500">耗时 {(syncResult.durationMs / 1000).toFixed(1)} 秒</span>
               </p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 max-h-96 overflow-y-auto p-1">
-                {searchResults.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => handleSelectMovie(item)}
-                    className="text-left bg-[#222] hover:bg-[#2a2a2a] border border-[#333] hover:border-[#E50914] rounded-lg p-2 transition-colors group"
-                  >
-                    <div className="aspect-2/3 rounded overflow-hidden bg-[#333] mb-2">
-                      {item.cover ? (
-                        <img
-                          src={item.cover}
-                          alt={item.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <Film size={24} className="text-gray-600" />
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-sm text-white truncate">{item.title}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {item.year ? `${item.year} · ` : ""}ID: {item.id}
-                    </p>
-                  </button>
-                ))}
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                <span>拉取 <b className="text-white">{syncResult.pulled}</b></span>
+                <span className="text-green-400">新增 <b>{syncResult.imported}</b></span>
+                <span>跳过 <b className="text-white">{syncResult.skippedExisting}</b></span>
+                <span>未匹配 <b className="text-white">{syncResult.unmatched}</b></span>
+                {syncResult.mode === "incremental" && <span className="text-amber-400">禁用 {syncResult.disabled} · 换新 {syncResult.refreshed ?? 0}</span>}
               </div>
-            )}
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+          <p className="mt-5 text-xs leading-5 text-gray-600">
+            增量同步会拉取最新转存记录并检查旧资源；批量补库按豆瓣热门影片逐片搜索。
+          </p>
+        </section>
+      </ToolModal>
 
-      {/* 选中影片的管理面板 */}
-      {selectedMovie ? (
-        <div className="bg-[#181818] border border-[#333] rounded-lg p-6">
-          {/* 影片信息 */}
-          <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#333]">
-            <div className="flex items-center gap-3 min-w-0">
-              {selectedMovie.cover ? (
-                <img
-                  src={selectedMovie.cover}
-                  alt={selectedMovie.title}
-                  className="w-10 h-14 rounded object-cover shrink-0"
-                />
-              ) : null}
+      <ToolModal
+        open={activeTool === "search"}
+        title="查找影片"
+        description="搜索影片或直接输入豆瓣 ID，选中后进入资源管理。"
+        onClose={closeTool}
+      >
+        <section className="rounded-lg border border-[#333] bg-[#181818] p-4 sm:p-6">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="输入影片名称或豆瓣 ID"
+              className={inputClass}
+            />
+            <button
+              type="button"
+              onClick={handleSearch}
+              disabled={isSearching}
+              className="flex items-center justify-center gap-2 rounded bg-[#E50914] px-4 py-2 text-white transition-colors hover:bg-[#f6121d] disabled:opacity-50"
+            >
+              {isSearching ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+              搜索
+            </button>
+            <button
+              type="button"
+              onClick={handleDirectId}
+              className="rounded bg-[#333] px-4 py-2 text-white transition-colors hover:bg-[#444]"
+            >
+              用 ID 直达
+            </button>
+          </div>
+          {hasSearched && (
+            <div className="mt-5">
+              {searchResults.length === 0 ? (
+                <p className="py-8 text-center text-sm text-gray-500">{isSearching ? "搜索中..." : "未找到相关影片"}</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                  {searchResults.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleSelectMovie(item)}
+                      className="group min-w-0 rounded-lg border border-[#333] bg-[#222] p-2 text-left transition-colors hover:border-[#E50914] hover:bg-[#2a2a2a]"
+                    >
+                      <div className="mb-2 aspect-2/3 overflow-hidden rounded bg-[#333]">
+                        {item.cover ? (
+                          <img src={item.cover} alt={item.title} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center"><Film size={24} className="text-gray-600" /></div>
+                        )}
+                      </div>
+                      <p className="truncate text-sm text-white">{item.title}</p>
+                      <p className="mt-0.5 truncate text-xs text-gray-500">{item.year ? `${item.year} · ` : ""}ID: {item.id}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      </ToolModal>
+
+      <ToolModal
+        open={activeTool === "resource" && selectedMovie !== null}
+        title={selectedMovie ? `资源管理 · ${selectedMovie.title}` : "资源管理"}
+        description="添加、编辑或禁用该影片的网盘资源。"
+        onClose={closeTool}
+      >
+        {selectedMovie && (
+          <div className="rounded-lg border border-[#333] bg-[#181818] p-4 sm:p-6">
+            <div className="mb-6 flex items-center gap-3 border-b border-[#333] pb-4">
+              {selectedMovie.cover && <img src={selectedMovie.cover} alt={selectedMovie.title} className="h-14 w-10 shrink-0 rounded object-cover" />}
               <div className="min-w-0">
-                <h3 className="text-white font-medium truncate">
-                  {selectedMovie.title}
-                </h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  豆瓣 ID: {selectedMovie.douban_id}
-                  {selectedMovie.year ? ` · ${selectedMovie.year}` : ""}
-                  {selectedMovie.internal_id
-                    ? ` · internal_id: ${selectedMovie.internal_id}`
-                    : ""}
+                <p className="truncate font-medium text-white">{selectedMovie.title}</p>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  豆瓣 ID: {selectedMovie.douban_id}{selectedMovie.year ? ` · ${selectedMovie.year}` : ""}{selectedMovie.internal_id ? ` · internal_id: ${selectedMovie.internal_id}` : ""}
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setSelectedMovie(null)}
-              className="px-3 py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white text-sm rounded transition-colors shrink-0"
-            >
-              关闭
-            </button>
+            <PanResourceManager
+              movie={selectedMovie}
+              onShowToast={onShowToast}
+              onShowConfirm={onShowConfirm}
+              onChanged={loadRecent}
+            />
           </div>
-
-          <PanResourceManager
-            movie={selectedMovie}
-            onShowToast={onShowToast}
-            onShowConfirm={onShowConfirm}
-            onChanged={loadRecent}
-          />
-        </div>
-      ) : (
-        /* 未选中影片时展示最近录入 */
-        <div className="bg-[#181818] border border-[#333] rounded-lg p-6">
-          <h3 className="text-white font-medium mb-4">最近录入</h3>
-          {recentResources.length === 0 ? (
-            <p className="text-sm text-gray-500 py-4 text-center">
-              暂无网盘资源，搜索影片后开始录入
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {recentResources.map((resource) => (
-                <button
-                  key={resource.id}
-                  onClick={() => handleSelectRecent(resource)}
-                  className="w-full flex items-center gap-3 bg-[#222] hover:bg-[#2a2a2a] border border-[#333] hover:border-[#444] rounded-lg px-4 py-3 transition-colors text-left"
-                >
-                  <BrandBadge brand={resource.brand} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white truncate">
-                      {resource.movie_title || `豆瓣 ${resource.douban_id}`}
-                      <span className="text-gray-500"> · {resource.title}</span>
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {PAN_BRAND_CONFIGS[resource.brand].name} · 更新于{" "}
-                      {resource.updated_at?.slice(0, 10)}
-                      {!resource.enabled && (
-                        <span className="ml-1 text-gray-600">（已禁用）</span>
-                      )}
-                    </p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </ToolModal>
     </div>
   );
 }

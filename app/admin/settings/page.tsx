@@ -78,15 +78,15 @@ function SettingsContent() {
 
       {/* Tabs Navigation - Netflix Style */}
       <div className="bg-[#181818] border-b border-[#333]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <nav className="flex space-x-1">
+        <div className="max-w-7xl mx-auto overflow-x-auto px-4 scrollbar-hide sm:px-6 lg:px-8">
+          <nav className="flex w-max min-w-full space-x-1">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
                   key={tab.id}
                   onClick={() => handleTabChange(tab.id)}
-                  className={`px-6 py-4 text-sm font-medium transition-all relative ${
+                  className={`relative shrink-0 whitespace-nowrap px-4 py-4 text-sm font-medium transition-all sm:px-6 ${
                     activeTab === tab.id
                       ? "text-white"
                       : "text-[#808080] hover:text-white"

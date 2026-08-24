@@ -93,6 +93,32 @@ function formatTime(value?: string) {
   return value.slice(0, 16).replace("T", " ");
 }
 
+interface CatalogSyncApiResponse<T = unknown> {
+  code?: number;
+  message?: string;
+  data?: T;
+}
+
+/**
+ * Reverse proxies may replace an upstream 5xx JSON response with an HTML
+ * error page. Read text first so the admin UI reports the HTTP failure instead
+ * of leaking a confusing `Unexpected token '<'` JSON parse error.
+ */
+async function readApiResponse<T>(response: Response): Promise<CatalogSyncApiResponse<T>> {
+  const text = await response.text();
+  let result: CatalogSyncApiResponse<T>;
+  try {
+    result = JSON.parse(text) as CatalogSyncApiResponse<T>;
+  } catch {
+    throw new Error(
+      response.status
+        ? `同步接口暂时不可用（HTTP ${response.status}）`
+        : "同步接口暂时不可用"
+    );
+  }
+  return result;
+}
+
 export function PanCatalogSyncPanel({
   onShowToast,
   onSelectMovie,
@@ -117,10 +143,11 @@ export function PanCatalogSyncPanel({
       });
       if (keyword.trim()) params.set("keyword", keyword.trim());
       const response = await fetch(`/api/pan-resources/catalog-sync?${params}`);
-      const result = await response.json();
-      if (result.code !== 200) {
+      const result = await readApiResponse<TargetResponse>(response);
+      if (!response.ok || result.code !== 200) {
         throw new Error(result.message || "读取同步台账失败");
       }
+      if (!result.data) throw new Error("读取同步台账失败：响应数据为空");
       setData(result.data);
       setLoadError(null);
     } catch (error) {
@@ -153,8 +180,15 @@ export function PanCatalogSyncPanel({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json();
-    if (result.code !== 200) throw new Error(result.message || "同步操作失败");
+    const result = await readApiResponse<BatchResponse & {
+      discovered?: number;
+      upserted?: number;
+      sourceErrors?: string[];
+    }>(response);
+    if (!response.ok || result.code !== 200) {
+      throw new Error(result.message || `同步操作失败（HTTP ${response.status}）`);
+    }
+    if (!result.data) throw new Error("同步操作失败：响应数据为空");
     return result.data as BatchResponse & {
       discovered?: number;
       upserted?: number;
