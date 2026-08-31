@@ -351,7 +351,8 @@ async function initializeDatabase(db: Db) {
     );
     await shortDramaSyncStateCollection.createIndex({ id: 1 }, { unique: true });
 
-    // 网盘凭证：每平台一条有效凭证（is_default 唯一由应用层保证）。
+    // 网盘凭证：每平台一条默认凭证（部分索引：仅约束 is_default: true 的文档；
+    // 注意 Mongo partialFilterExpression 不支持 $type 别名 "boolean"，用等值条件）
     const cloudCredentialsCollection = db.collection(
       COLLECTIONS.CLOUD_CREDENTIALS
     );
@@ -359,7 +360,7 @@ async function initializeDatabase(db: Db) {
       { platform: 1, is_default: 1 },
       {
         unique: true,
-        partialFilterExpression: { is_default: { $type: "boolean" } },
+        partialFilterExpression: { is_default: true },
       }
     );
 

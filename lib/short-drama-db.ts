@@ -46,44 +46,40 @@ export async function upsertShortDramaFromScrape(
     throw new RangeError("source_article_id 必须是数字");
   }
 
-  const setOnInsert = {
-    source: input.source,
-    source_article_id: input.source_article_id,
-    title,
-    tags: (input.tags || []).map((tag) => boundedText(tag, 40)).filter(Boolean),
-    ...(input.source_share_url
-      ? { source_share_url: boundedText(input.source_share_url, 2000) }
-      : {}),
-    ...(input.publish_date
-      ? { publish_date: boundedText(input.publish_date, 10) }
-      : {}),
-    ...(Number.isInteger(input.episode_count)
-      ? { episode_count: input.episode_count }
-      : {}),
-    status: "discovered" as ShortDramaStatus,
-    transfer_attempts: 0,
-    enabled: true,
-    created_at: now,
-    updated_at: now,
-  };
-
+  // 重抓刷新字段放 $set（源站可能补标签/换链接）；初始创建字段放 $setOnInsert。
+  // 同一路径绝不能同时出现在 $set 与 $setOnInsert（Mongo 报 ConflictingUpdateOperators）。
+  const providedTags = (input.tags || [])
+    .map((tag) => boundedText(tag, 40))
+    .filter(Boolean);
   const result = await collection.findOneAndUpdate(
     {
       source: input.source,
       source_article_id: input.source_article_id,
     },
     {
-      // 重抓时只刷新标签与源链接（源站可能补标签/换链接），不动转存状态
       $set: {
-        ...(input.tags && input.tags.length > 0
-          ? { tags: (input.tags || []).map((tag) => boundedText(tag, 40)).filter(Boolean) }
-          : {}),
+        updated_at: now,
+        ...(providedTags.length > 0 ? { tags: providedTags } : {}),
         ...(input.source_share_url
           ? { source_share_url: boundedText(input.source_share_url, 2000) }
           : {}),
-        updated_at: now,
       },
-      $setOnInsert: setOnInsert,
+      $setOnInsert: {
+        source: input.source,
+        source_article_id: input.source_article_id,
+        title,
+        ...(providedTags.length === 0 ? { tags: [] } : {}),
+        ...(input.publish_date
+          ? { publish_date: boundedText(input.publish_date, 10) }
+          : {}),
+        ...(Number.isInteger(input.episode_count)
+          ? { episode_count: input.episode_count }
+          : {}),
+        status: "discovered" as ShortDramaStatus,
+        transfer_attempts: 0,
+        enabled: true,
+        created_at: now,
+      },
     },
     { upsert: true, returnDocument: "after" }
   );

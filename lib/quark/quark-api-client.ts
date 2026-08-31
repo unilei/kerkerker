@@ -1483,6 +1483,13 @@ export class QuarkApiClient {
         : undefined;
 
     if (!response.ok) {
+      // 凭证失效（HTTP 401 / 业务码 31001）单独分类：转存流水线据此
+      // 中止整轮并标记凭证，而不是把每部剧都计入普通失败重试。
+      if (isCredentialErrorPayload(payload, response.status)) {
+        throw new QuarkCredentialInvalidError(
+          message || `夸克凭证已失效 (HTTP ${response.status})`
+        );
+      }
       throw new QuarkApiError(
         message || `夸克接口请求失败: ${response.status} ${response.statusText}`,
         {
@@ -1495,6 +1502,9 @@ export class QuarkApiClient {
       );
     }
     if (code !== null && code !== 0 && code !== '0') {
+      if (isCredentialErrorPayload(payload, response.status)) {
+        throw new QuarkCredentialInvalidError(message || '夸克凭证已失效');
+      }
       throw new QuarkApiError(message || `夸克接口返回错误码 ${code}`, {
         code,
         httpStatus: response.status,

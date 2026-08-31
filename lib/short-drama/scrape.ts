@@ -107,6 +107,10 @@ export async function runShortDramaScrape(
         stats.pages_scraped += 1;
       } catch (error) {
         stats.failed_pages += 1;
+        console.warn(
+          `短剧列表页 ${page} 抓取失败:`,
+          error instanceof Error ? error.message : String(error)
+        );
         if (page === 1) throw error; // 首页失败视为上游不可用
         await sleep(PAGE_DELAY_MS);
         page += 1;
@@ -168,8 +172,12 @@ export async function runShortDramaScrape(
           if (upsert.created) stats.items_created += 1;
           else stats.items_updated += 1;
           processedIds.push(articleId);
-        } catch {
+        } catch (error) {
           stats.failed_details += 1;
+          console.warn(
+            `短剧详情 ${item.article_id} 抓取失败:`,
+            error instanceof Error ? error.message : String(error)
+          );
         }
         await sleep(DETAIL_DELAY_MS);
       }
@@ -302,8 +310,12 @@ export async function runShortDramaTagSync(
         }
         stats.tags_processed += 1;
         stats.dramas_tagged += tagged;
-      } catch {
+      } catch (error) {
         stats.failed_tags += 1;
+        console.warn(
+          `标签「${tag}」搜索回填失败:`,
+          error instanceof Error ? error.message : String(error)
+        );
       }
       await sleep(PAGE_DELAY_MS);
     }

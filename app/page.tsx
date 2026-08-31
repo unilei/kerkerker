@@ -131,10 +131,18 @@ function HomePageContent() {
     [router, searchParams]
   );
 
-  const handleSearch = useCallback((keyword: string) => {
-    setShowSearch(false);
-    setSearch(keyword);
-  }, []);
+  const handleSearch = useCallback(
+    (keyword: string) => {
+      setShowSearch(false);
+      // 搜索语义是全局找剧：清掉标签筛选，否则 search+tag 组合几乎必然空结果
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("tag");
+      params.delete("view");
+      router.push(`/?${params.toString()}`, { scroll: true });
+      setSearch(keyword);
+    },
+    [router, searchParams]
+  );
 
   return (
     <div className="min-h-screen bg-black">
