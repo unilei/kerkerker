@@ -8,7 +8,7 @@ import {
   tryAcquireShortDramaLease,
   releaseShortDramaLease,
 } from "@/lib/short-drama-db";
-import { detectPanBrand } from "@/lib/pan/parse";
+import { detectPanBrand } from "@/lib/pan-brand";
 
 /**
  * 短剧抓取引擎：全量回填 / 增量跟更 / 标签回填

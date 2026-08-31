@@ -1,6 +1,5 @@
 import { MongoClient, Db } from 'mongodb';
 import { COLLECTIONS } from './constants/db';
-import { ensureComplianceIndexes } from './compliance-types';
 
 // MongoDB 连接池配置
 const MONGO_OPTIONS = {
@@ -123,22 +122,22 @@ export async function getDatabase(
   try {
     const uri = getMongoURI();
     const dbName = process.env.MONGODB_DB_NAME || 'kerkerker';
-    
+
     // 如果没有 client promise，创建一个
     if (!globalForMongo.mongoClientPromise) {
       const client = new MongoClient(uri, MONGO_OPTIONS);
       globalForMongo.mongoClientPromise = client.connect();
     }
-    
+
     // 等待连接完成
     globalForMongo.mongoClient = await globalForMongo.mongoClientPromise;
     globalForMongo.mongoDb = globalForMongo.mongoClient.db(dbName);
-    
+
     // 初始化数据库集合和索引（仅首次）。用 promise 锁避免同一进程并发初始化。
     if (!options.skipInitialization) {
       await ensureDatabaseInitialized(globalForMongo.mongoDb);
     }
-    
+
     console.log('✅ MongoDB 连接成功');
     return globalForMongo.mongoDb;
   } catch (error) {
@@ -155,185 +154,6 @@ async function initializeDatabase(db: Db) {
   if (globalForMongo.initialized) return;
 
   try {
-    // 宿主内容身份：content_id 与每个 provider/external ID 组合都必须唯一。
-    const contentIdentitiesCollection = db.collection(COLLECTIONS.CONTENT_IDENTITIES);
-    await contentIdentitiesCollection.createIndex({ content_id: 1 }, { unique: true });
-    await contentIdentitiesCollection.createIndex(
-      { "external_refs.provider_id": 1, "external_refs.external_id": 1 },
-      { unique: true }
-    );
-    await contentIdentitiesCollection.createIndex({ updated_at: -1 });
-
-    // 创建 pan_resources 集合的索引
-    const panResourcesCollection = db.collection(COLLECTIONS.PAN_RESOURCES);
-    await panResourcesCollection.createIndex({ douban_id: 1 });
-    await panResourcesCollection.createIndex({ content_id: 1 });
-    await panResourcesCollection.createIndex(
-      { provider_id: 1, provider_resource_id: 1 },
-      {
-        unique: true,
-        partialFilterExpression: {
-          provider_id: { $type: "string" },
-          provider_resource_id: { $type: "string" },
-        },
-      }
-    );
-    await panResourcesCollection.createIndex({ enabled: 1 });
-    await panResourcesCollection.createIndex({ internal_id: 1 });
-    // kkpan_id 部分唯一索引：同一 kkpan 资源在库里只能有一条，避免并发同步重复写入。
-    // 仅对 kkpan_id 字段类型为 number 的文档生效 —— 手工录入资源此字段不写入文档
-    // （createPanResourceInDB 在 input.kkpan_id 为 undefined 时省略该键），所以不受约束。
-    //
-    // 运行时只做幂等检查，绝不 drop 已有索引。旧普通索引或历史重复数据必须先
-    // 执行一次性维护脚本，否则直接失败并让调用方重试，避免在无唯一约束窗口中写入重复数据。
-    const indexes = await panResourcesCollection.listIndexes().toArray();
-    const kkpanIndexes = indexes.filter((index) => {
-      const keys = Object.keys(index.key || {});
-      return keys.length === 1 && keys[0] === "kkpan_id";
-    });
-    const isDesiredKkpanIndex = (index: (typeof indexes)[number]) => {
-      const key = index.key as Record<string, unknown>;
-      const partial = index.partialFilterExpression as
-        | Record<string, unknown>
-        | undefined;
-      const condition = partial?.kkpan_id;
-      return (
-        index.unique === true &&
-        key.kkpan_id === 1 &&
-        partial != null &&
-        Object.keys(partial).length === 1 &&
-        condition != null &&
-        typeof condition === "object" &&
-        !Array.isArray(condition) &&
-        Object.keys(condition as Record<string, unknown>).length === 1 &&
-        (condition as Record<string, unknown>).$type === "number"
-      );
-    };
-    const hasDesiredKkpanIndex = kkpanIndexes.some(isDesiredKkpanIndex);
-    const hasWrongKkpanIndex = kkpanIndexes.some(
-      (index) => !isDesiredKkpanIndex(index)
-    );
-
-    if (hasWrongKkpanIndex) {
-      throw new Error(
-        'pan_resources.kkpan_id 索引不是期望的部分唯一索引，请先运行 npx tsx scripts/pan-dedup.ts'
-      );
-    }
-    if (!hasDesiredKkpanIndex) {
-      if (kkpanIndexes.length > 0) {
-        throw new Error(
-          'pan_resources.kkpan_id 索引不是期望的部分唯一索引，请先运行 npx tsx scripts/pan-dedup.ts'
-        );
-      }
-      await panResourcesCollection.createIndex(
-        { kkpan_id: 1 },
-        {
-          unique: true,
-          // 只对 number 类型的 kkpan_id 建唯一约束；手工资源字段缺失不参与
-          partialFilterExpression: { kkpan_id: { $type: "number" } },
-        }
-      );
-    }
-
-    // 创建 pan_sync_state 集合的索引
-    const panSyncStateCollection = db.collection(COLLECTIONS.PAN_SYNC_STATE);
-    await panSyncStateCollection.createIndex({ id: 1 }, { unique: true });
-
-    // 影片级网盘同步台账：按豆瓣 ID 幂等，状态查询和待处理任务取数有独立索引。
-    const panSyncTargetsCollection = db.collection(COLLECTIONS.PAN_SYNC_TARGETS);
-    await panSyncTargetsCollection.createIndex(
-      { douban_id: 1 },
-      { unique: true }
-    );
-    await panSyncTargetsCollection.createIndex({ content_id: 1 });
-    await panSyncTargetsCollection.createIndex({ status: 1, updated_at: -1 });
-    await panSyncTargetsCollection.createIndex({ next_attempt_at: 1 });
-
-    // 应用内影片同步调度器：两类任务各有独立配置，运行记录和事件按时间查询。
-    const panSyncScheduleCollection = db.collection(
-      COLLECTIONS.PAN_SYNC_SCHEDULE
-    );
-    await panSyncScheduleCollection.createIndex({ task: 1 }, { unique: true });
-
-    const panSyncRunsCollection = db.collection(COLLECTIONS.PAN_SYNC_RUNS);
-    await panSyncRunsCollection.createIndex({ run_id: 1 }, { unique: true });
-    await panSyncRunsCollection.createIndex(
-      { task: 1, schedule_slot: 1 },
-      {
-        unique: true,
-        partialFilterExpression: { schedule_slot: { $type: "string" } },
-      }
-    );
-    await panSyncRunsCollection.createIndex({ task: 1, created_at: -1 });
-    await panSyncRunsCollection.createIndex({ status: 1, updated_at: -1 });
-    await panSyncRunsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
-
-    const panSyncRunEventsCollection = db.collection(
-      COLLECTIONS.PAN_SYNC_RUN_EVENTS
-    );
-    await panSyncRunEventsCollection.createIndex(
-      { run_id: 1, seq: 1 },
-      { unique: true }
-    );
-    await panSyncRunEventsCollection.createIndex({ run_id: 1, created_at: 1 });
-    await panSyncRunEventsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
-
-    // Provider-neutral job runner. The revision predicate is used by the
-    // storage adapter for compare-and-swap updates across workers.
-    const pluginJobsCollection = db.collection(COLLECTIONS.PLUGIN_JOBS);
-    await pluginJobsCollection.createIndex({ run_id: 1 }, { unique: true });
-    await pluginJobsCollection.createIndex({ idempotency_key: 1 }, { unique: true });
-    await pluginJobsCollection.createIndex({ status: 1, updated_at: -1 });
-    await pluginJobsCollection.createIndex({ plugin_id: 1, created_at: -1 });
-    await pluginJobsCollection.createIndex({
-      control_mode: 1,
-      status: 1,
-      cancel_requested: 1,
-      next_retry_at: 1,
-      created_at: 1,
-    });
-    await pluginJobsCollection.createIndex({
-      control_mode: 1,
-      status: 1,
-      cancel_requested: 1,
-      "lease.expires_at": 1,
-      created_at: 1,
-    });
-    await pluginJobsCollection.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
-
-    // Append-only worker receipts. Snapshot CAS remains the state truth; an
-    // exact worker replay repairs a receipt if the second write was interrupted.
-    const pluginJobEventsCollection = db.collection(COLLECTIONS.PLUGIN_JOB_EVENTS);
-    await pluginJobEventsCollection.createIndex({ event_id: 1 }, { unique: true });
-    await pluginJobEventsCollection.createIndex(
-      { run_id: 1, sequence: 1 },
-      { unique: true }
-    );
-    await pluginJobEventsCollection.createIndex(
-      { expires_at: 1 },
-      { expireAfterSeconds: 0 }
-    );
-
-    // Phase 1 compliance data layer. Index creation is idempotent; retention
-    // is enforced by TTL indexes while policy and takedown records remain
-    // queryable for operational review.
-    await ensureComplianceIndexes(db);
-
-    // Plugin installation is host-owned state only. The plugin ID is looked
-    // up in the sealed static registry; this collection never stores code or
-    // module paths.
-    const pluginInstallationsCollection = db.collection(
-      COLLECTIONS.PLUGIN_INSTALLATIONS
-    );
-    await pluginInstallationsCollection.createIndex(
-      { plugin_id: 1 },
-      { unique: true, name: "plugin_installation_identity" }
-    );
-    await pluginInstallationsCollection.createIndex(
-      { status: 1, updated_at: -1 },
-      { name: "plugin_installation_status" }
-    );
-
     // 短剧库：源内文章 ID 唯一去重；前台按状态/标签/时间查询。
     const shortDramasCollection = db.collection(COLLECTIONS.SHORT_DRAMAS);
     await shortDramasCollection.createIndex(

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Link2, Copy, Check, ExternalLink, FileText } from "lucide-react";
-import { BrandBadge } from "@/components/pan/BrandBadge";
+import { BrandBadge } from "@/components/short-drama/BrandBadge";
 
 interface ShortDramaPanProps {
   shareUrl: string;

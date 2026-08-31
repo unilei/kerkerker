@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { PAN_BRAND_CONFIGS, type PanBrand } from "@/types/pan-resource";
+import { PAN_BRAND_CONFIGS, type PanBrand } from "@/types/pan-brand";
 
 type BadgeSize = "sm" | "md" | "lg";
 

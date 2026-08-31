@@ -13,6 +13,4 @@ export function parseSupportedLocale(value: string | null | undefined): Supporte
     ? (value as SupportedLocale)
     : null;
 }
-export function profileIdForLocale(locale: SupportedLocale): "cn-default" | "en-default" {
-  return locale === "en-US" ? "en-default" : "cn-default";
-}
+

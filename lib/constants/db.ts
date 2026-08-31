@@ -1,42 +1,10 @@
 /**
  * MongoDB 集合名称常量
- * 
+ *
  * 集中管理所有集合名称，避免硬编码
  */
 
 export const COLLECTIONS = {
-  /** 宿主内容身份与外部来源 ID 映射 */
-  CONTENT_IDENTITIES: 'content_identities',
-  /** 宿主 asset.image 原图与镜像对象的持久化台账 */
-  IMAGE_MIRRORS: 'image_mirrors',
-  /** 网盘资源 */
-  PAN_RESOURCES: 'pan_resources',
-  /** 网盘资源来源身份迁移的可回滚备份 */
-  PAN_RESOURCE_DEDUP_BACKUPS: 'pan_resource_dedup_backups',
-  /** 网盘资源来源身份迁移的运行与索引快照 */
-  PAN_RESOURCE_DEDUP_RUNS: 'pan_resource_dedup_runs',
-  /** 网盘资源 kkpans 同步状态（单例） */
-  PAN_SYNC_STATE: 'pan_sync_state',
-  /** 站内影片网盘同步台账 */
-  PAN_SYNC_TARGETS: 'pan_sync_targets',
-  /** 影片网盘同步调度配置（单例） */
-  PAN_SYNC_SCHEDULE: 'pan_sync_schedule',
-  /** 影片网盘同步运行记录 */
-  PAN_SYNC_RUNS: 'pan_sync_runs',
-  /** 影片网盘同步运行事件/日志 */
-  PAN_SYNC_RUN_EVENTS: 'pan_sync_run_events',
-  /** 插件合规审批与运行策略 */
-  PLUGIN_POLICIES: 'plugin_policies',
-  /** Trusted static plugin installation lifecycle state */
-  PLUGIN_INSTALLATIONS: 'plugin_installations',
-  /** 不可静默覆盖的合规审计事件 */
-  AUDIT_EVENTS: 'audit_events',
-  /** 内容、资源、插件或来源的下架记录 */
-  TAKEDOWN_RECORDS: 'takedown_records',
-  /** Provider-neutral plugin job runs */
-  PLUGIN_JOBS: 'plugin_jobs',
-  /** Append-only receipts for provider-neutral plugin job events */
-  PLUGIN_JOB_EVENTS: 'plugin_job_events',
   /** 短剧库（抓取 + 转存关联） */
   SHORT_DRAMAS: 'short_dramas',
   /** 短剧抓取/转存状态（单例） */

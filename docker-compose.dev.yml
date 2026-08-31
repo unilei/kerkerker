@@ -10,17 +10,8 @@ services:
     environment:
       - NODE_ENV=development
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - KKPAN_SYNC_CRON_SECRET=${KKPAN_SYNC_CRON_SECRET}
-      - CRON_SECRET=${CRON_SECRET}
       - MONGODB_URI=mongodb://mongodb:27017/kerkerker
-      - NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
-      - KERKERKER_PLUGIN_PROFILE=${KERKERKER_PLUGIN_PROFILE:-cn-default}
-      - KERKERKER_PLUGIN_REGION=${KERKERKER_PLUGIN_REGION:-CN}
-      - TMDB_PLUGIN_URL=${TMDB_PLUGIN_URL:-https://iamyourfather.link0.me/plugin}
-      - TMDB_PLUGIN_SERVICE_TOKEN=${TMDB_PLUGIN_SERVICE_TOKEN}
-      - KERKERKER_COMPLIANCE_MODE=${KERKERKER_COMPLIANCE_MODE:-audit}
       - ADMIN_AUDIT_ACTOR_ID=${ADMIN_AUDIT_ACTOR_ID:-admin-session}
-      - KERKERKER_JOB_REPORT_TOKEN=${KERKERKER_JOB_REPORT_TOKEN}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

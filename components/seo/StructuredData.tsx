@@ -23,11 +23,6 @@ export function StructuredData() {
       url: SITE_URL,
       description: SITE_DESCRIPTION,
       publisher: { "@id": `${SITE_URL}/#organization` },
-      potentialAction: {
-        "@type": "SearchAction",
-        target: `${SITE_URL}/search?q={search_term_string}`,
-        "query-input": "required name=search_term_string",
-      },
     },
   ];
 

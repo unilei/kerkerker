@@ -3,18 +3,14 @@
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Toast, ConfirmDialog } from "@/components/Toast";
-import { PanResourcesTab } from "@/components/admin/PanResourcesTab";
-import { PluginCompliancePanel } from "@/components/admin/PluginCompliancePanel";
-import { DatabaseSettingsTab } from "@/components/admin/DatabaseSettingsTab";
-import { PluginJobCenter } from "@/components/admin/PluginJobCenter";
-import { PluginInstallationCenter } from "@/components/admin/PluginInstallationCenter";
 import { AdminShortDramasTab } from "@/components/admin/ShortDramaSourceTab";
+import { DatabaseSettingsTab } from "@/components/admin/DatabaseSettingsTab";
 import type { ToastState, ConfirmState } from "@/components/admin/types";
-import { HardDrive, Database, ShieldCheck, ListChecks, Package, Clapperboard } from "lucide-react";
+import { Clapperboard, Database } from "lucide-react";
 
-type TabType = "pan" | "short-drama" | "jobs" | "compliance" | "database" | "plugins";
+type TabType = "short-drama" | "database";
 
-const VALID_TABS: TabType[] = ["pan", "short-drama", "jobs", "compliance", "database", "plugins"];
+const VALID_TABS: TabType[] = ["short-drama", "database"];
 
 function SettingsContent() {
   const router = useRouter();
@@ -26,7 +22,7 @@ function SettingsContent() {
     if (urlTab && VALID_TABS.includes(urlTab as TabType)) {
       return urlTab as TabType;
     }
-    return "pan";
+    return "short-drama";
   };
 
   const [activeTab, setActiveTab] = useState<TabType>(getInitialTab);
@@ -53,10 +49,6 @@ function SettingsContent() {
 
   const tabs = [
     { id: "short-drama" as TabType, name: "短剧源", icon: Clapperboard },
-    { id: "pan" as TabType, name: "网盘资源", icon: HardDrive },
-    { id: "plugins" as TabType, name: "插件中心", icon: Package },
-    { id: "jobs" as TabType, name: "任务中心", icon: ListChecks },
-    { id: "compliance" as TabType, name: "合规", icon: ShieldCheck },
     { id: "database" as TabType, name: "数据库", icon: Database },
   ];
 
@@ -114,29 +106,10 @@ function SettingsContent() {
           <AdminShortDramasTab onShowToast={setToast} />
         )}
 
-        {activeTab === "pan" && (
-          <PanResourcesTab
-            onShowToast={setToast}
-            onShowConfirm={setConfirm}
-          />
-        )}
-
         {activeTab === "database" && (
           <DatabaseSettingsTab
             onShowToast={setToast}
           />
-        )}
-
-        {activeTab === "jobs" && (
-          <PluginJobCenter onShowToast={setToast} onShowConfirm={setConfirm} />
-        )}
-
-        {activeTab === "plugins" && (
-          <PluginInstallationCenter onShowToast={setToast} onShowConfirm={setConfirm} />
-        )}
-
-        {activeTab === "compliance" && (
-          <PluginCompliancePanel onShowToast={setToast} />
         )}
       </div>
 
