@@ -1,144 +1,246 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import type { DoubanMovie } from "@/types/douban";
-import type { NewApiMovie } from "@/types/home";
-import { Toast } from "@/components/Toast";
+import { useState, useCallback, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-// Hooks
 import { useScrollState } from "@/hooks/useScrollState";
-import { useHomeData } from "@/hooks/useHomeData";
-import { useMovieMatch } from "@/hooks/useMovieMatch";
 import { useScrollRestoration } from "@/hooks/useScrollRestoration";
-
-// Components
 import { Navbar } from "@/components/home/Navbar";
-import { SearchModal } from "@/components/home/SearchModal";
+import { Footer } from "@/components/home/Footer";
 import { LoadingSkeleton } from "@/components/home/LoadingSkeleton";
 import { ErrorState } from "@/components/home/ErrorState";
 import { EmptyState } from "@/components/home/EmptyState";
-import { HeroBanner } from "@/components/home/HeroBanner";
-import { CategoryRow } from "@/components/home/CategoryRow";
-import { Footer } from "@/components/home/Footer";
+import ShortDramaCard from "@/components/short-drama/ShortDramaCard";
+import { TagCloud, type TagGroup } from "@/components/short-drama/TagCloud";
+import { SearchModal } from "@/components/short-drama/SearchModal";
 
-// Utils
-import { getCategoryIcon, getCategoryPath } from "@/lib/utils/category-icons";
-
-function categoryHref(category: { key?: string; name: string }): string {
-  switch (category.key) {
-    case "movies":
-      return "/browse/movies";
-    case "series":
-      return "/browse/tv";
-    case "latest":
-    case "latest-movies":
-    case "latest-series":
-      return "/browse/latest";
-    case "top250":
-      return "/category/top250";
-    default:
-      return `/category/${getCategoryPath(category.name)}`;
-  }
+interface DramaListItem {
+  id: string;
+  title: string;
+  episode_count?: number;
+  tags: string[];
+  cover_url?: string;
+  updated_at: string;
 }
 
-export default function HomePage() {
+interface ListResponse {
+  code: number;
+  data?: {
+    dramas: DramaListItem[];
+    total: number;
+    page: number;
+    limit: number;
+    tag_counts?: Array<{ tag: string; count: number }>;
+  };
+}
+
+const PAGE_SIZE = 24;
+
+function HomePageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [showSearch, setShowSearch] = useState(false);
-
-  // 使用自定义 hooks
   const scrolled = useScrollState(50);
-  const { categories, heroMovies, heroDataList, loading, error, refetch } =
-    useHomeData();
-  const { handleMovieClick, toast, setToast } = useMovieMatch();
 
-  // 滚动位置恢复（导航返回时保持位置）
+  // 列表状态
+  const [dramas, setDramas] = useState<DramaListItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showTagPanel] = useState(
+    searchParams.get("view") === "tags"
+  );
+
+  // 标签：URL ?tag= 为准；搜索为本地状态（一次性）
+  const activeTag = searchParams.get("tag") || undefined;
+  const [search, setSearch] = useState<string | null>(null);
+  const [tagGroups, setTagGroups] = useState<TagGroup[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+
+  const activeRequest = useRef(0);
+
   useScrollRestoration("home", { delay: 100 });
+
+  const loadPage = useCallback(
+    async (targetPage: number, append: boolean) => {
+      const requestId = ++activeRequest.current;
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({
+          page: String(targetPage),
+          limit: String(PAGE_SIZE),
+          with_tags: "1",
+        });
+        if (activeTag) params.set("tag", activeTag);
+        if (search) params.set("search", search);
+        const response = await fetch(`/api/short-dramas?${params.toString()}`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(15_000),
+        });
+        const payload = (await response.json()) as ListResponse;
+        if (requestId !== activeRequest.current) return;
+        if (payload.code === 200 && payload.data) {
+          setDramas((prev) =>
+            append ? [...prev, ...payload.data!.dramas] : payload.data!.dramas
+          );
+          setTotal(payload.data.total);
+          setPage(payload.data.page);
+          setHasMore(payload.data.page * payload.data.limit < payload.data.total);
+          if (payload.data.tag_counts && payload.data.tag_counts.length > 0) {
+            // 本地库只有扁平标签计数：单组「全部标签」展示（够用且不假装分组）
+            setTagGroups([
+              {
+                category: "全部标签",
+                tags: payload.data.tag_counts.map((row) => ({
+                  tag: row.tag,
+                  count: row.count,
+                })),
+              },
+            ]);
+          }
+        } else {
+          setError("短剧列表加载失败");
+        }
+      } catch (fetchError) {
+        if (requestId !== activeRequest.current) return;
+        console.warn("短剧列表加载失败:", fetchError);
+        setError("网络异常，请稍后重试");
+      } finally {
+        if (requestId === activeRequest.current) setLoading(false);
+      }
+    },
+    [activeTag, search]
+  );
+
+  useEffect(() => {
+    loadPage(1, false);
+  }, [loadPage]);
+
+  const handleTagSelect = useCallback(
+    (tag: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (tag) params.set("tag", tag);
+      else params.delete("tag");
+      router.push(`/?${params.toString()}`, { scroll: true });
+    },
+    [router, searchParams]
+  );
+
+  const handleSearch = useCallback((keyword: string) => {
+    setShowSearch(false);
+    setSearch(keyword);
+  }, []);
 
   return (
     <div className="min-h-screen bg-black">
-      {/* 导航栏 */}
       <Navbar scrolled={scrolled} onSearchOpen={() => setShowSearch(true)} />
 
-      {/* 搜索弹窗 */}
-      <SearchModal isOpen={showSearch} onClose={() => setShowSearch(false)} />
+      {showSearch && (
+        <SearchModal onClose={() => setShowSearch(false)} onSearch={handleSearch} />
+      )}
 
-      {/* 加载状态 */}
-      {loading ? (
-        <LoadingSkeleton />
-      ) : error ? (
-        /* 错误状态 */
-        <ErrorState error={error} onRetry={refetch} />
-      ) : heroMovies.length === 0 && categories.length === 0 ? (
-        /* 空状态 - 只有当所有数据都为空时才显示 */
-        <EmptyState onRetry={refetch} />
-      ) : (
-        <>
-          {/* Hero Banner */}
-          <HeroBanner
-            heroMovies={heroMovies}
-            heroDataList={heroDataList}
-            onMovieClick={handleMovieClick}
-          />
+      <main className="relative z-10 pt-24 px-4 md:px-12 pb-8">
+        {/* 头部标语 */}
+        <div className="mb-6">
+          <h1 className="text-2xl md:text-3xl font-bold text-white">
+            {activeTag ? (
+              <>
+                标签：<span className="text-red-500">{activeTag}</span>
+                <button
+                  onClick={() => handleTagSelect(null)}
+                  className="ml-3 text-sm text-gray-400 hover:text-white underline underline-offset-4"
+                >
+                  清除筛选
+                </button>
+              </>
+            ) : search ? (
+              <>
+                搜索：<span className="text-red-500">{search}</span>
+                <button
+                  onClick={() => setSearch(null)}
+                  className="ml-3 text-sm text-gray-400 hover:text-white underline underline-offset-4"
+                >
+                  清除
+                </button>
+              </>
+            ) : (
+              "精选短剧合集"
+            )}
+          </h1>
+          <p className="mt-2 text-sm text-gray-500">
+            共 {total} 部 · 短剧信息与网盘资源导航
+          </p>
+        </div>
 
-          {/* 分类列表区域 */}
-          <div className="relative z-20 -mt-6 pb-16 md:-mt-10 lg:-mt-12">
-            <div
-              className="pointer-events-none absolute inset-x-0 -top-24 h-40 bg-linear-to-b from-transparent via-black/90 to-black"
-              aria-hidden="true"
+        {/* 标签面板（导航"标签"入口或筛选中时展开） */}
+        {(showTagPanel || activeTag) && (
+          <div className="mb-8 bg-[#111] border border-white/5 rounded-2xl p-5">
+            <TagCloud
+              groups={tagGroups}
+              activeTag={activeTag}
+              onSelect={handleTagSelect}
             />
-
-            <div className="relative z-10 space-y-10 md:space-y-12 lg:space-y-16">
-              {/* 渲染所有新 API 返回的分类 */}
-              {categories.length > 0
-                ? categories.map((category, index) => {
-                    // 转换数据格式为 DoubanMovie
-                    const movies: DoubanMovie[] = category.data.map(
-                      (item: NewApiMovie) => ({
-                        id: item.id,
-                        title: item.title,
-                        cover: item.cover || "",
-                        url: item.url || "",
-                        rate: item.rate || "",
-                        episode_info: (item.episode_info as string) || "",
-                        cover_x: (item.cover_x as number) || 0,
-                        cover_y: (item.cover_y as number) || 0,
-                        playable: (item.playable as boolean) || false,
-                        is_new: (item.is_new as boolean) || false,
-                      })
-                    );
-
-                    return (
-                      <CategoryRow
-                        key={index}
-                        title={category.name}
-                        icon={getCategoryIcon(category.name)}
-                        movies={movies}
-                        onMovieClick={handleMovieClick}
-                        onViewMore={() =>
-                          router.push(categoryHref(category))
-                        }
-                      />
-                    );
-                  })
-                : null}
-            </div>
+            {tagGroups.length === 0 && (
+              <p className="text-sm text-gray-600">标签数据尚未同步，稍后再来。</p>
+            )}
           </div>
-        </>
-      )}
+        )}
 
-      {/* 匹配中遮罩 */}
-      {/* Toast 通知 */}
-      {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          onClose={() => setToast(null)}
-        />
-      )}
+        {/* 加载骨架 */}
+        {loading && dramas.length === 0 && <LoadingSkeleton />}
 
-      {/* Footer */}
+        {/* 错误态 */}
+        {!loading && error && dramas.length === 0 && (
+          <ErrorState error={error} onRetry={() => loadPage(1, false)} />
+        )}
+
+        {/* 空态 */}
+        {!loading && !error && dramas.length === 0 && (
+          <EmptyState onRetry={() => loadPage(1, false)} />
+        )}
+
+        {/* 海报墙 */}
+        {dramas.length > 0 && (
+          <>
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 md:gap-4">
+              {dramas.map((drama, index) => (
+                <ShortDramaCard key={drama.id} drama={drama} priority={index < 8} />
+              ))}
+            </div>
+
+            {/* 加载更多 */}
+            {hasMore && (
+              <div className="mt-10 flex justify-center">
+                <button
+                  onClick={() => loadPage(page + 1, true)}
+                  disabled={loading}
+                  className="px-6 py-3 bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white rounded-full text-sm font-medium transition-colors"
+                >
+                  {loading ? "加载中…" : "加载更多"}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </main>
+
       <Footer />
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-black">
+          <LoadingSkeleton />
+        </div>
+      }
+    >
+      <HomePageContent />
+    </Suspense>
   );
 }

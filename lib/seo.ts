@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 
-export const SITE_NAME = "爱盼";
+export const SITE_NAME = "爱盼短剧";
 export const SITE_URL = normalizeSiteUrl(
   process.env.NEXT_PUBLIC_SITE_URL || "https://www.aipan.me"
 );
 export const SEARCH_SITE_URL = "https://search.aipan.me";
 export const SITE_DESCRIPTION =
-  "爱盼聚合电影与电视剧资料、评分、上映信息和公开网盘资源导航，帮助你更快找到想看的内容。";
+  "爱盼短剧聚合全网短剧信息与网盘资源导航，按标签找剧，一键跳转网盘转存。";
 export const SITE_IMAGE_URL = absoluteUrl("/logo.png");
 
 function normalizeSiteUrl(value: string): string {

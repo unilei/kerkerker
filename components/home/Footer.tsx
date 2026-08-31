@@ -27,9 +27,9 @@ export function Footer() {
           <div className="space-y-3 text-sm text-gray-400 leading-relaxed">
             <p>
               {isEnglish ? (
-                <>This is a <span className="text-white font-medium">learning and information platform</span> providing movie and TV metadata navigation. We do not store video files.</>
+                <>This is a <span className="text-white font-medium">learning and information platform</span> providing short-drama metadata navigation. We do not store video files.</>
               ) : (
-                <>本站为<span className="text-white font-medium">技术学习和交流平台</span>，仅提供影视信息检索和导航服务。所有视频资源均来自互联网公开资源，本站不存储任何影视文件。</>
+                <>本站为<span className="text-white font-medium">技术学习和交流平台</span>，仅提供短剧信息检索和导航服务。所有视频资源均来自互联网公开分享，本站不存储任何影视文件。</>
               )}
             </p>
             <p>
@@ -58,7 +58,7 @@ export function Footer() {
         {/* 底部信息 */}
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-gray-500">
           <div className="flex items-center gap-2">
-            <span>© 2026 爱盼</span>
+            <span>© 2026 爱盼短剧</span>
             <span className="text-gray-700">|</span>
             <span>{isEnglish ? "For learning and discussion" : "仅供学习交流使用"}</span>
           </div>

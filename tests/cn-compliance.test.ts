@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
@@ -44,31 +44,43 @@ test("P1-5: app/layout.tsx 不再出现在线播放类违规文案", () => {
   }
 });
 
-test("P1-5: components/DoubanCard.tsx 不再出现立即播放按钮文案", () => {
-  const source = readFile("components/DoubanCard.tsx");
-  for (const phrase of FORBIDDEN_PLAYBACK_PHRASES) {
+test("P1-5: 已删除的影视路由不再回归", () => {
+  for (const legacyPath of [
+    "app/browse",
+    "app/calendar",
+    "app/category",
+    "app/movie",
+    "app/search",
+    "components/DoubanCard.tsx",
+    "components/home/HeroBanner.tsx",
+    "components/home/CategoryRow.tsx",
+  ]) {
     assert.ok(
-      !source.includes(phrase),
-      `components/DoubanCard.tsx 仍含违规文案：${phrase}`
+      !existsSync(join(projectRoot, legacyPath)),
+      `${legacyPath} 应已删除（短剧站不再有影视路由）`
     );
   }
 });
 
-test("P1-5: app/calendar/page.tsx 不再出现立即播放按钮文案", () => {
-  const source = readFile("app/calendar/page.tsx");
-  for (const phrase of FORBIDDEN_PLAYBACK_PHRASES) {
-    assert.ok(
-      !source.includes(phrase),
-      `app/calendar/page.tsx 仍含违规文案：${phrase}`
-    );
+test("P1-5: 短剧前台组件不出现播放类违规文案", () => {
+  for (const rel of [
+    "app/page.tsx",
+    "app/drama/[id]/page.tsx",
+    "components/home/Navbar.tsx",
+    "components/short-drama/ShortDramaCard.tsx",
+    "components/short-drama/ShortDramaPanSection.tsx",
+  ]) {
+    const source = readFile(rel);
+    for (const phrase of FORBIDDEN_PLAYBACK_PHRASES) {
+      assert.ok(!source.includes(phrase), `${rel} 仍含违规文案：${phrase}`);
+    }
   }
 });
-
 test("P1-5: layout metadata 改为信息检索口径", () => {
   const source = readFile("app/layout.tsx");
   assert.ok(
-    source.includes("影视信息"),
-    "layout metadata 应包含影视信息检索口径文案"
+    source.includes("短剧信息"),
+    "layout metadata 应包含短剧信息检索口径文案"
   );
 });
 

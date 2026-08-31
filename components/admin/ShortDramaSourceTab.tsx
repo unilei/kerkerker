@@ -1,0 +1,355 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import {
+  Clapperboard,
+  KeyRound,
+  RefreshCw,
+  Tag,
+  Send,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+} from "lucide-react";
+import type { ToastState } from "@/components/admin/types";
+
+/**
+ * 短剧源管理 Tab
+ *
+ * 三块能力：
+ *  1. 夸克凭证：粘贴 cookie → 服务端验证并 AES 加密落库（GET 回显掩码）
+ *  2. 抓取：全量回填 / 增量跟更 / 标签回填（同步执行，返回统计）
+ *  3. 转存：触发批量转存（串行防风控），查看状态台账与最近条目
+ *
+ * 长任务（全量回填/整批转存）建议在服务器用 curl 挂 crontab 执行；
+ * 面板按钮适合小批量与验证流程。
+ */
+
+interface CredentialView {
+  platform: string;
+  account_label?: string;
+  cookie_masked: string;
+  is_valid: boolean;
+  last_validated_at?: string;
+}
+
+interface SyncState {
+  last_article_watermark?: number;
+  last_scrape_at?: string;
+  last_scrape_mode?: string;
+  last_scrape_stats?: Record<string, unknown>;
+  last_transfer_at?: string;
+  last_transfer_stats?: Record<string, unknown>;
+  running?: { task: string; started_at: string; expires_at: string } | null;
+}
+
+interface DramaStats {
+  total: number;
+  by_status: Record<string, number>;
+}
+
+interface RecentDrama {
+  id: string;
+  title: string;
+  status: string;
+  episode_count?: number;
+  transfer_error?: string;
+  updated_at: string;
+}
+
+interface AdminShortDramasTabProps {
+  onShowToast: (toast: ToastState) => void;
+}
+
+export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
+  const [cookieInput, setCookieInput] = useState("");
+  const [credential, setCredential] = useState<CredentialView | null>(null);
+  const [savingCredential, setSavingCredential] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState | null>(null);
+  const [stats, setStats] = useState<DramaStats | null>(null);
+  const [recent, setRecent] = useState<RecentDrama[]>([]);
+  const [coverMirrorReady, setCoverMirrorReady] = useState(false);
+  const [runningAction, setRunningAction] = useState<string | null>(null);
+
+  const loadState = useCallback(async () => {
+    try {
+      const [credRes, syncRes] = await Promise.all([
+        fetch("/api/admin/cloud-credentials", { cache: "no-store" }),
+        fetch("/api/admin/short-dramas", { cache: "no-store" }),
+      ]);
+      const credPayload = await credRes.json();
+      if (credPayload.code === 200) setCredential(credPayload.data?.credential ?? null);
+      const syncPayload = await syncRes.json();
+      if (syncPayload.code === 200 && syncPayload.data) {
+        setSyncState(syncPayload.data.sync_state);
+        setStats(syncPayload.data.stats);
+        setRecent(syncPayload.data.recent_dramas || []);
+        setCoverMirrorReady(!!syncPayload.data.cover_mirror_ready);
+      }
+    } catch (error) {
+      console.warn("读取短剧源状态失败:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadState();
+  }, [loadState]);
+
+  const saveCredential = async () => {
+    if (!cookieInput.trim()) {
+      onShowToast({ message: "请先粘贴夸克 cookie", type: "error" });
+      return;
+    }
+    setSavingCredential(true);
+    try {
+      const response = await fetch("/api/admin/cloud-credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "quark", cookie: cookieInput.trim() }),
+      });
+      const payload = await response.json();
+      if (payload.code === 200) {
+        setCredential(payload.data?.credential ?? null);
+        setCookieInput("");
+        onShowToast({ message: "凭证已保存并通过夸克验证", type: "success" });
+      } else {
+        onShowToast({ message: payload.message || "凭证保存失败", type: "error" });
+      }
+    } catch (error) {
+      onShowToast({
+        message: error instanceof Error ? error.message : "凭证保存失败",
+        type: "error",
+      });
+    } finally {
+      setSavingCredential(false);
+    }
+  };
+
+  const runAction = async (action: string, label: string, body: Record<string, unknown> = {}) => {
+    setRunningAction(action);
+    try {
+      const response = await fetch("/api/admin/short-dramas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...body }),
+      });
+      const payload = await response.json();
+      if (response.ok) {
+        onShowToast({ message: `${label}完成：${summarize(action, payload.data)}`, type: "success" });
+      } else {
+        onShowToast({ message: `${label}失败：${payload.message || "未知错误"}`, type: "error" });
+      }
+    } catch (error) {
+      onShowToast({
+        message: `${label}失败：${error instanceof Error ? error.message : "网络异常"}`,
+        type: "error",
+      });
+    } finally {
+      setRunningAction(null);
+      loadState();
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      {/* 凭证 */}
+      <section className="bg-[#181818] border border-[#333] rounded-xl p-6">
+        <h2 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
+          <KeyRound size={18} className="text-orange-400" />
+          夸克网盘凭证
+        </h2>
+        {credential ? (
+          <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+            {credential.is_valid ? (
+              <CheckCircle2 size={16} className="text-green-400" />
+            ) : (
+              <XCircle size={16} className="text-red-400" />
+            )}
+            <span className={credential.is_valid ? "text-green-400" : "text-red-400"}>
+              {credential.is_valid ? "有效" : "已失效"}
+            </span>
+            <span className="text-gray-400">
+              账号：{credential.account_label || "未知"}
+            </span>
+            <span className="text-gray-600 font-mono">{credential.cookie_masked}</span>
+            {credential.last_validated_at && (
+              <span className="text-gray-600">
+                校验于 {credential.last_validated_at.slice(0, 16).replace("T", " ")}
+              </span>
+            )}
+          </div>
+        ) : (
+          <p className="mb-4 text-sm text-gray-500 flex items-center gap-2">
+            <AlertTriangle size={14} className="text-yellow-400" />
+            尚未配置凭证：请在浏览器登录 pan.quark.cn 后，复制完整 cookie 粘贴到下方
+          </p>
+        )}
+        <textarea
+          value={cookieInput}
+          onChange={(event) => setCookieInput(event.target.value)}
+          rows={3}
+          placeholder="kps=…; sign=…; __pus=…; …（浏览器 cookie 整行粘贴）"
+          className="w-full bg-black/40 border border-[#333] rounded-lg px-3 py-2 text-sm text-gray-200 font-mono placeholder:text-gray-600 focus:outline-none focus:border-red-600"
+        />
+        <button
+          onClick={saveCredential}
+          disabled={savingCredential}
+          className="mt-3 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          {savingCredential ? "验证中…" : "验证并保存凭证"}
+        </button>
+        <p className="mt-2 text-xs text-gray-600">
+          凭证以 AES-256-GCM 加密落库（密钥取 CREDENTIAL_ENCRYPTION_KEY / ADMIN_SESSION_SECRET），任何界面只回显掩码。
+        </p>
+      </section>
+
+      {/* 抓取 */}
+      <section className="bg-[#181818] border border-[#333] rounded-xl p-6">
+        <h2 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
+          <Clapperboard size={18} className="text-red-500" />
+          短剧抓取（duanjugou.top）
+        </h2>
+        <div className="flex flex-wrap gap-3 mb-4">
+          <button
+            onClick={() => runAction("scrape-incremental", "增量抓取", {})}
+            disabled={runningAction !== null}
+            className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+          >
+            <RefreshCw size={14} className={runningAction === "scrape-incremental" ? "animate-spin" : ""} />
+            增量跟更
+          </button>
+          <button
+            onClick={() => runAction("scrape-backfill", "全量回填", { maxDetails: 500 })}
+            disabled={runningAction !== null}
+            className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+          >
+            <RefreshCw size={14} className={runningAction === "scrape-backfill" ? "animate-spin" : ""} />
+            回填一批（500 条详情）
+          </button>
+          <button
+            onClick={() => runAction("tag-sync", "标签回填", {})}
+            disabled={runningAction !== null}
+            className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+          >
+            <Tag size={14} />
+            标签回填
+          </button>
+        </div>
+        <p className="text-xs text-gray-600">
+          全量回填约 7 万条、2323 个列表页，单次按钮只跑 500 条详情；完整回填建议服务器挂任务：
+          <code className="ml-1 px-1.5 py-0.5 bg-black/40 rounded text-[11px] text-gray-400">
+            curl -X POST -b admin_session=… -H &apos;Content-Type: application/json&apos; -d &apos;{"{"}&quot;action&quot;:&quot;scrape-backfill&quot;{"}"}&apos; /api/admin/short-dramas
+          </code>
+          （重复执行自动续跑，已有链接的条目会跳过）
+        </p>
+        {syncState?.last_scrape_at && (
+          <p className="mt-3 text-xs text-gray-500">
+            上次抓取：{syncState.last_scrape_mode || "-"} @{" "}
+            {syncState.last_scrape_at.slice(0, 16).replace("T", " ")} · 水位文章 ID：{" "}
+            {syncState.last_article_watermark ?? "-"}
+          </p>
+        )}
+      </section>
+
+      {/* 转存 */}
+      <section className="bg-[#181818] border border-[#333] rounded-xl p-6">
+        <h2 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
+          <Send size={18} className="text-sky-400" />
+          批量转存到自己夸克网盘
+        </h2>
+        {!coverMirrorReady && (
+          <p className="mb-3 text-xs text-yellow-400/90 flex items-center gap-2">
+            <AlertTriangle size={13} />
+            R2 封面镜像未配置（CLOUDFLARE_R2_* 环境变量缺失）：转存仍可用，但封面/简介不会关联
+          </p>
+        )}
+        <div className="flex flex-wrap gap-3 mb-4">
+          <button
+            onClick={() => runAction("transfer", "转存一批", { maxItems: 10 })}
+            disabled={runningAction !== null}
+            className="px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+          >
+            <Send size={14} />
+            转存 10 部
+          </button>
+        </div>
+        {syncState?.last_transfer_at && (
+          <p className="text-xs text-gray-500">
+            上次转存：{syncState.last_transfer_at.slice(0, 16).replace("T", " ")}
+          </p>
+        )}
+      </section>
+
+      {/* 台账 */}
+      <section className="bg-[#181818] border border-[#333] rounded-xl p-6">
+        <h2 className="text-white font-bold text-lg mb-4">状态台账</h2>
+        {stats && (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
+            {(
+              [
+                ["discovered", "待转存", "text-gray-300"],
+                ["transferring", "转存中", "text-yellow-300"],
+                ["done", "已完成", "text-green-400"],
+                ["failed", "失败", "text-red-400"],
+                ["invalid", "无效", "text-gray-500"],
+              ] as const
+            ).map(([key, label, color]) => (
+              <div key={key} className="bg-black/30 border border-[#2a2a2a] rounded-lg p-3">
+                <div className={`text-2xl font-bold ${color}`}>
+                  {stats.by_status[key] ?? 0}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">{label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {recent.map((drama) => (
+            <div
+              key={drama.id}
+              className="flex items-center gap-3 bg-black/20 border border-[#2a2a2a] rounded-lg px-3 py-2 text-sm"
+            >
+              <span
+                className={`shrink-0 w-16 text-xs font-medium ${
+                  drama.status === "done"
+                    ? "text-green-400"
+                    : drama.status === "failed"
+                      ? "text-red-400"
+                      : drama.status === "transferring"
+                        ? "text-yellow-300"
+                        : "text-gray-500"
+                }`}
+              >
+                {drama.status}
+              </span>
+              <span className="flex-1 min-w-0 text-gray-300 truncate">
+                {drama.title}
+                {drama.episode_count ? `（${drama.episode_count}集）` : ""}
+              </span>
+              {drama.transfer_error && (
+                <span className="shrink-0 max-w-[40%] text-xs text-red-400/80 truncate" title={drama.transfer_error}>
+                  {drama.transfer_error}
+                </span>
+              )}
+            </div>
+          ))}
+          {recent.length === 0 && (
+            <p className="text-sm text-gray-600">暂无数据，先跑一轮抓取。</p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function summarize(action: string, data: unknown): string {
+  if (!data || typeof data !== "object") return "完成";
+  const stats = data as Record<string, unknown>;
+  if (action === "transfer") {
+    return `成功 ${stats.succeeded ?? 0}、失败 ${stats.failed ?? 0}、封面 ${stats.covers_mirrored ?? 0}`;
+  }
+  if (action === "tag-sync") {
+    return `标签 ${stats.tags_processed ?? 0}/${stats.tags_total ?? 0}、命中 ${stats.dramas_tagged ?? 0}`;
+  }
+  return `新建 ${stats.items_created ?? 0}、更新 ${stats.items_updated ?? 0}、详情 ${stats.details_fetched ?? 0}`;
+}

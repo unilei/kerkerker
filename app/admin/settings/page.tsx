@@ -8,12 +8,13 @@ import { PluginCompliancePanel } from "@/components/admin/PluginCompliancePanel"
 import { DatabaseSettingsTab } from "@/components/admin/DatabaseSettingsTab";
 import { PluginJobCenter } from "@/components/admin/PluginJobCenter";
 import { PluginInstallationCenter } from "@/components/admin/PluginInstallationCenter";
+import { AdminShortDramasTab } from "@/components/admin/ShortDramaSourceTab";
 import type { ToastState, ConfirmState } from "@/components/admin/types";
-import { HardDrive, Database, ShieldCheck, ListChecks, Package } from "lucide-react";
+import { HardDrive, Database, ShieldCheck, ListChecks, Package, Clapperboard } from "lucide-react";
 
-type TabType = "pan" | "jobs" | "compliance" | "database" | "plugins";
+type TabType = "pan" | "short-drama" | "jobs" | "compliance" | "database" | "plugins";
 
-const VALID_TABS: TabType[] = ["pan", "jobs", "compliance", "database", "plugins"];
+const VALID_TABS: TabType[] = ["pan", "short-drama", "jobs", "compliance", "database", "plugins"];
 
 function SettingsContent() {
   const router = useRouter();
@@ -51,6 +52,7 @@ function SettingsContent() {
   };
 
   const tabs = [
+    { id: "short-drama" as TabType, name: "短剧源", icon: Clapperboard },
     { id: "pan" as TabType, name: "网盘资源", icon: HardDrive },
     { id: "plugins" as TabType, name: "插件中心", icon: Package },
     { id: "jobs" as TabType, name: "任务中心", icon: ListChecks },
@@ -64,7 +66,7 @@ function SettingsContent() {
       <div className="bg-[#141414] border-b border-[#333]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
           <div className="flex items-center gap-6">
-            <h1 className="text-2xl font-bold text-[#E50914]">爱盼</h1>
+            <h1 className="text-2xl font-bold text-[#E50914]">爱盼短剧</h1>
             <span className="text-white text-lg">系统设置</span>
           </div>
           <button
@@ -108,6 +110,10 @@ function SettingsContent() {
 
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {activeTab === "short-drama" && (
+          <AdminShortDramasTab onShowToast={setToast} />
+        )}
+
         {activeTab === "pan" && (
           <PanResourcesTab
             onShowToast={setToast}

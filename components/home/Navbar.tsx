@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { Menu, X, Home, Film, Tv, Clock, Calendar, Trophy, HardDrive } from "lucide-react";
+import { Menu, X, Home, Tags } from "lucide-react";
 import { useLocale } from "@/components/providers/locale-provider";
 import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
-import { SEARCH_SITE_URL } from "@/lib/seo";
+import { SITE_NAME } from "@/lib/seo";
 
 interface NavbarProps {
   scrolled: boolean;
@@ -31,18 +31,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
 
   const navItems = [
     { href: "/", label: isEnglish ? "Home" : "首页", icon: Home },
-    { href: "/browse/movies", label: isEnglish ? "Movies" : "电影", icon: Film },
-    { href: "/browse/tv", label: isEnglish ? "TV" : "电视剧", icon: Tv },
-    { href: "/calendar", label: isEnglish ? "Calendar" : "追剧日历", icon: Calendar },
-    { href: "/browse/latest", label: isEnglish ? "Latest" : "最新", icon: Clock },
-    { href: "/category/top250", label: isEnglish ? "Top 250" : "Top250", icon: Trophy },
-    {
-      href: SEARCH_SITE_URL,
-      label: isEnglish ? "Cloud Search" : "网盘搜索",
-      icon: HardDrive,
-      external: true,
-      highlight: true,
-    },
+    { href: "/?view=tags", label: isEnglish ? "Tags" : "标签", icon: Tags },
   ];
 
   return (
@@ -71,8 +60,8 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
             </button>
 
             {/* Logo */}
-            <Link 
-              href="/" 
+            <Link
+              href="/"
               onClick={() => setIsMobileMenuOpen(false)}
               className="flex items-center gap-1"
             >
@@ -82,22 +71,20 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                 alt="logo"
               />
               <span className="text-red-600 text-xl md:text-2xl lg:text-3xl font-bold tracking-tight hover:text-red-500 transition-colors">
-                爱盼
+                {SITE_NAME}
               </span>
             </Link>
 
             {/* 导航链接 - 桌面端 */}
             <div className="hidden md:flex items-center space-x-6">
-              {navItems.filter(item => !('mobileOnly' in item && item.mobileOnly)).map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href!}
-                    target={item.external ? "_blank" : undefined}
-                    rel={item.external ? "noopener noreferrer" : undefined}
-                    className="text-gray-400 hover:text-white transition-colors text-sm font-medium"
-                  >
-                    {item.label}
-                  </Link>
+              {navItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="text-gray-400 hover:text-white transition-colors text-sm font-medium"
+                >
+                  {item.label}
+                </Link>
               ))}
             </div>
           </div>
@@ -154,7 +141,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
             <div className="flex items-center gap-2">
               <img className="w-10 h-10" src="/logo.png" alt="logo" />
               <h2 className="text-red-600 text-2xl font-bold tracking-tight">
-                爱盼
+                {SITE_NAME}
               </h2>
             </div>
             <div className="mt-4">
@@ -169,15 +156,9 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
               return (
                 <Link
                   key={item.href}
-                  href={item.href!}
-                  target={item.external ? "_blank" : undefined}
-                  rel={item.external ? "noopener noreferrer" : undefined}
+                  href={item.href}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group ${
-                    item.highlight
-                      ? "text-red-300 hover:text-white hover:bg-red-600/20"
-                      : "text-gray-300 hover:text-white hover:bg-white/10"
-                  }`}
+                  className="flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group text-gray-300 hover:text-white hover:bg-white/10"
                 >
                   <Icon className="w-5 h-5 text-gray-400 group-hover:text-red-500 transition-colors" />
                   <span className="text-base font-medium">{item.label}</span>
@@ -189,7 +170,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
           {/* 侧边栏底部 */}
           <div className="absolute bottom-0 left-0 right-0 p-6 border-t border-gray-800">
             <p className="text-xs text-gray-500 text-center">
-              © 2026 爱盼 · 影视信息聚合与导航
+              © 2026 {SITE_NAME} · 短剧信息聚合与导航
             </p>
           </div>
         </div>

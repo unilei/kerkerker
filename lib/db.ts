@@ -334,6 +334,35 @@ async function initializeDatabase(db: Db) {
       { name: "plugin_installation_status" }
     );
 
+    // 短剧库：源内文章 ID 唯一去重；前台按状态/标签/时间查询。
+    const shortDramasCollection = db.collection(COLLECTIONS.SHORT_DRAMAS);
+    await shortDramasCollection.createIndex(
+      { source: 1, source_article_id: 1 },
+      { unique: true }
+    );
+    await shortDramasCollection.createIndex({ status: 1, updated_at: -1 });
+    await shortDramasCollection.createIndex({ tags: 1, updated_at: -1 });
+    await shortDramasCollection.createIndex({ title: 1 });
+    await shortDramasCollection.createIndex({ enabled: 1, updated_at: -1 });
+
+    // 短剧同步状态（单例）
+    const shortDramaSyncStateCollection = db.collection(
+      COLLECTIONS.SHORT_DRAMA_SYNC_STATE
+    );
+    await shortDramaSyncStateCollection.createIndex({ id: 1 }, { unique: true });
+
+    // 网盘凭证：每平台一条有效凭证（is_default 唯一由应用层保证）。
+    const cloudCredentialsCollection = db.collection(
+      COLLECTIONS.CLOUD_CREDENTIALS
+    );
+    await cloudCredentialsCollection.createIndex(
+      { platform: 1, is_default: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { is_default: { $type: "boolean" } },
+      }
+    );
+
     globalForMongo.initialized = true;
     console.log('✅ MongoDB 数据库初始化完成');
   } catch (error) {

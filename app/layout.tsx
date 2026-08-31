@@ -32,7 +32,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: `${SITE_NAME} | 影视信息与网盘资源导航`,
+    default: `${SITE_NAME} | 短剧信息与网盘资源导航`,
     template: `%s | ${SITE_NAME}`,
   },
   description: SITE_DESCRIPTION,
@@ -55,7 +55,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     url: SITE_URL,
-    title: `${SITE_NAME} | 影视信息与网盘资源导航`,
+    title: `${SITE_NAME} | 短剧信息与网盘资源导航`,
     description: SITE_DESCRIPTION,
     siteName: SITE_NAME,
     locale: "zh_CN",
@@ -64,7 +64,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: `${SITE_NAME} | 影视信息与网盘资源导航`,
+    title: `${SITE_NAME} | 短剧信息与网盘资源导航`,
     description: SITE_DESCRIPTION,
     images: [SITE_IMAGE_URL],
   },
