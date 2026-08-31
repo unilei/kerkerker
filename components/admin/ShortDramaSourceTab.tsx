@@ -182,14 +182,14 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
         ) : (
           <p className="mb-4 text-sm text-gray-500 flex items-center gap-2">
             <AlertTriangle size={14} className="text-yellow-400" />
-            尚未配置凭证：请在浏览器登录 pan.quark.cn 后，复制完整 cookie 粘贴到下方
+            尚未配置凭证：请在浏览器登录 pan.quark.cn 后，从 DevTools → Network 任意请求的 Request Headers 复制完整 cookie 粘贴到下方（需含 __pus/__kps/__puus 等登录态字段）
           </p>
         )}
         <textarea
           value={cookieInput}
           onChange={(event) => setCookieInput(event.target.value)}
           rows={3}
-          placeholder="kps=…; sign=…; __pus=…; …（浏览器 cookie 整行粘贴）"
+          placeholder="__kps=…; __pus=…; __puus=…; …（浏览器 cookie 整行粘贴）"
           className="w-full bg-black/40 border border-[#333] rounded-lg px-3 py-2 text-sm text-gray-200 font-mono placeholder:text-gray-600 focus:outline-none focus:border-red-600"
         />
         <button

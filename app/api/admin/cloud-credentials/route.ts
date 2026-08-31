@@ -10,8 +10,8 @@ import {
 /**
  * 网盘凭证管理（admin）
  *
- * POST   { platform: "quark", cookie: "kps=...; sign=...; __pus=..." }
- *        → 校验登录态字段 → 调夸克 member 接口验证 → AES 加密落库
+ * POST   { platform: "quark", cookie: "__kps=...; __pus=...; __puus=..." }
+ *        → 登录态字段初检 → 调夸克 member 接口验证 → AES 加密落库
  * GET    → 当前凭证脱敏视图（掩码 cookie + 有效性）
  */
 

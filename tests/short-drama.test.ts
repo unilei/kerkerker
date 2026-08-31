@@ -177,13 +177,19 @@ test("credential-crypto：加解密往返 + 密钥隔离 + 掩码", () => {
   assert.equal(maskCredential("short"), "******");
 });
 
-test("normalizeQuarkCookie：缺失登录态字段报错，齐全则规整", () => {
+test("normalizeQuarkCookie：无登录态字段报错，新旧 schema 均规整通过", () => {
   assert.throws(
     () => normalizeQuarkCookie("foo=bar; baz=qux"),
     CredentialCryptoError
   );
-  const normalized = normalizeQuarkCookie(
-    "kps=abc; __pus=def;\nsign=ghi; extra=1"
+  // 旧 schema（kps/sign）
+  assert.equal(
+    normalizeQuarkCookie("kps=abc; __pus=def;\nsign=ghi; extra=1"),
+    "kps=abc; __pus=def; sign=ghi; extra=1"
   );
-  assert.equal(normalized, "kps=abc; __pus=def; sign=ghi; extra=1");
+  // 2026-09 实测新 schema（__kps/__kp/__pus/__puus，无 kps/sign）
+  assert.equal(
+    normalizeQuarkCookie("__uid=u1; __kps=k1; __pus=p1; __kp=kp1; __puus=pu1"),
+    "__uid=u1; __kps=k1; __pus=p1; __kp=kp1; __puus=pu1"
+  );
 });

@@ -79,9 +79,19 @@ export function maskCredential(plaintext: string): string {
 
 /**
  * 解析浏览器复制的 cookie 单行串（name=value; name2=value2）。
- * 校验必须包含夸克登录态关键字段（kps/sign/__pus 等），否则视为无效。
+ * 只做「像夸克登录 cookie」的快速初检：命中任意登录态字段即通过
+ * （2026-09 实测 schema 为 __kps/__kp/__pus/__puus/__uid；kps/sign 为旧版
+ * schema，兼容保留），真正有效性由夸克 member 接口验证，这里不硬卡字段。
  */
-const QUARK_REQUIRED_COOKIE_KEYS = ["kps", "sign", "__pus"] as const;
+const QUARK_LOGIN_COOKIE_KEYS = [
+  "__pus",
+  "__puus",
+  "__kps",
+  "__kp",
+  "__uid",
+  "kps",
+  "sign",
+] as const;
 
 export function normalizeQuarkCookie(input: string): string {
   const pairs = input
@@ -91,10 +101,10 @@ export function normalizeQuarkCookie(input: string): string {
   const names = new Set(
     pairs.map((pair) => pair.slice(0, pair.indexOf("=")).trim())
   );
-  const missing = QUARK_REQUIRED_COOKIE_KEYS.filter((key) => !names.has(key));
-  if (missing.length > 0) {
+  const hit = QUARK_LOGIN_COOKIE_KEYS.filter((key) => names.has(key));
+  if (hit.length === 0) {
     throw new CredentialCryptoError(
-      `cookie 缺少夸克登录态字段：${missing.join("、")}；请在浏览器登录 pan.quark.cn 后复制完整 cookie`
+      "cookie 中没有找到夸克登录态字段（__pus/__kps/__puus 等）；请在浏览器登录 pan.quark.cn 后，从 DevTools → Network 任意请求的 Request Headers 复制完整 cookie"
     );
   }
   return pairs.join("; ");
