@@ -74,6 +74,12 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
   const [mobileExpanded, setMobileExpanded] = useState<string | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [tagMenu, setTagMenu] = useState<TagMenuItem[]>(STATIC_TAG_MENU);
+  const [panelMounted, setPanelMounted] = useState(false);
+  useEffect(() => {
+    // setTimeout 而非 rAF:后台/内嵌 WebView 标签页里 rAF 会冻结
+    const id = setTimeout(() => setPanelMounted(true), 0);
+    return () => clearTimeout(id);
+  }, []);
   const { locale } = useLocale();
   const isEnglish = locale === "en-US";
 
@@ -205,7 +211,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                   }`}
                 >
                   <div className="w-[560px] bg-[#141414]/98 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/60 p-5 grid grid-cols-2 gap-x-6 gap-y-4">
-                    {tagMenu.map((group) => (
+                    {panelMounted && tagMenu.map((group) => (
                       <div key={group.label}>
                         <div className="flex items-center gap-1.5 mb-2">
                           <span
@@ -267,7 +273,8 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
         </div>
       </nav>
 
-      {/* 移动端侧边栏菜单 */}
+      {/* 移动端侧边栏菜单(挂载后渲染:隐形全屏遮罩参与水合同样会让 React 静默挂起) */}
+      {panelMounted && (
       <div
         className={`md:hidden fixed inset-0 z-[60] transition-opacity duration-300 ${
           isMobileMenuOpen
@@ -393,6 +400,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
           </div>
         </div>
       </div>
+      )}
     </>
   );
 }

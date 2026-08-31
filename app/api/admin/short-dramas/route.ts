@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminRequest } from "@/lib/admin-route";
 import { runShortDramaScrape, runShortDramaTagSync } from "@/lib/short-drama/scrape";
-import { runShortDramaTransfer } from "@/lib/short-drama/transfer";
+import {
+  runShortDramaTransfer,
+  runShortDramaMetadataBackfill,
+} from "@/lib/short-drama/transfer";
 import { runTagGroupSync } from "@/lib/short-drama/tag-groups";
 import {
   getShortDramaSyncState,
@@ -15,8 +18,8 @@ import { isR2CoverMirrorConfigured } from "@/lib/short-drama/cover-mirror";
  *
  * GET    → 同步状态 + 台账统计 + 最近条目
  * POST   { action: "scrape-backfill" | "scrape-incremental" | "tag-sync" |
- *          "tag-group-sync" | "transfer", maxPages?, maxDetails?, maxItems?,
- *          startPage? }
+ *          "tag-group-sync" | "transfer" | "metadata-backfill", maxPages?,
+ *          maxDetails?, maxItems?, startPage? }
  *        → 同步执行对应任务并返回统计（任务有租约防并发；长任务建议
  *          由脚本/curl 携带 admin cookie 调用并轮询 GET 查看进度）
  */
@@ -27,6 +30,7 @@ const ALL_ACTIONS = [
   "tag-sync",
   "tag-group-sync",
   "transfer",
+  "metadata-backfill",
 ] as const;
 type Action = (typeof ALL_ACTIONS)[number];
 
@@ -146,6 +150,17 @@ export async function POST(request: NextRequest) {
         const result = await runShortDramaTransfer(
           clampInt(payload.maxItems, 0, 500) !== undefined
             ? { maxItems: clampInt(payload.maxItems, 0, 500) }
+            : {}
+        );
+        return NextResponse.json(
+          { code: result.failed_fatal ? 502 : 200, message: result.error || "ok", data: result },
+          { status: result.failed_fatal ? 502 : 200 }
+        );
+      }
+      case "metadata-backfill": {
+        const result = await runShortDramaMetadataBackfill(
+          clampInt(payload.maxItems, 0, 50) !== undefined
+            ? { maxItems: clampInt(payload.maxItems, 0, 50) }
             : {}
         );
         return NextResponse.json(

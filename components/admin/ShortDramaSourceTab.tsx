@@ -41,6 +41,8 @@ interface SyncState {
   last_scrape_stats?: Record<string, unknown>;
   last_transfer_at?: string;
   last_transfer_stats?: Record<string, unknown>;
+  last_metadata_backfill_at?: string;
+  last_metadata_backfill_stats?: Record<string, unknown>;
   running?: { task: string; started_at: string; expires_at: string } | null;
 }
 
@@ -281,10 +283,21 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
             <Send size={14} />
             转存 10 部
           </button>
+          <button
+            onClick={() => runAction("metadata-backfill", "元数据补齐", { maxItems: 20 })}
+            disabled={runningAction !== null}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+          >
+            <Send size={14} />
+            补齐元数据（封面/简介）
+          </button>
         </div>
         {syncState?.last_transfer_at && (
           <p className="text-xs text-gray-500">
             上次转存：{syncState.last_transfer_at.slice(0, 16).replace("T", " ")}
+            {syncState?.last_metadata_backfill_at && (
+              <> · 上次补齐：{syncState.last_metadata_backfill_at.slice(0, 16).replace("T", " ")}</>
+            )}
           </p>
         )}
       </section>
@@ -356,6 +369,9 @@ function summarize(action: string, data: unknown): string {
   const stats = data as Record<string, unknown>;
   if (action === "transfer") {
     return `成功 ${stats.succeeded ?? 0}、失败 ${stats.failed ?? 0}、封面 ${stats.covers_mirrored ?? 0}`;
+  }
+  if (action === "metadata-backfill") {
+    return `补齐 ${stats.attempted ?? 0} 部：封面 ${stats.covers_mirrored ?? 0}、简介 ${stats.intros_set ?? 0}、metadata ${stats.metadata_set ?? 0}、仍缺 ${stats.still_missing ?? 0}`;
   }
   if (action === "tag-sync") {
     return `标签 ${stats.tags_processed ?? 0}/${stats.tags_total ?? 0}、命中 ${stats.dramas_tagged ?? 0}`;

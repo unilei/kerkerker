@@ -8,9 +8,10 @@ import { assertSafeOutboundUrl } from "@/lib/url-security";
  *   CLOUDFLARE_R2_PUBLIC_URL       Bucket 根目录的公开访问域名
  *   CLOUDFLARE_R2_UPLOAD_API_URL   上传 Worker /objects 基址
  *   CLOUDFLARE_R2_UPLOAD_API_TOKEN Bearer token（wrangler secret UPLOAD_TOKEN）
- *   CLOUDFLARE_R2_KEY_PREFIX       对象键顶层目录（douban-service 缺省
- *                                  "douban-images"；短剧封面缺省独立
- *                                  "short-drama-covers"，避免与豆瓣图混淆）
+ *   CLOUDFLARE_R2_COVER_KEY_PREFIX 短剧封面顶层目录（缺省
+ *                                  "short-drama-covers"；刻意独立于
+ *                                  douban-service 的 CLOUDFLARE_R2_KEY_PREFIX，
+ *                                  共用 Bucket 时两套前缀互不覆盖）
  *   CLOUDFLARE_R2_MAX_IMAGE_BYTES  大小上限（缺省 10MB，与 douban-service 一致）
  *
  * Worker 侧约束（cloudflare/image-upload-worker）：key 仅允许
@@ -44,10 +45,13 @@ export function isR2CoverMirrorConfigured(): boolean {
   );
 }
 
-/** 与 douban-service 的 objectKey 语义一致：可选顶层前缀 + 文件键 */
+/** 与 douban-service 的 objectKey 语义一致：可选顶层前缀 + 文件键。
+ *  前缀用短剧专属的 CLOUDFLARE_R2_COVER_KEY_PREFIX（缺省
+ *  "short-drama-covers"），刻意不读 douban-service 的
+ *  CLOUDFLARE_R2_KEY_PREFIX——两者共用 Bucket，前缀必须互不覆盖。 */
 function coverObjectKey(key: string): string {
   const prefix =
-    process.env.CLOUDFLARE_R2_KEY_PREFIX?.trim() || DEFAULT_COVER_KEY_PREFIX;
+    process.env.CLOUDFLARE_R2_COVER_KEY_PREFIX?.trim() || DEFAULT_COVER_KEY_PREFIX;
   const normalizedPrefix = prefix.replace(/^\/+|\/+$/g, "");
   const normalizedKey = key.replace(/^\/+/, "");
   return normalizedPrefix
@@ -106,16 +110,26 @@ export async function uploadCoverToR2(
   }
 }
 
-/** 夸克签名下载直链 → 字节（封面/元数据小文件通用） */
+/** 夸克签名下载直链 → 字节（封面/元数据小文件通用）。
+ *  下载 CDN 校验账号态：不带 cookie 时返回 412，故在 quark.cn 域名上
+ *  附带凭证 cookie（其他域名一律不带，防凭证外泄）。 */
 export async function fetchSignedDownloadBytes(
   downloadUrl: string,
-  maxBytes: number = DEFAULT_MAX_COVER_BYTES
+  maxBytes: number = DEFAULT_MAX_COVER_BYTES,
+  cookie?: string
 ): Promise<{ body: Uint8Array; contentType: string } | null> {
   try {
     await assertSafeOutboundUrl(downloadUrl);
+    const headers: Record<string, string> = {
+      "user-agent": "Mozilla/5.0",
+      referer: "https://pan.quark.cn/",
+    };
+    if (cookie && /(^|\.)quark\.cn$/i.test(new URL(downloadUrl).hostname)) {
+      headers.cookie = cookie;
+    }
     const response = await fetch(downloadUrl, {
       signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
-      headers: { "user-agent": "Mozilla/5.0", referer: "https://pan.quark.cn/" },
+      headers,
     });
     if (!response.ok) return null;
     const length = Number(response.headers.get("content-length") || 0);

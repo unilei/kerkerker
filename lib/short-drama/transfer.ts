@@ -11,6 +11,7 @@ import {
 import { uploadCoverToR2, fetchSignedDownloadBytes } from "@/lib/short-drama/cover-mirror";
 import {
   takeShortDramasForTransfer,
+  takeShortDramasForMetadataBackfill,
   patchShortDramaTransfer,
   updateShortDramaSyncState,
   tryAcquireShortDramaLease,
@@ -40,6 +41,9 @@ const TRANSFER_LEASE_TTL_MS = 60 * 60 * 1_000;
 const SAVE_DELAY_MS = 3_000;
 const MAX_ATTEMPTS = 3;
 const TRANSFER_DELAY_SAFETY_MS = 10 * 60 * 1_000;
+// 夸克 save 异步落库的索引等待：每 3s 重列一次目录，最多 5 次（约 15s）
+const METADATA_LIST_STABILIZE_POLLS = 5;
+const METADATA_LIST_STABILIZE_DELAY_MS = 3_000;
 
 export interface TransferOptions {
   /** 单轮最多转存几部（0/缺省 = 处理完队列） */
@@ -129,6 +133,124 @@ export async function runShortDramaTransfer(
   }
 }
 
+export interface MetadataBackfillStats {
+  attempted: number;
+  covers_mirrored: number;
+  intros_set: number;
+  metadata_set: number;
+  /** 跑完后仍缺任一元数据的条目数（源分享可能本就没有三件套） */
+  still_missing: number;
+  credentials_invalid: boolean;
+  stopped_reason:
+    | "completed"
+    | "budget"
+    | "nothing_to_do"
+    | "credential_invalid"
+    | "lease_busy";
+  failed_fatal: boolean;
+  error?: string;
+}
+
+/**
+ * 元数据补齐：对已 done 且有 own_folder_fid 的条目只重列目录、重走
+ * 三件套关联（不重复转存、不重建分享），修复转存瞬间夸克索引延迟
+ * 导致的封面/简介/metadata 缺失。
+ */
+export async function runShortDramaMetadataBackfill(
+  options: TransferOptions = {}
+): Promise<MetadataBackfillStats> {
+  const stats: MetadataBackfillStats = {
+    attempted: 0,
+    covers_mirrored: 0,
+    intros_set: 0,
+    metadata_set: 0,
+    still_missing: 0,
+    credentials_invalid: false,
+    stopped_reason: "completed",
+    failed_fatal: false,
+  };
+  const maxItems = options.maxItems && options.maxItems > 0 ? options.maxItems : 50;
+
+  if (!(await tryAcquireShortDramaLease("transfer", TRANSFER_LEASE_TTL_MS))) {
+    stats.stopped_reason = "lease_busy";
+    stats.failed_fatal = true;
+    stats.error = "已有转存任务在运行";
+    return stats;
+  }
+
+  try {
+    const cookie = await getCloudCredentialCookie("quark");
+    if (!cookie) {
+      stats.stopped_reason = "credential_invalid";
+      stats.failed_fatal = true;
+      stats.error = "未配置夸克凭证，请先在后台粘贴 cookie";
+      return stats;
+    }
+
+    const queue = await takeShortDramasForMetadataBackfill(maxItems);
+    if (queue.length === 0) {
+      stats.stopped_reason = "nothing_to_do";
+      return stats;
+    }
+
+    for (const drama of queue) {
+      if (stats.attempted >= maxItems) {
+        stats.stopped_reason = "budget";
+        break;
+      }
+      stats.attempted += 1;
+      try {
+        const meta = await collectMetadata(cookie, drama.own_folder_fid!, drama);
+        if (meta.coverUrl) {
+          stats.covers_mirrored += 1;
+        }
+        if (meta.intro) stats.intros_set += 1;
+        if (meta.metadata) stats.metadata_set += 1;
+        const missingCount = [
+          meta.coverUrl ? 0 : 1,
+          meta.intro ? 0 : 1,
+          meta.metadata ? 0 : 1,
+        ].reduce<number>((sum, flag) => sum + flag, 0);
+        if (missingCount > 0) stats.still_missing += 1;
+        await patchShortDramaTransfer(drama.id, {
+          status: "done",
+          clear_transfer_error: true,
+          ...(meta.coverUrl ? { cover_url: meta.coverUrl } : {}),
+          ...(meta.intro ? { intro: meta.intro } : {}),
+          ...(meta.metadata ? { metadata: meta.metadata } : {}),
+        });
+      } catch (error) {
+        if (error instanceof QuarkCredentialInvalidError) {
+          stats.credentials_invalid = true;
+          stats.stopped_reason = "credential_invalid";
+          stats.failed_fatal = true;
+          stats.error = error.message;
+          await markCloudCredentialInvalid("quark");
+          break;
+        }
+        console.warn(
+          `短剧元数据补齐失败 id=${drama.id}:`,
+          error instanceof Error ? error.message : String(error)
+        );
+        stats.still_missing += 1;
+      }
+      await sleep(SAVE_DELAY_MS);
+    }
+
+    await updateShortDramaSyncState({
+      last_metadata_backfill_at: new Date().toISOString(),
+      last_metadata_backfill_stats: stats as unknown as Record<string, unknown>,
+    });
+    return stats;
+  } catch (error) {
+    stats.failed_fatal = true;
+    stats.error = error instanceof Error ? error.message : String(error);
+    return stats;
+  } finally {
+    await releaseShortDramaLease("transfer");
+  }
+}
+
 interface TransferOneResult {
   ok: boolean;
   coverMirrored: boolean;
@@ -191,7 +313,7 @@ async function transferOne(
         own_share_url: transferred.shareLink,
         own_share_code: transferred.shareCode,
         own_folder_fid: folderFid,
-        transfer_error: "元数据关联失败（封面/简介缺失），可重跑转存补齐",
+        transfer_error: "元数据关联失败（封面/简介缺失），可用「补齐元数据」重试",
       });
     }
 
@@ -221,7 +343,29 @@ async function collectMetadata(
 ): Promise<CollectedMetadata> {
   const result: CollectedMetadata = { coverMirrored: false };
 
-  const items = await listQuarkOwnDirectory(cookie, folderFid);
+  // 夸克 save 是异步落库：API 返回后立刻列目录可能只见部分文件
+  // （三件套按名称序排在 mp4 之后，最容易还没索引出来）。轮询到
+  // 条目数稳定或出现「metadata.json」为止。
+  let items = await listQuarkOwnDirectory(cookie, folderFid);
+  for (
+    let attempt = 0;
+    attempt < METADATA_LIST_STABILIZE_POLLS &&
+    !items.some((item) => !item.dir && item.name.toLowerCase() === "metadata.json");
+    attempt += 1
+  ) {
+    await sleep(METADATA_LIST_STABILIZE_DELAY_MS);
+    const next = await listQuarkOwnDirectory(cookie, folderFid);
+    if (next.length === items.length) break;
+    items = next;
+  }
+  const hasMetadataJson = items.some(
+    (item) => !item.dir && item.name.toLowerCase() === "metadata.json"
+  );
+  if (!hasMetadataJson) {
+    console.warn(
+      `短剧元数据 id=${drama.id}: 转存目录 ${items.length} 项未见三件套（可能仍在校验/过滤中）`
+    );
+  }
   const cover = items.find(
     (item) => !item.dir && /^封面\.(jpe?g|png|webp)$/i.test(item.name)
   );
@@ -234,7 +378,7 @@ async function collectMetadata(
 
   if (cover) {
     const download = await fetchQuarkDownloadUrlForFile(cookie, cover.fid);
-    const bytes = await fetchSignedDownloadBytes(download.downloadUrl);
+    const bytes = await fetchSignedDownloadBytes(download.downloadUrl, undefined, cookie);
     if (bytes) {
       const ext = extensionForContentType(bytes.contentType, cover.name);
       const coverUrl = await uploadCoverToR2({
@@ -255,7 +399,8 @@ async function collectMetadata(
     const download = await fetchQuarkDownloadUrlForFile(cookie, metadataFile.fid);
     const bytes = await fetchSignedDownloadBytes(
       download.downloadUrl,
-      1024 * 1024
+      1024 * 1024,
+      cookie
     );
     if (bytes) {
       try {
@@ -272,7 +417,7 @@ async function collectMetadata(
 
   if (introFile) {
     const download = await fetchQuarkDownloadUrlForFile(cookie, introFile.fid);
-    const bytes = await fetchSignedDownloadBytes(download.downloadUrl, 1024 * 1024);
+    const bytes = await fetchSignedDownloadBytes(download.downloadUrl, 1024 * 1024, cookie);
     if (bytes) {
       result.intro = new TextDecoder("utf-8", { fatal: false })
         .decode(bytes.body)

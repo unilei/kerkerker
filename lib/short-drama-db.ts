@@ -195,6 +195,29 @@ export async function takeShortDramasForTransfer(
   return docs.map(toView);
 }
 
+/** 转存已完成但缺元数据（封面/简介/metadata 之一）的条目，供补齐动作重列目录 */
+export async function takeShortDramasForMetadataBackfill(
+  limit: number
+): Promise<ShortDrama[]> {
+  const db = await getDatabase();
+  const docs = await db
+    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
+    .find({
+      enabled: true,
+      status: "done",
+      own_folder_fid: { $type: "string" },
+      $or: [
+        { cover_url: { $exists: false } },
+        { intro: { $exists: false } },
+        { metadata: { $exists: false } },
+      ],
+    })
+    .sort({ updated_at: 1 })
+    .limit(Math.min(Math.max(limit, 1), 50))
+    .toArray();
+  return docs.map(toView);
+}
+
 export interface ShortDramaTransferPatch {
   status?: ShortDramaStatus;
   transfer_error?: string;
@@ -328,22 +351,35 @@ export async function tryAcquireShortDramaLease(
     { $set: { running: null, updated_at: now } }
   );
 
-  const result = await collection.updateOne(
-    { id: SYNC_STATE_ID, running: null },
-    {
-      $set: {
-        running: {
-          task,
-          started_at: now,
-          expires_at: new Date(nowMs + ttlMs).toISOString(),
+  try {
+    const result = await collection.updateOne(
+      { id: SYNC_STATE_ID, running: null },
+      {
+        $set: {
+          running: {
+            task,
+            started_at: now,
+            expires_at: new Date(nowMs + ttlMs).toISOString(),
+          },
+          updated_at: now,
         },
-        updated_at: now,
+        $setOnInsert: { id: SYNC_STATE_ID },
       },
-      $setOnInsert: { id: SYNC_STATE_ID },
-    },
-    { upsert: true }
-  );
-  return result.upsertedCount === 1 || result.modifiedCount === 1;
+      { upsert: true }
+    );
+    return result.upsertedCount === 1 || result.modifiedCount === 1;
+  } catch (error) {
+    // 租约被未过期任务持有时 filter 不命中，upsert 会撞 id 唯一索引：
+    // 这里的语义等价于「已有任务在运行」，不能向上抛 500
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error as { code?: number }).code === 11000
+    ) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 export async function releaseShortDramaLease(
