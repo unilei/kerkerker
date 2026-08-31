@@ -48,3 +48,5 @@ next-env.d.ts
 /data/*.backup
 .agent/
 .agents/
+# 回填驱动断点文件
+scripts/.backfill-checkpoint.json

@@ -15,7 +15,8 @@ import { isR2CoverMirrorConfigured } from "@/lib/short-drama/cover-mirror";
  *
  * GET    → 同步状态 + 台账统计 + 最近条目
  * POST   { action: "scrape-backfill" | "scrape-incremental" | "tag-sync" |
- *          "tag-group-sync" | "transfer", maxPages?, maxDetails?, maxItems? }
+ *          "tag-group-sync" | "transfer", maxPages?, maxDetails?, maxItems?,
+ *          startPage? }
  *        → 同步执行对应任务并返回统计（任务有租约防并发；长任务建议
  *          由脚本/curl 携带 admin cookie 调用并轮询 GET 查看进度）
  */
@@ -92,6 +93,7 @@ export async function POST(request: NextRequest) {
     maxPages?: unknown;
     maxDetails?: unknown;
     maxItems?: unknown;
+    startPage?: unknown;
   };
 
   if (!isAction(payload.action)) {
@@ -116,6 +118,9 @@ export async function POST(request: NextRequest) {
             : {}),
           ...(clampInt(payload.maxDetails, 0, 100000) !== undefined
             ? { maxDetails: clampInt(payload.maxDetails, 0, 100000) }
+            : {}),
+          ...(clampInt(payload.startPage, 0, 100000) !== undefined
+            ? { startPage: clampInt(payload.startPage, 0, 100000) }
             : {}),
         });
         return NextResponse.json(

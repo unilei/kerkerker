@@ -31,12 +31,17 @@ export interface ScrapeOptions {
   maxPages?: number;
   /** 单轮详情抓取上限（0/缺省 = 不限），首次回填可分批执行 */
   maxDetails?: number;
+  /** 起始列表页（仅 backfill 生效，配合 last_page 做断点续跑；
+   *  incremental 固定从第 1 页向水位翻页，跳页会漏抓新条目） */
+  startPage?: number;
 }
 
 export interface ScrapeStats {
   mode: "backfill" | "incremental";
   pages_scraped: number;
   site_max_page: number;
+  /** 本轮最后到达的列表页；预算中断时即下轮回填的 startPage 建议值 */
+  last_page: number;
   items_seen: number;
   items_skipped_existing: number;
   items_skipped_old: number;
@@ -73,6 +78,7 @@ export async function runShortDramaScrape(
     details_with_quark: 0,
     failed_pages: 0,
     failed_details: 0,
+    last_page: 0,
     stopped_reason: "completed",
     watermark_before: 0,
     watermark_after: 0,
@@ -95,7 +101,10 @@ export async function runShortDramaScrape(
 
     const processedIds: number[] = [];
     let detailsFetched = 0;
-    let page = 1;
+    const startPage = !incremental && options.startPage && options.startPage > 0
+      ? Math.floor(options.startPage)
+      : 1;
+    let page = startPage;
     let siteMaxPage = page;
 
     while (page <= Math.min(siteMaxPage, maxPages)) {
@@ -111,7 +120,8 @@ export async function runShortDramaScrape(
           `短剧列表页 ${page} 抓取失败:`,
           error instanceof Error ? error.message : String(error)
         );
-        if (page === 1) throw error; // 首页失败视为上游不可用
+        // 尚未成功抓到任何列表页时的失败视为上游不可用（含 startPage 起点页）
+        if (stats.pages_scraped === 0) throw error;
         await sleep(PAGE_DELAY_MS);
         page += 1;
         continue;
@@ -208,6 +218,9 @@ export async function runShortDramaScrape(
       page += 1;
       await sleep(PAGE_DELAY_MS);
     }
+
+    stats.last_page = page;
+    stats.site_max_page = siteMaxPage;
 
     // 水位只由成功处理的条目推进（失败条目下轮重试）
     const maxProcessed = processedIds.length > 0 ? Math.max(...processedIds) : 0;
