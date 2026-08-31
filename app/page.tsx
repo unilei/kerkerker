@@ -11,7 +11,6 @@ import { LoadingSkeleton } from "@/components/home/LoadingSkeleton";
 import { ErrorState } from "@/components/home/ErrorState";
 import { EmptyState } from "@/components/home/EmptyState";
 import ShortDramaCard from "@/components/short-drama/ShortDramaCard";
-import { TagCloud, type TagGroup } from "@/components/short-drama/TagCloud";
 import { SearchModal } from "@/components/short-drama/SearchModal";
 
 interface DramaListItem {
@@ -30,10 +29,6 @@ interface ListResponse {
     total: number;
     page: number;
     limit: number;
-    tag_groups?: Array<{
-      category: string;
-      tags: Array<{ tag: string; count: number }>;
-    }>;
   };
 }
 
@@ -51,14 +46,10 @@ function HomePageContent() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showTagPanel] = useState(
-    searchParams.get("view") === "tags"
-  );
 
   // 标签：URL ?tag= 为准；搜索为本地状态（一次性）
   const activeTag = searchParams.get("tag") || undefined;
   const [search, setSearch] = useState<string | null>(null);
-  const [tagGroups, setTagGroups] = useState<TagGroup[]>([]);
   const [hasMore, setHasMore] = useState(true);
 
   const activeRequest = useRef(0);
@@ -74,7 +65,6 @@ function HomePageContent() {
         const params = new URLSearchParams({
           page: String(targetPage),
           limit: String(PAGE_SIZE),
-          with_tags: "1",
         });
         if (activeTag) params.set("tag", activeTag);
         if (search) params.set("search", search);
@@ -91,18 +81,6 @@ function HomePageContent() {
           setTotal(payload.data.total);
           setPage(payload.data.page);
           setHasMore(payload.data.page * payload.data.limit < payload.data.total);
-          if (payload.data.tag_groups && payload.data.tag_groups.length > 0) {
-            // 源站分组归类（女性/男性/场景职业/爽设/单字 + 其他标签兜底）
-            setTagGroups(
-              payload.data.tag_groups.map((group) => ({
-                category: group.category,
-                tags: group.tags.map((entry) => ({
-                  tag: entry.tag,
-                  count: entry.count,
-                })),
-              }))
-            );
-          }
         } else {
           setError("短剧列表加载失败");
         }
@@ -184,20 +162,6 @@ function HomePageContent() {
             共 {total} 部 · 短剧信息与网盘资源导航
           </p>
         </div>
-
-        {/* 标签面板（导航"标签"入口或筛选中时展开） */}
-        {(showTagPanel || activeTag) && (
-          <div className="mb-8 bg-[#111] border border-white/5 rounded-2xl p-5">
-            <TagCloud
-              groups={tagGroups}
-              activeTag={activeTag}
-              onSelect={handleTagSelect}
-            />
-            {tagGroups.length === 0 && (
-              <p className="text-sm text-gray-600">标签数据尚未同步，稍后再来。</p>
-            )}
-          </div>
-        )}
 
         {/* 加载骨架 */}
         {loading && dramas.length === 0 && <LoadingSkeleton />}

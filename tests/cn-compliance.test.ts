@@ -74,7 +74,7 @@ test("P1-5: 短剧前台组件不出现播放类违规文案", () => {
     "components/home/Footer.tsx",
     "components/short-drama/ShortDramaCard.tsx",
     "components/short-drama/ShortDramaPanSection.tsx",
-    "components/short-drama/TagCloud.tsx",
+    "lib/short-drama/tag-menu.ts",
     "components/admin/ShortDramaSourceTab.tsx",
   ]) {
     const source = readFile(rel);
