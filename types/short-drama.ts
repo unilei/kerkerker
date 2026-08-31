@@ -80,6 +80,8 @@ export interface ShortDramaSyncState {
   last_scrape_stats?: Record<string, unknown>;
   last_transfer_at?: string;
   last_transfer_stats?: Record<string, unknown>;
+  /** 标签归类映射（组名 → 标签[]），由 runTagGroupSync 从源站刷新 */
+  tag_groups?: Record<string, string[]>;
   /** 当前运行租约；空闲时为 null（Mongo 语义需要 null 而非缺省） */
   running: {
     task: "scrape" | "transfer";

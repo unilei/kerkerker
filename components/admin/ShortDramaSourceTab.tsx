@@ -6,6 +6,7 @@ import {
   KeyRound,
   RefreshCw,
   Tag,
+  Tags,
   Send,
   CheckCircle2,
   XCircle,
@@ -234,9 +235,17 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
             <Tag size={14} />
             标签回填
           </button>
+          <button
+            onClick={() => runAction("tag-group-sync", "标签分组刷新", {})}
+            disabled={runningAction !== null}
+            className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+          >
+            <Tags size={14} />
+            刷新标签分组
+          </button>
         </div>
         <p className="text-xs text-gray-600">
-          全量回填约 7 万条、2323 个列表页，单次按钮只跑 500 条详情；完整回填建议服务器挂任务：
+          「刷新标签分组」同步源站标签归类（女性/男性/场景职业/爽设/单字）供前台标签云分组展示；「标签回填」逐标签搜索把标签写到对应短剧。全量回填约 7 万条、2323 个列表页，单次按钮只跑 500 条详情；完整回填建议服务器挂任务：
           <code className="ml-1 px-1.5 py-0.5 bg-black/40 rounded text-[11px] text-gray-400">
             curl -X POST -b admin_session=… -H &apos;Content-Type: application/json&apos; -d &apos;{"{"}&quot;action&quot;:&quot;scrape-backfill&quot;{"}"}&apos; /api/admin/short-dramas
           </code>
@@ -350,6 +359,9 @@ function summarize(action: string, data: unknown): string {
   }
   if (action === "tag-sync") {
     return `标签 ${stats.tags_processed ?? 0}/${stats.tags_total ?? 0}、命中 ${stats.dramas_tagged ?? 0}`;
+  }
+  if (action === "tag-group-sync") {
+    return `分组 ${stats.categories ?? 0}、标签 ${stats.tags_total ?? 0}（${stats.source ?? "-"}）`;
   }
   return `新建 ${stats.items_created ?? 0}、更新 ${stats.items_updated ?? 0}、详情 ${stats.details_fetched ?? 0}`;
 }

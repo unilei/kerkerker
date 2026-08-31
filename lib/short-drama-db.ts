@@ -365,3 +365,34 @@ export async function releaseShortDramaLease(
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/** 读取持久化的标签归类映射（组名 → 标签[]）；未同步过返回 null */
+export async function getShortDramaTagGroups(): Promise<Record<string, string[]> | null> {
+  const state = await getShortDramaSyncState();
+  const groups = state?.tag_groups;
+  if (!groups || typeof groups !== "object") return null;
+  const entries = Object.entries(groups).filter(
+    ([category, tags]) =>
+      typeof category === "string" &&
+      category.length > 0 &&
+      Array.isArray(tags) &&
+      tags.length > 0
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+/** 持久化标签归类映射（runTagGroupSync 调用，整体覆盖） */
+export async function appendShortDramaTagGroups(
+  groups: Record<string, string[]>
+): Promise<void> {
+  const cleaned: Record<string, string[]> = {};
+  for (const [category, tags] of Object.entries(groups)) {
+    const name = category.trim();
+    const list = Array.isArray(tags)
+      ? tags.map((tag) => String(tag).trim()).filter(Boolean)
+      : [];
+    if (name && list.length > 0) cleaned[name] = list;
+  }
+  if (Object.keys(cleaned).length === 0) return;
+  await updateShortDramaSyncState({ tag_groups: cleaned });
+}

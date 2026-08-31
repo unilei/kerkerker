@@ -238,7 +238,9 @@ async function collectMetadata(
     if (bytes) {
       const ext = extensionForContentType(bytes.contentType, cover.name);
       const coverUrl = await uploadCoverToR2({
-        key: `short-drama-covers/${drama.source_article_id}.${ext}`,
+        // coverObjectKey 会再拼顶层前缀（CLOUDFLARE_R2_KEY_PREFIX 或
+        // 缺省 short-drama-covers），这里只传文件键
+        key: `${drama.source_article_id}.${ext}`,
         body: bytes.body,
         contentType: bytes.contentType,
       });

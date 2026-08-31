@@ -30,7 +30,10 @@ interface ListResponse {
     total: number;
     page: number;
     limit: number;
-    tag_counts?: Array<{ tag: string; count: number }>;
+    tag_groups?: Array<{
+      category: string;
+      tags: Array<{ tag: string; count: number }>;
+    }>;
   };
 }
 
@@ -88,17 +91,17 @@ function HomePageContent() {
           setTotal(payload.data.total);
           setPage(payload.data.page);
           setHasMore(payload.data.page * payload.data.limit < payload.data.total);
-          if (payload.data.tag_counts && payload.data.tag_counts.length > 0) {
-            // 本地库只有扁平标签计数：单组「全部标签」展示（够用且不假装分组）
-            setTagGroups([
-              {
-                category: "全部标签",
-                tags: payload.data.tag_counts.map((row) => ({
-                  tag: row.tag,
-                  count: row.count,
+          if (payload.data.tag_groups && payload.data.tag_groups.length > 0) {
+            // 源站分组归类（女性/男性/场景职业/爽设/单字 + 其他标签兜底）
+            setTagGroups(
+              payload.data.tag_groups.map((group) => ({
+                category: group.category,
+                tags: group.tags.map((entry) => ({
+                  tag: entry.tag,
+                  count: entry.count,
                 })),
-              },
-            ]);
+              }))
+            );
           }
         } else {
           setError("短剧列表加载失败");

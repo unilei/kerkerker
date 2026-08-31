@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdminRequest } from "@/lib/admin-route";
 import { runShortDramaScrape, runShortDramaTagSync } from "@/lib/short-drama/scrape";
 import { runShortDramaTransfer } from "@/lib/short-drama/transfer";
+import { runTagGroupSync } from "@/lib/short-drama/tag-groups";
 import {
   getShortDramaSyncState,
   getShortDramaStats,
@@ -13,13 +14,19 @@ import { isR2CoverMirrorConfigured } from "@/lib/short-drama/cover-mirror";
  * 短剧源管理（admin）
  *
  * GET    → 同步状态 + 台账统计 + 最近条目
- * POST   { action: "scrape-backfill" | "scrape-incremental" | "tag-sync" | "transfer",
- *          maxPages?, maxDetails?, maxItems? }
+ * POST   { action: "scrape-backfill" | "scrape-incremental" | "tag-sync" |
+ *          "tag-group-sync" | "transfer", maxPages?, maxDetails?, maxItems? }
  *        → 同步执行对应任务并返回统计（任务有租约防并发；长任务建议
  *          由脚本/curl 携带 admin cookie 调用并轮询 GET 查看进度）
  */
 
-const ALL_ACTIONS = ["scrape-backfill", "scrape-incremental", "tag-sync", "transfer"] as const;
+const ALL_ACTIONS = [
+  "scrape-backfill",
+  "scrape-incremental",
+  "tag-sync",
+  "tag-group-sync",
+  "transfer",
+] as const;
 type Action = (typeof ALL_ACTIONS)[number];
 
 function isAction(value: unknown): value is Action {
@@ -121,6 +128,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { code: result.failed ? 502 : 200, message: result.error || "ok", data: result },
           { status: result.failed ? 502 : 200 }
+        );
+      }
+      case "tag-group-sync": {
+        const result = await runTagGroupSync();
+        return NextResponse.json(
+          { code: 200, message: result.error || "ok", data: result },
+          { status: 200 }
         );
       }
       case "transfer": {

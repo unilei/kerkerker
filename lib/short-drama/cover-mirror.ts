@@ -3,15 +3,24 @@ import { assertSafeOutboundUrl } from "@/lib/url-security";
 /**
  * 短剧封面镜像：把从夸克网盘下载到的封面字节上传到 Cloudflare R2。
  *
- * 复用宿主已有的 R2 上传 Worker 通道（与 asset.image 镜像同一套 env 契约）：
- *   CLOUDFLARE_R2_PUBLIC_URL       公开访问基址
- *   CLOUDFLARE_R2_UPLOAD_API_URL   上传 Worker 基址（PUT {key} + Bearer）
- *   CLOUDFLARE_R2_UPLOAD_API_TOKEN Bearer token
- * R2 未配置时返回 null，调用方保留无封面状态（详情页有占位图兜底）。
+ * 复用与 kerkerker-douban-service 完全一致的 R2 通道契约（同一组 env、
+ * 同一个鉴权 Upload Worker），可与豆瓣图片共用 Bucket：
+ *   CLOUDFLARE_R2_PUBLIC_URL       Bucket 根目录的公开访问域名
+ *   CLOUDFLARE_R2_UPLOAD_API_URL   上传 Worker /objects 基址
+ *   CLOUDFLARE_R2_UPLOAD_API_TOKEN Bearer token（wrangler secret UPLOAD_TOKEN）
+ *   CLOUDFLARE_R2_KEY_PREFIX       对象键顶层目录（douban-service 缺省
+ *                                  "douban-images"；短剧封面缺省独立
+ *                                  "short-drama-covers"，避免与豆瓣图混淆）
+ *   CLOUDFLARE_R2_MAX_IMAGE_BYTES  大小上限（缺省 10MB，与 douban-service 一致）
+ *
+ * Worker 侧约束（cloudflare/image-upload-worker）：key 仅允许
+ * [A-Za-z0-9._/-] 且不能以 / 开头或含 ..；Content-Type 必须 image/*。
+ * 未配置 R2 时返回 null，调用方保留无封面状态（详情页有占位图兜底）。
  */
 
 const UPLOAD_TIMEOUT_MS = 30_000;
-const MAX_COVER_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_COVER_BYTES = 10 * 1024 * 1024;
+const DEFAULT_COVER_KEY_PREFIX = "short-drama-covers";
 const ALLOWED_COVER_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -21,7 +30,7 @@ const ALLOWED_COVER_TYPES = new Set([
 ]);
 
 export interface CoverUploadInput {
-  /** 对象键（如 short-drama-covers/81864.jpg），不再二次编码 */
+  /** 不含顶层前缀的对象键（如 81864.jpg），允许 [A-Za-z0-9._/-] */
   key: string;
   body: Uint8Array;
   contentType: string;
@@ -35,6 +44,17 @@ export function isR2CoverMirrorConfigured(): boolean {
   );
 }
 
+/** 与 douban-service 的 objectKey 语义一致：可选顶层前缀 + 文件键 */
+function coverObjectKey(key: string): string {
+  const prefix =
+    process.env.CLOUDFLARE_R2_KEY_PREFIX?.trim() || DEFAULT_COVER_KEY_PREFIX;
+  const normalizedPrefix = prefix.replace(/^\/+|\/+$/g, "");
+  const normalizedKey = key.replace(/^\/+/, "");
+  return normalizedPrefix
+    ? `${normalizedPrefix}/${normalizedKey}`
+    : normalizedKey;
+}
+
 /** 上传封面到 R2，返回公开 URL；未配置/失败返回 null（不阻塞转存主流程） */
 export async function uploadCoverToR2(
   input: CoverUploadInput
@@ -42,20 +62,27 @@ export async function uploadCoverToR2(
   if (!isR2CoverMirrorConfigured()) return null;
   const contentType = input.contentType.toLowerCase();
   if (!ALLOWED_COVER_TYPES.has(contentType)) return null;
-  if (input.body.length === 0 || input.body.length > MAX_COVER_BYTES) return null;
-  if (!/^[a-z0-9][a-z0-9/._-]*$/i.test(input.key)) return null;
+
+  const maxBytes = Number(
+    process.env.CLOUDFLARE_R2_MAX_IMAGE_BYTES || DEFAULT_MAX_COVER_BYTES
+  );
+  if (input.body.length === 0 || input.body.length > maxBytes) return null;
+  if (!/^[A-Za-z0-9._/-]+$/.test(input.key) || input.key.includes("..")) {
+    return null;
+  }
 
   const uploadBase = process.env.CLOUDFLARE_R2_UPLOAD_API_URL!.trim().replace(/\/+$/, "");
   const publicBase = process.env.CLOUDFLARE_R2_PUBLIC_URL!.trim().replace(/\/+$/, "");
   const token = process.env.CLOUDFLARE_R2_UPLOAD_API_TOKEN!.trim();
+  const objectKey = coverObjectKey(input.key);
 
   try {
     // 上传 Worker 与公开基址都是受控 env，不经过出站 URL 策略；
     // 但公开 URL 仍校验一下合法性，防止 env 配置错误生成坏链接。
-    const publicUrl = `${publicBase}/${input.key}`;
+    const publicUrl = `${publicBase}/${objectKey}`;
     await assertSafeOutboundUrl(publicUrl);
 
-    const response = await fetch(`${uploadBase}/${input.key}`, {
+    const response = await fetch(`${uploadBase}/${objectKey}`, {
       method: "PUT",
       signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
       headers: {
@@ -66,7 +93,7 @@ export async function uploadCoverToR2(
       body: Buffer.from(input.body),
     });
     if (!response.ok) {
-      console.warn(`封面 R2 上传失败: HTTP ${response.status} key=${input.key}`);
+      console.warn(`封面 R2 上传失败: HTTP ${response.status} key=${objectKey}`);
       return null;
     }
     return publicUrl;
@@ -82,7 +109,7 @@ export async function uploadCoverToR2(
 /** 夸克签名下载直链 → 字节（封面/元数据小文件通用） */
 export async function fetchSignedDownloadBytes(
   downloadUrl: string,
-  maxBytes: number = MAX_COVER_BYTES
+  maxBytes: number = DEFAULT_MAX_COVER_BYTES
 ): Promise<{ body: Uint8Array; contentType: string } | null> {
   try {
     await assertSafeOutboundUrl(downloadUrl);
