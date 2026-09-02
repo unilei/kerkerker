@@ -50,3 +50,7 @@ next-env.d.ts
 .agents/
 # 回填驱动断点文件
 scripts/.backfill-checkpoint.json
+# 本地调试用临时脚本
+/.tmp-*.mts
+# Playwright 截图等临时产物
+/output/

@@ -178,6 +178,16 @@ label[for] {
   animation: shimmer 2s infinite linear;
 }
 
+/* 管理后台不定态进度条的滑块动画 */
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
 .artplayer-plugin-danmuku .apd-send {
   background-color: #e50914 !important;
   color: #ffffff !important;

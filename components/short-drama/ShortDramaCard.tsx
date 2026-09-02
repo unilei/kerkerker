@@ -1,5 +1,6 @@
-'use client';
+"use client";
 
+import { useState } from 'react';
 import Link from 'next/link';
 
 export interface ShortDramaCardData {
@@ -8,6 +9,7 @@ export interface ShortDramaCardData {
   episode_count?: number;
   cover_url?: string;
   tags?: string[];
+  publish_date?: string;
 }
 
 interface ShortDramaCardProps {
@@ -16,7 +18,22 @@ interface ShortDramaCardProps {
   priority?: boolean;
 }
 
+/** MM-DD（跨年带年份），解析失败返回空串 */
+function formatPublishDate(value?: string): string {
+  if (!value) return "";
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return value.slice(0, 10);
+  const [, year, month, day] = match;
+  const currentYear = new Date().getFullYear().toString();
+  return year === currentYear ? `${month}-${day}` : `${year}-${month}-${day}`;
+}
+
 export default function ShortDramaCard({ drama, priority = false }: ShortDramaCardProps) {
+  // 封面挂掉时退回占位图，避免破图外露
+  const [coverFailed, setCoverFailed] = useState(false);
+  const showCover = Boolean(drama.cover_url) && !coverFailed;
+  const dateLabel = formatPublishDate(drama.publish_date);
+
   return (
     <Link
       href={`/drama/${drama.id}`}
@@ -24,13 +41,13 @@ export default function ShortDramaCard({ drama, priority = false }: ShortDramaCa
     >
       {/* 海报图片 */}
       <div className="relative aspect-2/3 overflow-hidden rounded-lg bg-gray-800">
-        {drama.cover_url ? (
+        {showCover ? (
           <img
             src={drama.cover_url}
             alt={drama.title}
             loading={priority ? 'eager' : 'lazy'}
-            fetchPriority={priority ? 'high' : 'auto'}
             decoding="async"
+            onError={() => setCoverFailed(true)}
             className="w-full h-full object-cover"
           />
         ) : (
@@ -41,38 +58,29 @@ export default function ShortDramaCard({ drama, priority = false }: ShortDramaCa
           </div>
         )}
 
-        {/* 集数标签 */}
-        {drama.episode_count ? (
-          <div className="absolute top-2 left-2 px-2 py-1 bg-black/80 backdrop-blur-sm rounded text-orange-400 text-sm font-bold">
-            {drama.episode_count}集
-          </div>
-        ) : null}
-      </div>
-
-      {/* 悬浮信息层 */}
-      <div className="absolute inset-0 bg-linear-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-lg flex flex-col justify-end p-4">
-        <h3 className="text-white font-bold text-base mb-2 line-clamp-2">
-          {drama.title}
-        </h3>
-        {drama.tags && drama.tags.length > 0 && (
-          <p className="text-gray-300 text-xs mb-2 line-clamp-1">
-            {drama.tags.slice(0, 4).join(' · ')}
-          </p>
-        )}
-        <div className="mt-3 flex items-center space-x-2">
-          <button className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-lg text-sm font-semibold hover:bg-opacity-90 hover:scale-105 transition-all duration-200 shadow-lg">
-            <span>查看详情</span>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
+        {/* 悬浮信息层（桌面端 hover 展开；整卡即链接，纯视觉装饰。
+            只放标签不放标题——标题下方常显，悬浮再放会重复；
+            窄卡不下 CTA 按钮——lg 档卡片仅约百像素宽，按钮放不下 */}
+        <div className="absolute inset-0 bg-linear-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-lg flex-col justify-end p-3 hidden md:flex">
+          {drama.tags && drama.tags.length > 0 && (
+            <p className="text-gray-300 text-xs line-clamp-1">
+              {drama.tags.slice(0, 4).join(' · ')}
+            </p>
+          )}
         </div>
       </div>
 
-      {/* 底部常显剧名 */}
+      {/* 底部常显剧名 + 集数/日期（原海报角标挪到这里，一行并列） */}
       <h3 className="mt-2 text-sm text-white font-medium line-clamp-1 group-hover:text-red-400 transition-colors">
         {drama.title}
       </h3>
+      {drama.episode_count || dateLabel ? (
+        <p className="mt-0.5 truncate text-xs text-gray-500">
+          {drama.episode_count ? <span className="text-orange-400/90">{drama.episode_count}集</span> : null}
+          {drama.episode_count && dateLabel ? <span className="mx-1">·</span> : null}
+          {dateLabel ? <span>{dateLabel} 上新</span> : null}
+        </p>
+      ) : null}
     </Link>
   );
 }

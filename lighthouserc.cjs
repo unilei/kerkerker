@@ -13,14 +13,16 @@ if (parsedBaseUrl.protocol !== "https:" || parsedBaseUrl.username || parsedBaseU
 
 const isMobile = process.env.LHCI_FORM_FACTOR === "mobile";
 const outputDir = process.env.LHCI_OUTPUT_DIR || ".lighthouseci";
+// 监控当前真实存在的公开页（旧 douban 页面已移除）
 const routes = [
   "/",
-  "/browse/movies",
-  "/browse/tv",
-  "/browse/latest",
-  "/calendar",
-  "/category/top250",
+  "/tags",
+  "/?tag=%E6%80%BB%E8%A3%81", // 301 → /tags/总裁，落在标签落地页
 ];
+// 抽样一个真实详情页：DEPLOY_SAMPLE_DRAMA_ID 由 CI 注入（取 sitemap 首条）
+if (process.env.DEPLOY_SAMPLE_DRAMA_ID) {
+  routes.push(`/drama/${process.env.DEPLOY_SAMPLE_DRAMA_ID}`);
+}
 
 module.exports = {
   ci: {

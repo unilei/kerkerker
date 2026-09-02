@@ -164,6 +164,15 @@ async function initializeDatabase(db: Db) {
     await shortDramasCollection.createIndex({ tags: 1, updated_at: -1 });
     await shortDramasCollection.createIndex({ title: 1 });
     await shortDramasCollection.createIndex({ enabled: 1, updated_at: -1 });
+    // 前台列表主查询（首页/公开接口）：done+enabled 等值在前，前台排序
+    // 键（publish_date, created_at, _id）全序在后，keyset 翻页同走此索引
+    await shortDramasCollection.createIndex({
+      status: 1,
+      enabled: 1,
+      publish_date: -1,
+      created_at: -1,
+      _id: -1,
+    });
 
     // 短剧同步状态（单例）
     const shortDramaSyncStateCollection = db.collection(
@@ -182,6 +191,21 @@ async function initializeDatabase(db: Db) {
         unique: true,
         partialFilterExpression: { is_default: true },
       }
+    );
+
+    // 访客夸克凭证：扫码会话 ID 唯一（一个浏览器会话一条登录态）；
+    // expires_at 建 TTL 索引（expireAfterSeconds:0 = 到点即删），与读时
+    // 惰性清理互补，避免无人再访问的过期记录长期留存
+    const userQuarkCredentialsCollection = db.collection(
+      COLLECTIONS.USER_QUARK_CREDENTIALS
+    );
+    await userQuarkCredentialsCollection.createIndex(
+      { session_id: 1 },
+      { unique: true }
+    );
+    await userQuarkCredentialsCollection.createIndex(
+      { expires_at: 1 },
+      { expireAfterSeconds: 0 }
     );
 
     globalForMongo.initialized = true;

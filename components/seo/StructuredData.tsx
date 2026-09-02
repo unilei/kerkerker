@@ -23,6 +23,15 @@ export function StructuredData() {
       url: SITE_URL,
       description: SITE_DESCRIPTION,
       publisher: { "@id": `${SITE_URL}/#organization` },
+      potentialAction: {
+        // 站内搜索框（Google sitelinks searchbox）
+        "@type": "SearchAction",
+        target: {
+          "@type": "EntryPoint",
+          urlTemplate: `${SITE_URL}/?search={search_term_string}`,
+        },
+        "query-input": "required name=search_term_string",
+      },
     },
   ];
 

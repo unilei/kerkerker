@@ -9,6 +9,9 @@
 // 支持的短剧资源源
 export type ShortDramaSource = "duanjugou";
 
+// 元数据三件套（封面/简介/metadata.json）的部件标识
+export type ShortDramaMetadataPiece = "cover" | "intro" | "metadata";
+
 // 短剧转存状态机：discovered → transferring → done / failed
 export type ShortDramaStatus =
   | "discovered" // 已抓取入库，等待转存
@@ -50,6 +53,12 @@ export interface ShortDrama {
   intro?: string;
   /** 元数据（源站分享夹内 metadata.json 原样保留） */
   metadata?: Record<string, unknown>;
+  /**
+   * 已确认源分享夹里不存在的三件套部件（补齐任务列目录核实后写入）。
+   * 写入后该部件不再进入补齐队列——源站本就没有，重试永远无果。
+   * 转存流水线不写此字段（转存瞬间缺失可能是索引延迟，应留给补齐重试）。
+   */
+  missing_at_source?: ShortDramaMetadataPiece[];
   /** 源站发布日期（YYYY-MM-DD） */
   publish_date?: string;
   status: ShortDramaStatus;
@@ -78,17 +87,37 @@ export interface ShortDramaSyncState {
   last_scrape_at?: string;
   last_scrape_mode?: "backfill" | "incremental";
   last_scrape_stats?: Record<string, unknown>;
+  /** 全量回填断点页：预算中断时记录，下轮 UI 启动自动从该页续跑；跑完全站清除 */
+  last_backfill_resume_page?: number | null;
   last_transfer_at?: string;
   last_transfer_stats?: Record<string, unknown>;
   last_metadata_backfill_at?: string;
   last_metadata_backfill_stats?: Record<string, unknown>;
   /** 标签归类映射（组名 → 标签[]），由 runTagGroupSync 从源站刷新 */
   tag_groups?: Record<string, string[]>;
-  /** 当前运行租约；空闲时为 null（Mongo 语义需要 null 而非缺省） */
-  running: {
-    task: "scrape" | "transfer";
-    started_at: string;
-    expires_at: string;
-  } | null;
+  /** 双任务租约：抓取与转存可并行、同任务互斥（Mongo 语义需要
+   *  null 而非缺省）。旧版单槽 running 字段已废弃，仅迁移期兼容读取。 */
+  running_scrape: ShortDramaTaskLease | null;
+  running_transfer: ShortDramaTaskLease | null;
   updated_at: string;
+}
+
+/** 一把任务租约（running_scrape / running_transfer 的槽位内容） */
+export interface ShortDramaTaskLease {
+  task: "scrape" | "transfer";
+  started_at: string;
+  expires_at: string;
+  /** 取消请求：由取消 API 置位，任务循环在检查点看到后优雅收尾 */
+  cancel_requested?: boolean;
+  /** 实时进度：任务执行中由流水线定期写入，管理端轮询 GET 读取 */
+  progress?: {
+    /** 机器可读阶段名（scrape_page/scrape_detail/tag/transfer/backfill） */
+    stage: string;
+    /** 一句话进度说明（已含当前页/条目等细节，直接展示） */
+    message: string;
+    /** 可选计数型进度：total 缺省或未知时进度条退化为不定态 */
+    done?: number;
+    total?: number;
+    updated_at: string;
+  } | null;
 }

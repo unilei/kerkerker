@@ -67,7 +67,19 @@ function stripTags(html: string): string {
   return decodeHtmlEntities(html.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
 }
 
-async function fetchPage(url: string): Promise<string> {
+/**
+ * 识别宝塔 btwaf 检测页：HTTP 200 但 body 是「正在安全检测中...」+
+ * JS 跳转 window.location.href = "/?btwaf=数字"。服务器端不执行 JS，
+ * 需提取跳转地址手动二跳（实测二跳即放行，无需 cookie）。
+ */
+function extractBtwafRedirect(html: string): string | null {
+  const match = html.match(
+    /window\.location\.(?:href|replace)\s*=?\s*["'](\/\?btwaf=[^"']+)["']/
+  );
+  return match ? match[1] : null;
+}
+
+async function rawFetchPage(url: string): Promise<string> {
   const response = await fetch(url, {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: {
@@ -83,6 +95,22 @@ async function fetchPage(url: string): Promise<string> {
     );
   }
   return response.text();
+}
+
+async function fetchPage(url: string): Promise<string> {
+  let html = await rawFetchPage(url);
+  const bypass = extractBtwafRedirect(html);
+  if (bypass) {
+    // WAF 检测页：跟随 JS 跳转地址再取一次（同 UA，检测基于请求特征）
+    html = await rawFetchPage(new URL(bypass, url).toString());
+    if (extractBtwafRedirect(html)) {
+      throw new DuanjugouFetchError(
+        "duanjugou WAF 检测未通过：二跳后仍是检测页（可能被风控，稍后再试）",
+        503
+      );
+    }
+  }
+  return html;
 }
 
 /** 从完整 HTML 中提取文章数字 ID 列表（保序去重） */
@@ -137,12 +165,16 @@ export function parseDetailPage(
     }
   }
 
-  // JSON-LD datePublished（缺失容忍）
+  // 发布日期：优先 JSON-LD datePublished/dateModified，退回页面可见
+  // 日期（YYYY-MM-DD，容忍 ISO 带时区后缀）。缺失容忍。
   let publishDate: string | undefined;
-  const ldMatch = html.match(
-    /"datePublished"\s*:\s*"(\d{4}-\d{2}-\d{2})/
-  );
-  if (ldMatch) publishDate = ldMatch[1];
+  const dateTexts = [
+    ...html.matchAll(
+      /"(?:datePublished|dateModified)"\s*:\s*"(20\d{2}-\d{2}-\d{2})/g
+    ),
+    ...[...html.matchAll(/\b(20\d{2}-\d{2}-\d{2})\b/g)],
+  ].map((match) => match[1]);
+  if (dateTexts.length > 0) publishDate = dateTexts[0];
 
   return { article_id: articleId, title, publish_date: publishDate, pan_links: panLinks };
 }

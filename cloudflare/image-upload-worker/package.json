@@ -1,0 +1,7 @@
+{
+  "name": "aipan-image-upload",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy"
+  }
+}

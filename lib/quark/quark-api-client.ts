@@ -6,6 +6,8 @@ const QUARK_SHARE_PAGE_SIZE = 50;
 const QUARK_SHARE_MAX_TREE_ITEMS = 20_000;
 const QUARK_SHARE_MAX_TREE_DIRECTORIES = 4_000;
 const QUARK_SHARE_MAX_TREE_PAGES = 200;
+// 自有目录 file/sort 列表的单轮翻页上限（50/页 × 100 页 = 5000 项）
+const QUARK_OWN_DIR_MAX_PAGES = 100;
 const QUARK_API_REQUEST_TIMEOUT_MS = 20_000;
 const QUARK_DELETE_TASK_TIMEOUT_MS = 30_000;
 
@@ -842,6 +844,32 @@ export class QuarkApiClient {
     }
   }
 
+  /**
+   * 只转存不建分享：把分享顶层可转存条目存进访客网盘目录（用户自助
+   * 「转存到我的网盘」用）。缺省目标为夸克官方默认转存目录（来自：分享）。
+   * 个别违规文件被源站过滤时不阻塞（allowPartialFiltered 语义），
+   * 仅在一条都存不进时抛错。
+   */
+  async transferOnly(
+    sourceShareUrl: string,
+    options: { toPdirFid?: string } = {}
+  ): Promise<{ savedFids: string[]; title?: string; filteredMessage: string | null }> {
+    const token = await this.runStage('share_token', () => this.getShareToken(sourceShareUrl));
+    const detail = await this.runStage('share_detail', () => this.collectShareTree(token.pwdId, token.stoken));
+    const items = this.selectShareTreeSaveFrontier(detail.items);
+    if (items.length === 0) {
+      throw new Error(detail.filteredMessage || '夸克分享链接中未找到可转存文件');
+    }
+    const toPdirFid = options.toPdirFid ?? await this.runStage('save_folder', () => this.getSaveAsFolderFid());
+    const savedFids = await this.runStage('save_shared_files', () => (
+      this.saveShareTreeItemsWithToken(token, items, toPdirFid, false)
+    ));
+    if (savedFids.length === 0) {
+      throw new Error('夸克转存任务完成但未返回文件 ID');
+    }
+    return { savedFids, title: token.title, filteredMessage: detail.filteredMessage };
+  }
+
   async getShareToken(sourceShareUrl: string): Promise<QuarkShareToken> {
     const pwdId = extractQuarkPwdId(sourceShareUrl);
     if (!pwdId) {
@@ -1605,13 +1633,195 @@ export async function fetchQuarkDownloadUrlForFile(
   );
 }
 
+/** 试播树遍历的最大目录深度（剧名/剧集一般两层以内，留一档余量） */
+const QUARK_VIDEO_WALK_MAX_DEPTH = 3;
+/** 试播文件清单上限（防超大盘剧把响应撑爆） */
+const QUARK_VIDEO_FILE_LIMIT = 500;
+
+const QUARK_VIDEO_EXTENSIONS = new Set([
+  'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'ts', 'm2ts', 'webm', 'm4v', 'mpg', 'mpeg',
+]);
+
+/** 按扩展名粗筛视频文件（目录恒为 false） */
+export function isQuarkVideoFileItem(item: QuarkOwnFileItem): boolean {
+  if (item.dir) return false;
+  const dotIndex = item.name.lastIndexOf('.');
+  if (dotIndex < 0) return false;
+  return QUARK_VIDEO_EXTENSIONS.has(item.name.slice(dotIndex + 1).toLowerCase());
+}
+
+export type QuarkTranscodePlayResult = {
+  playUrl: string;
+  resolution: string;
+};
+
+/**
+ * file/v2/play 转码播放直链（m3u8/fmp4）：只对已转存到自己网盘的文件有效。
+ * 浏览器原生 <video> 播不了 m3u8（Chrome 需要 hls.js），这里只作为
+ * 原画直链拿不到时的兜底。
+ */
+export async function fetchQuarkTranscodePlayUrlForFile(
+  cookie: string,
+  fid: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<QuarkTranscodePlayResult> {
+  const url = buildUrl(QUARK_DRIVE_HOST, '/1/clouddrive/file/v2/play', {
+    pr: 'ucpro',
+    fr: 'pc',
+  });
+  const response = await fetchImpl(url, {
+    method: 'POST',
+    body: JSON.stringify({
+      fid,
+      resolutions: 'normal,low,high,super,2k,4k',
+      supports: 'fmp4',
+    }),
+    signal: AbortSignal.timeout(QUARK_API_REQUEST_TIMEOUT_MS),
+    headers: {
+      accept: 'application/json, text/plain, */*',
+      'content-type': 'application/json;charset=UTF-8',
+      origin: 'https://pan.quark.cn',
+      referer: QUARK_REFERER,
+      'user-agent': QUARK_USER_AGENT,
+      cookie,
+    },
+  });
+
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (isCredentialErrorPayload(payload, response.status)) {
+    throw new QuarkCredentialInvalidError(
+      getApiMessage(payload) || `夸克凭证已失效 (HTTP ${response.status})`
+    );
+  }
+  if (!response.ok) {
+    throw new QuarkApiError(
+      getApiMessage(payload) || `夸克转码播放直链获取失败: HTTP ${response.status}`,
+      {
+        code: isObject(payload) ? (payload.code as string | number | null) : null,
+        httpStatus: response.status,
+        endpoint: '/1/clouddrive/file/v2/play',
+        retryable: response.status >= 500 || response.status === 429,
+      },
+    );
+  }
+
+  const data = isObject(payload) && isObject(payload.data) ? payload.data : {};
+  const videoList = Array.isArray(data.video_list) ? data.video_list : [];
+  const resolutionRank: Record<string, number> = {
+    low: 1, normal: 2, high: 3, super: 4, '2k': 5, '4k': 6,
+  };
+  let best: { url: string; resolution: string } | null = null;
+  for (const entry of videoList) {
+    if (!isObject(entry)) continue;
+    const playUrl = extractString(entry.url) || extractString(entry.video_url);
+    if (!playUrl) continue;
+    const resolution = extractString(entry.resolution) || 'unknown';
+    if (!best || (resolutionRank[resolution] ?? 0) > (resolutionRank[best.resolution] ?? 0)) {
+      best = { url: playUrl, resolution };
+    }
+  }
+  if (!best) {
+    throw new QuarkApiError('夸克转码播放直链为空（可能未完成转码）', {
+      endpoint: '/1/clouddrive/file/v2/play',
+    });
+  }
+  return { playUrl: best.url, resolution: best.resolution };
+}
+
+export type QuarkPlayUrlResult = {
+  playUrl: string;
+  /** mp4=原画直链（<video> 可直接播）；m3u8=转码流（需 hls.js） */
+  kind: 'mp4' | 'm3u8';
+  resolution?: string;
+  fileName?: string;
+};
+
+/**
+ * 试播直链：优先原画下载直链（mp4 原生可播、无需等转码），
+ * 拿不到再退 file/v2/play 转码流。直链由夸克 CDN 签发，浏览器裸播
+ * 是否被 Referer/UA/IP 拦截由实测回答——这正是 PoC 要验证的问题。
+ */
+export async function fetchQuarkPlayUrlForFile(
+  cookie: string,
+  fid: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<QuarkPlayUrlResult> {
+  try {
+    const download = await fetchQuarkDownloadUrlForFile(cookie, fid, fetchImpl);
+    return {
+      playUrl: download.downloadUrl,
+      kind: 'mp4',
+      ...(download.fileName ? { fileName: download.fileName } : {}),
+    };
+  } catch (error) {
+    // 凭证失效必须上抛，其余错误降级走转码
+    if (error instanceof QuarkCredentialInvalidError) throw error;
+  }
+  const transcode = await fetchQuarkTranscodePlayUrlForFile(cookie, fid, fetchImpl);
+  return { playUrl: transcode.playUrl, kind: 'm3u8', resolution: transcode.resolution };
+}
+
+/**
+ * 从转存根条目（transferOnly 返回的 savedFids，通常是剧名文件夹，
+ * 也可能是散装剧集文件）收集全部视频文件。目录递归向下（限深），
+ * 根层级非目录条目原样保留（转存根就是剧集文件本身的情况）。
+ */
+export async function collectQuarkVideoFiles(
+  cookie: string,
+  roots: QuarkOwnFileItem[],
+  fetchImpl: FetchLike = fetch,
+): Promise<QuarkOwnFileItem[]> {
+  const files: QuarkOwnFileItem[] = [];
+  const visited = new Set<string>();
+
+  const walk = async (item: QuarkOwnFileItem, depth: number) => {
+    if (visited.has(item.fid) || files.length >= QUARK_VIDEO_FILE_LIMIT) return;
+    visited.add(item.fid);
+    if (!item.dir) {
+      // 根层级条目不按扩展名过滤（转存根即文件）；子层级只收视频
+      if (depth === 0 || isQuarkVideoFileItem(item)) files.push(item);
+      return;
+    }
+    if (depth >= QUARK_VIDEO_WALK_MAX_DEPTH) return;
+    let children: QuarkOwnFileItem[] = [];
+    try {
+      children = await listQuarkOwnDirectory(cookie, item.fid, fetchImpl);
+    } catch {
+      children = [];
+    }
+    for (const child of children) await walk(child, depth + 1);
+  };
+
+  for (const root of roots) await walk(root, 0);
+  return files;
+}
+
+/**
+ * file/sort 分页证据的宽松版：字段矛盾或解析失败时全部按「未知」处理，
+ * 由调用方回退到空页/重复页终止（分享树那边是强校验直接抛错，这里不能
+ * 因为证据异常就丢掉已列到的目录内容）。
+ */
+function lenientPaginationEvidence(payload: unknown): QuarkSharePaginationEvidence {
+  try {
+    return extractQuarkPaginationEvidence(payload);
+  } catch {
+    return { total: null, hasMore: null, page: null, pageSize: null };
+  }
+}
+
 export async function listQuarkOwnDirectory(
   cookie: string,
   pdirFid: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<QuarkOwnFileItem[]> {
   const items: QuarkOwnFileItem[] = [];
-  for (let page = 1; page <= 100; page += 1) {
+  const seenFids = new Set<string>();
+  for (let page = 1; page <= QUARK_OWN_DIR_MAX_PAGES; page += 1) {
     const url = buildUrl(QUARK_DRIVE_HOST, '/1/clouddrive/file/sort', {
       pdir_fid: pdirFid,
       _page: page,
@@ -1665,8 +1875,24 @@ export async function listQuarkOwnDirectory(
         };
       })
       .filter((item): item is QuarkOwnFileItem => !!item);
-    items.push(...pageItems);
-    if (pageItems.length < QUARK_SHARE_PAGE_SIZE) break;
+    // 空页、或整页都是重复 fid（接口原地翻页）都说明没有更多数据
+    if (pageItems.length === 0) break;
+    let added = 0;
+    for (const item of pageItems) {
+      if (seenFids.has(item.fid)) continue;
+      seenFids.add(item.fid);
+      items.push(item);
+      added += 1;
+    }
+    if (added === 0) break;
+
+    // 优先用接口自带的分页证据判断是否还有下一页：夸克偶发「短页但后面
+    // 还有数据」，条目数不足一页不能当作目录结束的依据——三件套按名称
+    // 序排在剧集合集最末尾，提前停就会漏掉封面/简介/metadata。
+    const evidence = lenientPaginationEvidence(payload);
+    if (evidence.hasMore === false) break;
+    if (evidence.hasMore === true) continue;
+    if (evidence.total !== null && items.length >= evidence.total) break;
   }
   return items;
 }

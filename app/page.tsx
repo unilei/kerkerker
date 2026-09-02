@@ -1,221 +1,185 @@
-"use client";
+import type { Metadata } from "next";
+import { listShortDramas } from "@/lib/short-drama-db";
+import {
+  encodeListCursor,
+  listCursorFromDoc,
+} from "@/lib/list-cursor";
+import {
+  absoluteUrl,
+  createPageMetadata,
+  HOME_PAGE_SIZE,
+  SITE_DESCRIPTION,
+  SITE_NAME,
+} from "@/lib/seo";
+import {
+  HomePageClient,
+  type HomePageInitialData,
+} from "@/components/home/HomePageClient";
 
-import { useState, useCallback, useEffect, useRef, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+/**
+ * 首页（服务端组件）：首屏列表与筛选词（?tag= / ?search=）在服务端
+ * 取数直出，剧名/标题进入 HTML 源码供搜索引擎收录。
+ * ?page= 由客户端翻页写入地址栏（跳页 push / 加载更多 replaceState），
+ * 返回、前进、刷新时按页码服务端直出对应页，列表不再重置到第 1 页。
+ * ?tag= 已 301 到 /tags/[tag]；带筛选词或页码的变体一律 noindex
+ * （SEO 分页由 /all、/tags 承担）。
+ */
 
-import { useScrollState } from "@/hooks/useScrollState";
-import { useScrollRestoration } from "@/hooks/useScrollRestoration";
-import { Navbar } from "@/components/home/Navbar";
-import { Footer } from "@/components/home/Footer";
-import { LoadingSkeleton } from "@/components/home/LoadingSkeleton";
-import { ErrorState } from "@/components/home/ErrorState";
-import { EmptyState } from "@/components/home/EmptyState";
-import ShortDramaCard from "@/components/short-drama/ShortDramaCard";
-import { SearchModal } from "@/components/short-drama/SearchModal";
+export const dynamic = "force-dynamic";
 
-interface DramaListItem {
-  id: string;
-  title: string;
-  episode_count?: number;
-  tags: string[];
-  cover_url?: string;
-  updated_at: string;
+interface HomePageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-interface ListResponse {
-  code: number;
-  data?: {
-    dramas: DramaListItem[];
-    total: number;
-    page: number;
-    limit: number;
+function firstParam(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+/** ?page= 解析：非法/缺省回 1，上下限与 listShortDramas 内部 clamp 对齐 */
+function parsePageParam(value: string | string[] | undefined): number {
+  const parsed = Number(firstParam(value));
+  if (!Number.isInteger(parsed)) return 1;
+  return Math.max(1, Math.min(parsed, 10_000));
+}
+
+export async function generateMetadata({
+  searchParams,
+}: HomePageProps): Promise<Metadata> {
+  const { tag, search, page: rawPage } = await searchParams;
+  const tagKeyword = firstParam(tag);
+  const searchKeyword = firstParam(search);
+  const page = parsePageParam(rawPage);
+  // 有筛选词/页码的首页变体全部 noindex：tag 已有独立落地页 /tags/[tag]，
+  // search 结果页是低质查询串页，分页变体与 /all 重复；首页本体 canonical 指自身
+  if (searchKeyword) {
+    return createPageMetadata({
+      // 品牌词前置 + absolute：根路由不吃根布局 title.template
+      title: `${SITE_NAME}｜「${searchKeyword}」搜索结果`,
+      description: SITE_DESCRIPTION,
+      path: "/",
+      noIndex: true,
+      absoluteTitle: true,
+    });
+  }
+  if (tagKeyword) {
+    // ?tag= 已 301 到 /tags/[tag]，这里只兜底非 301 场景（如带其他参数）
+    return createPageMetadata({
+      title: `${SITE_NAME}｜「${tagKeyword}」标签短剧`,
+      description: SITE_DESCRIPTION,
+      path: "/",
+      noIndex: true,
+      absoluteTitle: true,
+    });
+  }
+  if (page > 1) {
+    return createPageMetadata({
+      title: `${SITE_NAME}｜精选短剧合集 第${page}页`,
+      description: SITE_DESCRIPTION,
+      path: "/",
+      noIndex: true,
+      absoluteTitle: true,
+    });
+  }
+  return createPageMetadata({
+    // 首页 title 品牌前置（最值钱的标题位放有搜索量的词 + 保品牌词）；
+    // 根路由不吃 title.template，用 absolute 完整控制
+    title: `${SITE_NAME}｜精选短剧合集`,
+    description: SITE_DESCRIPTION,
+    path: "/",
+    absoluteTitle: true,
+  });
+}
+
+/** 与公开 API 同口径的列表条目（不外露源站链接与内部字段） */
+function toListItem(drama: Awaited<ReturnType<typeof listShortDramas>>["dramas"][number]) {
+  return {
+    id: drama.id,
+    title: drama.title,
+    episode_count: drama.episode_count,
+    tags: drama.tags ?? [],
+    cover_url: drama.cover_url,
+    publish_date: drama.publish_date,
   };
 }
 
-const PAGE_SIZE = 24;
+export default async function HomePage({ searchParams }: HomePageProps) {
+  const { tag, search, page: rawPage } = await searchParams;
+  const activeTag = firstParam(tag);
+  const searchKeyword = firstParam(search);
+  const initialPage = parsePageParam(rawPage);
 
-function HomePageContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const [showSearch, setShowSearch] = useState(false);
-  const scrolled = useScrollState(50);
-
-  // 列表状态
-  const [dramas, setDramas] = useState<DramaListItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // 标签：URL ?tag= 为准；搜索为本地状态（一次性）
-  const activeTag = searchParams.get("tag") || undefined;
-  const [search, setSearch] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-
-  const activeRequest = useRef(0);
-
-  useScrollRestoration("home", { delay: 100 });
-
-  const loadPage = useCallback(
-    async (targetPage: number, append: boolean) => {
-      const requestId = ++activeRequest.current;
-      setLoading(true);
-      setError(null);
-      try {
-        const params = new URLSearchParams({
-          page: String(targetPage),
-          limit: String(PAGE_SIZE),
-        });
-        if (activeTag) params.set("tag", activeTag);
-        if (search) params.set("search", search);
-        const response = await fetch(`/api/short-dramas?${params.toString()}`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(15_000),
-        });
-        const payload = (await response.json()) as ListResponse;
-        if (requestId !== activeRequest.current) return;
-        if (payload.code === 200 && payload.data) {
-          setDramas((prev) =>
-            append ? [...prev, ...payload.data!.dramas] : payload.data!.dramas
-          );
-          setTotal(payload.data.total);
-          setPage(payload.data.page);
-          setHasMore(payload.data.page * payload.data.limit < payload.data.total);
-        } else {
-          setError("短剧列表加载失败");
-        }
-      } catch (fetchError) {
-        if (requestId !== activeRequest.current) return;
-        console.warn("短剧列表加载失败:", fetchError);
-        setError("网络异常，请稍后重试");
-      } finally {
-        if (requestId === activeRequest.current) setLoading(false);
-      }
-    },
-    [activeTag, search]
-  );
-
-  useEffect(() => {
-    loadPage(1, false);
-  }, [loadPage]);
-
-  const handleTagSelect = useCallback(
-    (tag: string | null) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (tag) params.set("tag", tag);
-      else params.delete("tag");
-      router.push(`/?${params.toString()}`, { scroll: true });
-    },
-    [router, searchParams]
-  );
-
-  const handleSearch = useCallback(
-    (keyword: string) => {
-      setShowSearch(false);
-      // 搜索语义是全局找剧：清掉标签筛选，否则 search+tag 组合几乎必然空结果
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("tag");
-      params.delete("view");
-      router.push(`/?${params.toString()}`, { scroll: true });
-      setSearch(keyword);
-    },
-    [router, searchParams]
-  );
+  let initialData: HomePageInitialData | null = null;
+  let initialError: string | null = null;
+  try {
+    // 前台只展示转存完成的短剧（与 /api/short-dramas 同口径）
+    const listArgs = {
+      status: "done" as const,
+      ...(activeTag ? { tag: activeTag } : {}),
+      ...(searchKeyword ? { search: searchKeyword } : {}),
+      limit: HOME_PAGE_SIZE,
+    };
+    let result = await listShortDramas({ ...listArgs, page: initialPage });
+    // 页码超出实际总页数（内容更新后旧 URL 越界）回退到最后一页，
+    // 避免空网格 + 越界页码的分页器
+    const totalPages = Math.max(1, Math.ceil(result.total / HOME_PAGE_SIZE));
+    if (initialPage > totalPages) {
+      result = await listShortDramas({ ...listArgs, page: totalPages });
+    }
+    // 首屏游标：「加载更多」以末条为锚点 keyset 续页，跨请求不重不漏
+    const lastDoc = result.dramas.at(-1) ?? null;
+    initialData = {
+      dramas: result.dramas.map(toListItem),
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      has_more: result.page * result.limit < result.total,
+      next_cursor: lastDoc
+        ? encodeListCursor(listCursorFromDoc(lastDoc))
+        : null,
+    };
+  } catch (error) {
+    console.warn("短剧列表服务端加载失败:", error);
+    initialError = "网络异常，请稍后重试";
+  }
 
   return (
-    <div className="min-h-screen bg-black">
-      <Navbar scrolled={scrolled} onSearchOpen={() => setShowSearch(true)} />
-
-      {showSearch && (
-        <SearchModal onClose={() => setShowSearch(false)} onSearch={handleSearch} />
+    <>
+      {/*
+        CollectionPage/ItemList JSON-LD 只给默认可索引变体（无筛选词、
+        无加载失败时），避免给 noindex 页面重复输出结构化数据。
+      */}
+      {initialData && !activeTag && !searchKeyword && initialPage === 1 && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "CollectionPage",
+              name: `${SITE_NAME}｜精选短剧合集`,
+              url: absoluteUrl("/"),
+              inLanguage: "zh-CN",
+              mainEntity: {
+                "@type": "ItemList",
+                itemListElement: initialData.dramas.map((drama, index) => ({
+                  "@type": "ListItem",
+                  position: index + 1,
+                  url: absoluteUrl(`/drama/${drama.id}`),
+                  name: drama.title,
+                })),
+              },
+            }).replace(/</g, "\\u003c"),
+          }}
+        />
       )}
-
-      <main className="relative z-10 pt-24 px-4 md:px-12 pb-8">
-        {/* 头部标语 */}
-        <div className="mb-6">
-          <h1 className="text-2xl md:text-3xl font-bold text-white">
-            {activeTag ? (
-              <>
-                标签：<span className="text-red-500">{activeTag}</span>
-                <button
-                  onClick={() => handleTagSelect(null)}
-                  className="ml-3 text-sm text-gray-400 hover:text-white underline underline-offset-4"
-                >
-                  清除筛选
-                </button>
-              </>
-            ) : search ? (
-              <>
-                搜索：<span className="text-red-500">{search}</span>
-                <button
-                  onClick={() => setSearch(null)}
-                  className="ml-3 text-sm text-gray-400 hover:text-white underline underline-offset-4"
-                >
-                  清除
-                </button>
-              </>
-            ) : (
-              "精选短剧合集"
-            )}
-          </h1>
-          <p className="mt-2 text-sm text-gray-500">
-            共 {total} 部 · 短剧信息与网盘资源导航
-          </p>
-        </div>
-
-        {/* 加载骨架 */}
-        {loading && dramas.length === 0 && <LoadingSkeleton />}
-
-        {/* 错误态 */}
-        {!loading && error && dramas.length === 0 && (
-          <ErrorState error={error} onRetry={() => loadPage(1, false)} />
-        )}
-
-        {/* 空态 */}
-        {!loading && !error && dramas.length === 0 && (
-          <EmptyState onRetry={() => loadPage(1, false)} />
-        )}
-
-        {/* 海报墙 */}
-        {dramas.length > 0 && (
-          <>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 md:gap-4">
-              {dramas.map((drama, index) => (
-                <ShortDramaCard key={drama.id} drama={drama} priority={index < 8} />
-              ))}
-            </div>
-
-            {/* 加载更多 */}
-            {hasMore && (
-              <div className="mt-10 flex justify-center">
-                <button
-                  onClick={() => loadPage(page + 1, true)}
-                  disabled={loading}
-                  className="px-6 py-3 bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white rounded-full text-sm font-medium transition-colors"
-                >
-                  {loading ? "加载中…" : "加载更多"}
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </main>
-
-      <Footer />
-    </div>
-  );
-}
-
-export default function HomePage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-black">
-          <LoadingSkeleton />
-        </div>
-      }
-    >
-      <HomePageContent />
-    </Suspense>
+      <HomePageClient
+        // 筛选词或页码变化时重挂载，用服务端新数据重置客户端列表状态
+        key={`${activeTag ?? ""}|${searchKeyword ?? ""}|${initialPage}`}
+        initialData={initialData}
+        initialError={initialError}
+        activeTag={activeTag}
+        initialSearch={searchKeyword}
+      />
+    </>
   );
 }

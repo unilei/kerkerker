@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertSafeOutboundUrl } from "@/lib/url-security";
+import { UnsafeOutboundUrlError, assertSafeOutboundUrl } from "@/lib/url-security";
 
 test("assertSafeOutboundUrl accepts public HTTPS targets", async () => {
   const url = await assertSafeOutboundUrl("https://cdn.example.com/poster.jpg", {
@@ -67,4 +67,33 @@ test("assertSafeOutboundUrl does not block RFC 2544 benchmark range 198.18.0.0/1
   });
 
   assert.equal(url.href, "https://api.example.com/feed.m3u8");
+});
+
+test("assertSafeOutboundUrl DNS 解析挂起时按时限 fail closed", async () => {
+  // mDNSResponder 抖动会让 getaddrinfo 永久挂起（2026-09 补齐任务
+  // 整轮停摆的根因）；解析超时必须落地为拒绝，而不是永不返回。
+  await assert.rejects(
+    () =>
+      assertSafeOutboundUrl("https://hung.example.com/file.jpg", {
+        resolveHostname: () => new Promise<string[]>(() => {}),
+        dnsTimeoutMs: 50,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof UnsafeOutboundUrlError);
+      assert.match(error.message, /timed out/i);
+      return true;
+    }
+  );
+});
+
+test("assertSafeOutboundUrl DNS 慢解析在时限内完成则照常放行", async () => {
+  const url = await assertSafeOutboundUrl("https://slow.example.com/file.jpg", {
+    resolveHostname: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return ["203.0.113.99"];
+    },
+    dnsTimeoutMs: 5_000,
+  });
+
+  assert.equal(url.href, "https://slow.example.com/file.jpg");
 });

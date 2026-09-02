@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
-import { Menu, X, Home, ChevronDown, Flame, LayoutGrid } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Menu, X, Home, ChevronDown, Search } from "lucide-react";
 import { useLocale } from "@/components/providers/locale-provider";
 import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
-import { SITE_NAME } from "@/lib/seo";
+import { SITE_NAME, tagPath } from "@/lib/seo";
 import {
   TAG_MENU_GROUPS,
-  TAG_QUICK_LINKS,
   KNOWN_SOURCE_CATEGORIES,
 } from "@/lib/short-drama/tag-menu";
 
@@ -63,6 +63,44 @@ const STATIC_TAG_MENU: TagMenuItem[] = TAG_MENU_GROUPS.map((group) => ({
   tags: group.tags.map((tag) => ({ tag })),
 }));
 
+const TAGS_HREF = (tag: string) => tagPath(tag);
+
+/** 分组标签 chip：统一灰底，当前筛选中的词点亮 */
+function TagChip({
+  tag,
+  count,
+  activeTag,
+  size = "sm",
+  onClickClose,
+}: {
+  tag: string;
+  count?: number;
+  activeTag: string | null;
+  size?: "sm" | "md";
+  onClickClose?: () => void;
+}) {
+  const active = activeTag === tag;
+  return (
+    <Link
+      href={TAGS_HREF(tag)}
+      onClick={onClickClose}
+      aria-current={active ? "true" : undefined}
+      className={`inline-flex items-center rounded-full transition-colors ${
+        size === "md" ? "px-3 py-1.5 text-sm" : "px-2.5 py-1 text-xs"
+      } ${
+        active
+          ? "bg-red-600 text-white font-medium"
+          : "bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white"
+      } focus-visible:outline focus-visible:outline-1 focus-visible:outline-red-500`}
+    >
+      {tag}
+      {count !== undefined && !active ? (
+        <span className="ml-1 text-[9px] opacity-50 tabular-nums">{count}</span>
+      ) : null}
+    </Link>
+  );
+}
+
 interface NavbarProps {
   scrolled: boolean;
   onSearchOpen: () => void;
@@ -75,6 +113,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [tagMenu, setTagMenu] = useState<TagMenuItem[]>(STATIC_TAG_MENU);
   const [panelMounted, setPanelMounted] = useState(false);
+  const activeTag = useSearchParams().get("tag");
   useEffect(() => {
     // setTimeout 而非 rAF:后台/内嵌 WebView 标签页里 rAF 会冻结
     const id = setTimeout(() => setPanelMounted(true), 0);
@@ -111,13 +150,24 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
     };
   }, []);
 
+  // Escape 关闭面板/抽屉
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpenGroup(null);
+      setIsMobileMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const openWithDelay = (category: string) => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
     setOpenGroup(category);
   };
   const closeWithDelay = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
-    closeTimer.current = setTimeout(() => setOpenGroup(null), 120);
+    closeTimer.current = setTimeout(() => setOpenGroup(null), 200);
   };
 
   const navLink =
@@ -133,13 +183,14 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
         }`}
       >
         <div className="px-4 md:px-12 py-3 md:py-4 flex items-center justify-between">
-          {/* 左侧：汉堡菜单（移动端）+ Logo */}
+          {/* 左侧：汉堡菜单（移动端）+ Logo + 主导航 */}
           <div className="flex items-center space-x-2 md:space-x-8">
             {/* 汉堡菜单按钮 - 仅移动端 */}
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               className="md:hidden p-2 hover:bg-white/10 rounded-lg transition-colors"
               aria-label="菜单"
+              aria-expanded={isMobileMenuOpen}
             >
               {isMobileMenuOpen ? (
                 <X className="w-6 h-6 text-white" />
@@ -164,109 +215,101 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
               </span>
             </Link>
 
-            {/* 导航链接 - 桌面端 */}
+            {/* 主导航 - 桌面端 */}
             <div className="hidden md:flex items-center space-x-6">
-              <Link href="/" className={navLink}>
+              <Link
+                href="/"
+                className={`${navLink} ${!activeTag ? "text-white" : ""}`}
+              >
                 {isEnglish ? "Home" : "首页"}
               </Link>
 
-              {/* 一级热门题材直链 */}
-              {TAG_QUICK_LINKS.map(({ tag, label, labelEn }) => (
-                <Link
-                  key={tag}
-                  href={`/?tag=${encodeURIComponent(tag)}`}
-                  className={navLink}
-                >
-                  {isEnglish ? labelEn : label}
-                </Link>
-              ))}
+              {/* 四个分组各为一级导航项：女频/男频/题材/爽点，各自下拉子分类。
+                  面板对齐触发按钮：首组左对齐、末组右对齐、中间组居中，
+                  md 窄屏下首尾组也不会溢出视口 */}
+              {tagMenu.map((group, groupIndex) => {
+                const isOpen = openGroup === group.label;
+                // 当前筛选词属于该组时点亮（水合前按静态快照判断，足够近似）
+                const hasActiveTag = tagMenu
+                  .find((g) => g.label === group.label)
+                  ?.tags.some(({ tag }) => tag === activeTag);
+                const panelAlign =
+                  groupIndex === 0
+                    ? "left-0"
+                    : groupIndex === tagMenu.length - 1
+                      ? "right-0"
+                      : "left-1/2 -translate-x-1/2";
+                return (
+                  <div
+                    key={group.label}
+                    className="relative"
+                    onMouseEnter={() => openWithDelay(group.label)}
+                    onMouseLeave={closeWithDelay}
+                  >
+                    <button
+                      className={`${navLink} flex items-center gap-1 ${
+                        hasActiveTag ? "text-white" : ""
+                      }`}
+                      aria-expanded={isOpen}
+                      onClick={() => setOpenGroup(isOpen ? null : group.label)}
+                    >
+                      {isEnglish ? group.labelEn : group.label}
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 transition-transform ${
+                          isOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
 
-              {/* 分类二级菜单：hover 展开 */}
-              <div
-                className="relative"
-                onMouseEnter={() => openWithDelay("__tags__")}
-                onMouseLeave={closeWithDelay}
-              >
-                <button
-                  className={`${navLink} flex items-center gap-1`}
-                  aria-expanded={openGroup === "__tags__"}
-                  onClick={() =>
-                    setOpenGroup(openGroup === "__tags__" ? null : "__tags__")
-                  }
-                >
-                  {isEnglish ? "Categories" : "分类"}
-                  <ChevronDown
-                    className={`w-3.5 h-3.5 transition-transform ${
-                      openGroup === "__tags__" ? "rotate-180" : ""
-                    }`}
-                  />
-                </button>
-
-                {/* 下拉面板：女频/男频/题材/爽点 */}
-                <div
-                  className={`absolute left-1/2 -translate-x-1/2 top-full pt-3 transition-all duration-200 ${
-                    openGroup === "__tags__"
-                      ? "opacity-100 visible translate-y-0"
-                      : "opacity-0 invisible -translate-y-1"
-                  }`}
-                >
-                  <div className="w-[560px] bg-[#141414]/98 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/60 p-5 grid grid-cols-2 gap-x-6 gap-y-4">
-                    {panelMounted && tagMenu.map((group) => (
-                      <div key={group.label}>
-                        <div className="flex items-center gap-1.5 mb-2">
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${group.dotClass}`}
-                          />
-                          <span className="text-xs font-bold text-gray-300">
+                    {/* 下拉面板：该组的全部子分类标签 */}
+                    <div
+                      className={`absolute top-full pt-3 transition-opacity duration-200 ${panelAlign} ${
+                        isOpen ? "opacity-100 visible" : "opacity-0 invisible"
+                      }`}
+                    >
+                      <div className="w-[360px] bg-[#141414]/98 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/60 p-5">
+                        <div className="flex items-center gap-1.5 mb-3">
+                          <span className={`w-1.5 h-1.5 rounded-full ${group.dotClass}`} />
+                          <span className={`text-xs font-bold ${group.textClass}`}>
                             {isEnglish ? group.labelEn : group.label}
                           </span>
                         </div>
-                        <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-                          {group.tags.map(({ tag, count }) => (
-                            <Link
-                              key={tag}
-                              href={`/?tag=${encodeURIComponent(tag)}`}
-                              onClick={() => setOpenGroup(null)}
-                              className={`text-xs ${group.textClass} hover:text-white hover:underline underline-offset-2 transition-colors`}
-                            >
-                              {tag}
-                              {count !== undefined ? (
-                                <span className="ml-0.5 text-[9px] opacity-50">
-                                  {count}
-                                </span>
-                              ) : null}
-                            </Link>
-                          ))}
+                        <div className="flex flex-wrap gap-2">
+                          {panelMounted &&
+                            group.tags.map(({ tag, count }) => (
+                              <TagChip
+                                key={tag}
+                                tag={tag}
+                                count={count}
+                                activeTag={activeTag}
+                                size="md"
+                                onClickClose={() => setOpenGroup(null)}
+                              />
+                            ))}
                         </div>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
           </div>
 
           {/* 右侧功能区 */}
           <div className="flex items-center space-x-1 md:space-x-2">
-            {/* 搜索按钮 */}
+            {/* 搜索：桌面端胶囊按钮，移动端 icon */}
             <button
               onClick={onSearchOpen}
-              className="p-2 hover:bg-white/10 rounded-full transition-colors"
+              className="flex items-center gap-2 pl-3 pr-2 md:pr-3 py-1.5 md:py-2 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 hover:border-white/25 transition-colors"
               aria-label={isEnglish ? "Search" : "搜索"}
             >
-              <svg
-                className="w-5 h-5 md:w-6 md:h-6 text-white"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
-              </svg>
+              <Search className="w-4 h-4 md:w-4.5 md:h-4.5 text-gray-300" />
+              <span className="hidden md:inline text-sm text-gray-400">
+                {isEnglish ? "Search dramas" : "搜索短剧"}
+              </span>
+              <kbd className="hidden lg:inline text-[10px] text-gray-500 border border-white/15 rounded px-1.5 py-0.5">
+                /
+              </kbd>
             </button>
             <LanguageSwitcher compact />
           </div>
@@ -290,7 +333,7 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
 
         {/* 侧边栏内容 */}
         <div
-          className={`absolute top-0 left-0 h-full w-[280px] bg-gradient-to-b from-gray-900 to-black shadow-2xl transform transition-transform duration-300 ease-out ${
+          className={`absolute top-0 left-0 h-full w-[300px] bg-gradient-to-b from-gray-900 to-black shadow-2xl transform transition-transform duration-300 ease-out ${
             isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         >
@@ -302,17 +345,29 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
                 {SITE_NAME}
               </h2>
             </div>
-            <div className="mt-4">
-              <LanguageSwitcher />
-            </div>
+            {/* 搜索入口 */}
+            <button
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                onSearchOpen();
+              }}
+              className="mt-4 w-full flex items-center gap-2 px-3 py-2.5 rounded-full border border-white/15 bg-white/5 text-left"
+            >
+              <Search className="w-4 h-4 text-gray-400" />
+              <span className="text-sm text-gray-400">
+                {isEnglish ? "Search dramas" : "搜索短剧"}
+              </span>
+            </button>
           </div>
 
           {/* 导航菜单 */}
-          <nav className="p-4 space-y-2 overflow-y-auto max-h-[calc(100vh-140px)]">
+          <nav className="p-4 space-y-1 overflow-y-auto max-h-[calc(100vh-220px)]">
             <Link
               href="/"
               onClick={() => setIsMobileMenuOpen(false)}
-              className="flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group text-gray-300 hover:text-white hover:bg-white/10"
+              className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group text-gray-300 hover:text-white hover:bg-white/10 ${
+                !activeTag ? "bg-white/5 text-white" : ""
+              }`}
             >
               <Home className="w-5 h-5 text-gray-400 group-hover:text-red-500 transition-colors" />
               <span className="text-base font-medium">
@@ -320,76 +375,57 @@ export function Navbar({ scrolled, onSearchOpen }: NavbarProps) {
               </span>
             </Link>
 
-            {/* 一级热门题材直链 */}
-            {TAG_QUICK_LINKS.map(({ tag, label, labelEn }) => (
-              <Link
-                key={tag}
-                href={`/?tag=${encodeURIComponent(tag)}`}
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group text-gray-300 hover:text-white hover:bg-white/10"
-              >
-                <Flame className="w-5 h-5 text-gray-400 group-hover:text-red-500 transition-colors" />
-                <span className="text-base font-medium">
-                  {isEnglish ? labelEn : label}
-                </span>
-              </Link>
-            ))}
+            {/* 分组手风琴：女频/男频/题材/爽点各自二级菜单 */}
+            {tagMenu.map((group) => {
+              const expanded = mobileExpanded === group.label;
+              const hasActiveTag = group.tags.some(({ tag }) => tag === activeTag);
+              return (
+                <div key={group.label} className="pt-1">
+                  <button
+                    onClick={() =>
+                      setMobileExpanded(expanded ? null : group.label)
+                    }
+                    aria-expanded={expanded}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-all ${
+                      hasActiveTag
+                        ? "bg-white/5 text-white"
+                        : "text-gray-300 hover:text-white hover:bg-white/10"
+                    }`}
+                  >
+                    <span className="flex items-center space-x-3">
+                      <span
+                        className={`w-2 h-2 rounded-full ${group.dotClass}`}
+                      />
+                      <span className="text-base font-medium">
+                        {isEnglish ? group.labelEn : group.label}
+                      </span>
+                    </span>
+                    <ChevronDown
+                      className={`w-4 h-4 transition-transform ${
+                        expanded ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
 
-            {/* 分类手风琴（移动端二级菜单） */}
-            <div>
-              <button
-                onClick={() =>
-                  setMobileExpanded(mobileExpanded === "__tags__" ? null : "__tags__")
-                }
-                className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-gray-300 hover:text-white hover:bg-white/10 transition-all"
-              >
-                <span className="flex items-center space-x-3">
-                  <LayoutGrid className="w-5 h-5 text-gray-400" />
-                  <span className="text-base font-medium">
-                    {isEnglish ? "Categories" : "分类"}
-                  </span>
-                </span>
-                <ChevronDown
-                  className={`w-4 h-4 transition-transform ${
-                    mobileExpanded === "__tags__" ? "rotate-180" : ""
-                  }`}
-                />
-              </button>
-
-              {mobileExpanded === "__tags__" && (
-                <div className="mt-1 space-y-3 px-2 pb-2">
-                  {tagMenu.map((group) => (
-                    <div key={group.label} className="px-2">
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${group.dotClass}`}
-                        />
-                        <span className="text-xs font-bold text-gray-400">
-                          {isEnglish ? group.labelEn : group.label}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                  {expanded && (
+                    <div className="mt-1 px-4 pb-2">
+                      <div className="flex flex-wrap gap-2">
                         {group.tags.map(({ tag, count }) => (
-                          <Link
+                          <TagChip
                             key={tag}
-                            href={`/?tag=${encodeURIComponent(tag)}`}
-                            onClick={() => setIsMobileMenuOpen(false)}
-                            className={`text-xs ${group.textClass} hover:text-white transition-colors`}
-                          >
-                            {tag}
-                            {count !== undefined ? (
-                              <span className="ml-0.5 text-[9px] opacity-50">
-                                {count}
-                              </span>
-                            ) : null}
-                          </Link>
+                            tag={tag}
+                            count={count}
+                            activeTag={activeTag}
+                            size="md"
+                            onClickClose={() => setIsMobileMenuOpen(false)}
+                          />
                         ))}
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })}
           </nav>
 
           {/* 侧边栏底部 */}

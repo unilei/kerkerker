@@ -4,13 +4,14 @@ import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Toast, ConfirmDialog } from "@/components/Toast";
 import { AdminShortDramasTab } from "@/components/admin/ShortDramaSourceTab";
+import { AdminPendingQueueTab } from "@/components/admin/AdminPendingQueueTab";
 import { DatabaseSettingsTab } from "@/components/admin/DatabaseSettingsTab";
 import type { ToastState, ConfirmState } from "@/components/admin/types";
-import { Clapperboard, Database } from "lucide-react";
+import { Clapperboard, Database, Inbox } from "lucide-react";
 
-type TabType = "short-drama" | "database";
+type TabType = "short-drama" | "pending-queue" | "database";
 
-const VALID_TABS: TabType[] = ["short-drama", "database"];
+const VALID_TABS: TabType[] = ["short-drama", "pending-queue", "database"];
 
 function SettingsContent() {
   const router = useRouter();
@@ -49,6 +50,7 @@ function SettingsContent() {
 
   const tabs = [
     { id: "short-drama" as TabType, name: "短剧源", icon: Clapperboard },
+    { id: "pending-queue" as TabType, name: "待转存数据", icon: Inbox },
     { id: "database" as TabType, name: "数据库", icon: Database },
   ];
 
@@ -103,7 +105,11 @@ function SettingsContent() {
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === "short-drama" && (
-          <AdminShortDramasTab onShowToast={setToast} />
+          <AdminShortDramasTab onShowToast={setToast} onShowConfirm={setConfirm} />
+        )}
+
+        {activeTab === "pending-queue" && (
+          <AdminPendingQueueTab onShowToast={setToast} onShowConfirm={setConfirm} />
         )}
 
         {activeTab === "database" && (
@@ -127,6 +133,7 @@ function SettingsContent() {
         <ConfirmDialog
           title={confirm.title}
           message={confirm.message}
+          confirmText={confirm.confirmText}
           onConfirm={confirm.onConfirm}
           onCancel={() => setConfirm(null)}
           danger={confirm.danger}

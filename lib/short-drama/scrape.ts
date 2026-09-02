@@ -7,6 +7,8 @@ import {
   updateShortDramaSyncState,
   tryAcquireShortDramaLease,
   releaseShortDramaLease,
+  consumeShortDramaTaskCancel,
+  updateShortDramaLeaseProgress,
 } from "@/lib/short-drama-db";
 import { detectPanBrand } from "@/lib/pan-brand";
 
@@ -24,6 +26,24 @@ import { detectPanBrand } from "@/lib/pan-brand";
 const PAGE_DELAY_MS = 1_000;
 const DETAIL_DELAY_MS = 200;
 const LEASE_TTL_MS = 30 * 60 * 1_000;
+const PROGRESS_EXTEND_TTL_MS = 30 * 60 * 1_000;
+// 进度写库节流：每次写都是一次 Mongo update，低频轮询展示够用即可
+const PROGRESS_WRITE_INTERVAL_MS = 3_000;
+
+let lastScrapeProgressWriteAt = 0;
+async function reportScrapeProgress(
+  stage: string,
+  message: string,
+  done?: number,
+  total?: number
+): Promise<void> {
+  const now = Date.now();
+  if (now - lastScrapeProgressWriteAt < PROGRESS_WRITE_INTERVAL_MS) return;
+  lastScrapeProgressWriteAt = now;
+  await updateShortDramaLeaseProgress("scrape", { stage, message, done, total }, {
+    extendTtlMs: PROGRESS_EXTEND_TTL_MS,
+  });
+}
 
 export interface ScrapeOptions {
   mode: "backfill" | "incremental";
@@ -51,7 +71,15 @@ export interface ScrapeStats {
   details_with_quark: number;
   failed_pages: number;
   failed_details: number;
-  stopped_reason: "completed" | "watermark" | "budget_pages" | "budget_details" | "empty_page";
+  /** 本轮从断点页续跑时的起始页（1 = 全新开始） */
+  resumed_from_page?: number;
+  stopped_reason:
+    | "completed"
+    | "watermark"
+    | "budget_pages"
+    | "budget_details"
+    | "empty_page"
+    | "cancelled";
   watermark_before: number;
   watermark_after: number;
   failed: boolean;
@@ -101,13 +129,26 @@ export async function runShortDramaScrape(
 
     const processedIds: number[] = [];
     let detailsFetched = 0;
+    // 断点续跑：显式 startPage（脚本/curl 传参）优先；否则读上一轮
+    // 回填预算中断遗留的断点页，UI 重启不再从第 1 页重新翻站
+    const resumePage = !incremental && !(options.startPage && options.startPage > 0)
+      ? state?.last_backfill_resume_page ?? 0
+      : 0;
+    if (resumePage > 1) stats.resumed_from_page = resumePage;
     const startPage = !incremental && options.startPage && options.startPage > 0
       ? Math.floor(options.startPage)
-      : 1;
+      : Math.max(1, resumePage);
     let page = startPage;
     let siteMaxPage = page;
+    // 清掉可能残留的取消标记（上轮取消未被消费时不能让新任务秒停）
+    await consumeShortDramaTaskCancel("scrape");
 
     while (page <= Math.min(siteMaxPage, maxPages)) {
+      // 取消检查点：整页边界优雅停（当前页处理完后不再翻页）
+      if (await consumeShortDramaTaskCancel("scrape")) {
+        stats.stopped_reason = "cancelled";
+        break;
+      }
       let items;
       try {
         const result = await scrapeListPage(page);
@@ -128,10 +169,25 @@ export async function runShortDramaScrape(
       }
 
       if (items.length === 0) {
+        // 首页/正常列表页不该为空：空页大概率是 WAF 检测页混过了解析
+        // （HTTP 200 但内容不对）。重试一次，仍为空则按失败处理而不是
+        // 静默当"空页完成"——否则增量会假成功、看起来"不起作用"。
+        if (stats.pages_scraped > 0 && stats.failed_pages < 2) {
+          stats.failed_pages += 1;
+          console.warn(`短剧列表页 ${page} 解析出 0 条，疑似 WAF 页，重试一次`);
+          await sleep(PAGE_DELAY_MS);
+          continue;
+        }
         stats.stopped_reason = "empty_page";
         break;
       }
       stats.items_seen += items.length;
+      reportScrapeProgress(
+        "scrape_page",
+        `列表页 ${page}/${siteMaxPage}：本页 ${items.length} 条`,
+        stats.pages_scraped,
+        siteMaxPage
+      );
 
       let pageMinId = Infinity;
 
@@ -142,12 +198,15 @@ export async function runShortDramaScrape(
 
         if (incremental && articleId <= watermark) continue;
 
-        // 已有源链接的条目跳过详情抓取（回填续跑/重复扫描的关键加速）
+        // 已有源链接的条目跳过详情抓取（回填续跑/重复扫描的关键加速）；
+        // 详情曾抓过（已拿到发布日期）但源站没有夸克链接的条目同样跳过：
+        // 否则多轮回填会被这些条目反复吃掉详情预算，永远翻不到新页。
+        // 极小代价：源站事后补挂夸克链接的旧文需删除本地记录后重抓。
         const existing = await getShortDramaBySourceArticleId(
           DUANJUGOU_SOURCE,
           item.article_id
         );
-        if (existing?.source_share_url) {
+        if (existing && (existing.source_share_url || existing.publish_date)) {
           stats.items_skipped_existing += 1;
           processedIds.push(articleId);
           continue;
@@ -161,6 +220,11 @@ export async function runShortDramaScrape(
           stats.details_fetched += 1;
           if (!detail) {
             stats.failed_details += 1;
+            reportScrapeProgress(
+              "scrape_detail",
+              `详情 ${item.article_id} 解析失败`,
+              detailsFetched
+            );
             continue;
           }
 
@@ -182,6 +246,14 @@ export async function runShortDramaScrape(
           if (upsert.created) stats.items_created += 1;
           else stats.items_updated += 1;
           processedIds.push(articleId);
+          reportScrapeProgress(
+            "scrape_detail",
+            `详情 ${detailsFetched}${
+              Number.isFinite(maxDetails) ? `/${maxDetails}` : ""
+            }：《${parsed.title.slice(0, 30)}》`,
+            detailsFetched,
+            Number.isFinite(maxDetails) ? maxDetails : undefined
+          );
         } catch (error) {
           stats.failed_details += 1;
           console.warn(
@@ -229,6 +301,16 @@ export async function runShortDramaScrape(
       stats.watermark_after = maxProcessed;
     } else {
       stats.watermark_after = watermark;
+    }
+
+    // 回填断点：预算中断存 last_page 供下轮自动续跑；跑完全站则清除
+    if (options.mode === "backfill") {
+      const interrupted =
+        stats.stopped_reason === "budget_details" ||
+        stats.stopped_reason === "budget_pages";
+      await updateShortDramaSyncState({
+        last_backfill_resume_page: interrupted ? stats.last_page : null,
+      });
     }
 
     await updateShortDramaSyncState({
@@ -307,12 +389,18 @@ export async function runShortDramaTagSync(
     const allTags = tagGroups.flatMap((group) => group.tags).filter((tag) => !wanted || wanted.has(tag));
     stats.tags_total = allTags.length;
 
-    for (const tag of allTags) {
+    for (const [tagIndex, tag] of allTags.entries()) {
       let tagged = 0;
       try {
         for (let page = 1; page <= maxPagesPerTag; page += 1) {
           const { items } = await scrapeSearch(tag, page);
           stats.pages_scraped += 1;
+          reportScrapeProgress(
+            "tag_sync",
+            `标签回填 ${tagIndex + 1}/${allTags.length}：「${tag}」第 ${page} 页`,
+            tagIndex + 1,
+            allTags.length
+          );
           if (items.length === 0) break;
           for (const item of items) {
             const modified = await appendShortDramaTags(DUANJUGOU_SOURCE, item.article_id, [tag]);

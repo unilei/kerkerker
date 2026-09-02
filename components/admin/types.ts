@@ -7,6 +7,8 @@ export interface ConfirmState {
   title: string;
   message: string;
   onConfirm: () => void | Promise<void>;
+  /** 确认按钮文案（缺省「确定」） */
+  confirmText?: string;
   danger?: boolean;
 }
 

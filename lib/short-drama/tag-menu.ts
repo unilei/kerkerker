@@ -1,9 +1,8 @@
 /**
- * 导航栏「分类」菜单数据
+ * 导航栏菜单数据
  *
- * 结构 = 一级热门题材直链 + 二级下拉分组：
- * - 直链：跨组挑选的热门题材词，点进去即 /?tag= 筛选；
- * - 下拉：源站五组分类映射成用户语感的四个菜单组
+ * 结构 = 一级「首页 + 女频/男频/题材/爽点」四个菜单项，各自下拉子分类：
+ * - 分组：源站五组分类映射成用户语感的四个菜单组
  *   （女性标签→女频、男性标签→男频、场景职业→题材、爽设标签→爽点）；
  *   「单字标签」是源站搜索词特性、非用户浏览心智，不进菜单（词仍可筛选）。
  *
@@ -11,13 +10,6 @@
  * （lib/short-drama/data/duanjugou-tag-groups.json，2026-08-31 抓取，72 词/5 组）；
  * 挂载后由 Navbar 用 /api/short-dramas/tags 水合（库内分组与命中计数）。
  */
-
-export interface TagQuickLink {
-  /** 筛选词（对应源站搜索词） */
-  tag: string;
-  label: string;
-  labelEn: string;
-}
 
 export interface TagMenuGroup {
   /** 菜单展示名（用户语感） */
@@ -31,14 +23,6 @@ export interface TagMenuGroup {
   /** 组内标签文字色（Tailwind text-*） */
   textClass: string;
 }
-
-/** 一级导航热门题材直链 */
-export const TAG_QUICK_LINKS: TagQuickLink[] = [
-  { tag: "总裁", label: "总裁", labelEn: "CEO" },
-  { tag: "战神", label: "战神", labelEn: "War God" },
-  { tag: "赘婿", label: "赘婿", labelEn: "Son-in-law" },
-  { tag: "穿越", label: "穿越", labelEn: "Transmigration" },
-];
 
 export const TAG_MENU_GROUPS: TagMenuGroup[] = [
   {

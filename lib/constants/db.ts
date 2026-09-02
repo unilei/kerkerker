@@ -11,6 +11,8 @@ export const COLLECTIONS = {
   SHORT_DRAMA_SYNC_STATE: 'short_drama_sync_state',
   /** 网盘凭证（AES 加密存储，含夸克 cookie） */
   CLOUD_CREDENTIALS: 'cloud_credentials',
+  /** 访客夸克凭证（扫码登录，AES 加密存储，带 TTL） */
+  USER_QUARK_CREDENTIALS: 'user_quark_credentials',
 } as const;
 
 /** 集合名称类型 */

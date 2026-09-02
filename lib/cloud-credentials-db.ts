@@ -169,3 +169,85 @@ export async function touchCloudCredential(
       }
     );
 }
+
+const QUARK_DRIVE_HOST = "https://drive-pc.quark.cn";
+const QUARK_PUUS_REFRESH_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+/** __puus 续期最小间隔：CDN 签名 token 寿命 1-2 天，没必要频繁刷 */
+const QUARK_PUUS_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1_000;
+
+/**
+ * 夸克 __puus 自动续期：__kps/__pus（登录态）寿命长，但 __puus（CDN 下载
+ * 签名）1-2 天就过期——过期后转存/列目录仍正常，唯独封面下载被 CDN 412。
+ * member/config 接口会对有效会话下发新 __puus（Set-Cookie），据此回写凭证。
+ * 返回续期后的 cookie（无论是否续期成功，尽量返回可用 cookie）；无凭证返回 null。
+ */
+export async function refreshQuarkCredentialPuus(): Promise<string | null> {
+  const db = await getDatabase();
+  const collection = db.collection<CloudCredentialDoc>(
+    COLLECTIONS.CLOUD_CREDENTIALS
+  );
+  const doc = await collection.findOne({ platform: "quark", is_default: true });
+  if (!doc) return null;
+  const cookie = decryptCredential(doc.cookie_encrypted);
+  if (!cookie.includes("__kps=")) return cookie;
+
+  // 刚续期过就直接用现有 cookie（避免每个任务都打一次 member）
+  const ageMs = Date.now() - new Date(doc.updated_at).getTime();
+  if (Number.isFinite(ageMs) && ageMs < QUARK_PUUS_REFRESH_INTERVAL_MS) {
+    return cookie;
+  }
+
+  try {
+    const response = await fetch(
+      `${QUARK_DRIVE_HOST}/1/clouddrive/member?pr=ucpro&fr=pc&fetch_subscribe=true`,
+      {
+        signal: AbortSignal.timeout(15_000),
+        headers: {
+          accept: "application/json, text/plain, */*",
+          referer: "https://pan.quark.cn/",
+          "user-agent": QUARK_PUUS_REFRESH_UA,
+          cookie,
+        },
+      }
+    );
+    const setCookies = response.headers.getSetCookie();
+    let newPuus: string | null = null;
+    for (const setCookie of setCookies) {
+      const pair = setCookie.split(";")[0];
+      if (pair.startsWith("__puus=")) newPuus = pair.slice(7);
+    }
+    if (response.ok && newPuus) {
+      const merged = cookie
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .filter((part) => !part.startsWith("__puus="));
+      merged.push(`__puus=${newPuus}`);
+      const refreshed = merged.join("; ");
+      // 续期即视为凭证有效（member 200 本身就是登录态校验）
+      await collection.updateOne(
+        { _id: doc._id },
+        {
+          $set: {
+            cookie_encrypted: encryptCredential(refreshed),
+            is_valid: true,
+            updated_at: nowIso(),
+          },
+        }
+      );
+      console.log("夸克凭证 __puus 已自动续期");
+      return refreshed;
+    }
+    // member 401 等于登录态失效，交给调用方走 markCloudCredentialInvalid
+    if (response.status === 401) {
+      await markCloudCredentialInvalid("quark");
+    }
+  } catch (error) {
+    console.warn(
+      "夸克 __puus 续期失败（沿用现有 cookie）:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+  return cookie;
+}

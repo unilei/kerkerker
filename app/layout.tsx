@@ -59,7 +59,6 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
     siteName: SITE_NAME,
     locale: "zh_CN",
-    alternateLocale: ["en_US"],
     images: [{ url: SITE_IMAGE_URL, alt: `${SITE_NAME} logo` }],
   },
   twitter: {

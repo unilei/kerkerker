@@ -9,7 +9,6 @@ import test from "node:test";
 
 import {
   TAG_MENU_GROUPS,
-  TAG_QUICK_LINKS,
   KNOWN_SOURCE_CATEGORIES,
 } from "@/lib/short-drama/tag-menu";
 import { mergeTagGroupSources } from "@/lib/short-drama/tag-groups";
@@ -33,16 +32,6 @@ test("菜单组与源站分类一一对应（女频/男频/题材/爽点），�
   // 「单字标签」刻意隐藏
   assert.ok(sourceCategories.includes("单字标签") === false);
   assert.deepEqual(KNOWN_SOURCE_CATEGORIES, [...sourceCategories, "单字标签"]);
-});
-
-test("一级直链都是真实存在的源站标签", () => {
-  const allTags = new Set(mergeTagGroupSources(null, null).flatMap((g) => g.tags));
-  assert.ok(TAG_QUICK_LINKS.length >= 2, "至少两个直链才有导航价值");
-  for (const { tag } of TAG_QUICK_LINKS) {
-    assert.ok(allTags.has(tag), `直链 ${tag} 不在源站快照标签里`);
-  }
-  const linkTags = TAG_QUICK_LINKS.map((link) => link.tag);
-  assert.equal(new Set(linkTags).size, linkTags.length, "直链不允许重复");
 });
 
 test("KNOWN_SOURCE_CATEGORIES 覆盖快照全部分类（水合时能识别新增组）", () => {

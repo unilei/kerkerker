@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Link2, Copy, Check, ExternalLink, FileText } from "lucide-react";
+import { Link2, Copy, Check, ExternalLink, FileText, Users } from "lucide-react";
 import { BrandBadge } from "@/components/short-drama/BrandBadge";
+import { parseDramaInfo } from "@/lib/short-drama/drama-info";
 
 interface ShortDramaPanProps {
   shareUrl: string;
@@ -84,17 +85,70 @@ export function ShortDramaPanSection({ shareUrl, shareCode, episodeCount }: Shor
   );
 }
 
-/** 简介区块（分享夹内 简介.txt） */
-export function ShortDramaIntro({ intro }: { intro: string }) {
+/** 简介区块：metadata.json / 简介.txt 结构化解析后卡片化展示 */
+export function ShortDramaIntro({ intro, metadata }: { intro?: string; metadata?: Record<string, unknown> | null }) {
+  const info = parseDramaInfo(metadata, intro);
+  if (!info.description && info.fields.length === 0 && info.actors.length === 0) {
+    return null;
+  }
   return (
-    <div className="mt-6">
-      <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
-        <FileText className="w-5 h-5 text-blue-400" />
-        简介
-      </h3>
-      <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-line">
-        {intro}
-      </p>
+    <div className="mt-6 space-y-6">
+      {/* 信息位（作者/分类/时长等） */}
+      {info.fields.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 bg-white/[0.03] border border-white/5 rounded-xl px-5 py-4">
+          {info.fields.map((field) => (
+            <div key={field.label} className="flex items-baseline gap-3 text-sm min-w-0">
+              <span className="shrink-0 text-gray-500">{field.label}</span>
+              <span className="text-gray-200 truncate" title={field.value}>
+                {field.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 简介正文 */}
+      {info.description && (
+        <div>
+          <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-blue-400" />
+            简介
+          </h3>
+          <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-line">
+            {info.description}
+          </p>
+        </div>
+      )}
+
+      {/* 演员表（有内容才显示） */}
+      {info.actors.length > 0 && (
+        <div>
+          <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+            <Users className="w-5 h-5 text-purple-400" />
+            演员表
+          </h3>
+          <div className="space-y-3">
+            {info.actors.map((actor, index) => (
+              <div
+                key={`${actor.name || actor.role || index}-${index}`}
+                className="bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3"
+              >
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  {actor.name && (
+                    <span className="text-sm font-medium text-white">{actor.name}</span>
+                  )}
+                  {actor.role && (
+                    <span className="text-xs text-gray-400">饰 {actor.role}</span>
+                  )}
+                </div>
+                {actor.bio && (
+                  <p className="mt-1.5 text-xs text-gray-500 leading-relaxed">{actor.bio}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

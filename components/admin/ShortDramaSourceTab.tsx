@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Clapperboard,
   KeyRound,
@@ -12,7 +12,8 @@ import {
   XCircle,
   AlertTriangle,
 } from "lucide-react";
-import type { ToastState } from "@/components/admin/types";
+import type { ToastState, ConfirmState } from "@/components/admin/types";
+import { TaskProgressPanel } from "@/components/admin/TaskProgressPanel";
 
 /**
  * 短剧源管理 Tab
@@ -20,11 +21,15 @@ import type { ToastState } from "@/components/admin/types";
  * 三块能力：
  *  1. 夸克凭证：粘贴 cookie → 服务端验证并 AES 加密落库（GET 回显掩码）
  *  2. 抓取：全量回填 / 增量跟更 / 标签回填（同步执行，返回统计）
- *  3. 转存：触发批量转存（串行防风控），查看状态台账与最近条目
+ *  3. 转存：批量转存（串行防风控）与元数据补齐（同步小批 / 后台全量），
+ *     查看状态台账与最近条目
  *
- * 长任务（全量回填/整批转存）建议在服务器用 curl 挂 crontab 执行；
- * 面板按钮适合小批量与验证流程。
+ * 任务执行期间：POST 挂起等待，前端每 3s 轮询 GET 读取 sync_state 的
+ * 里的实时进度（running_scrape / running_transfer 双槽位，流水线写库
+ * 上报），在对应分区显示进度条；curl 等外部触发的任务同样能看到。长任务（全量回填/整批转存）仍建议服务器挂任务执行。
  */
+
+const PROGRESS_POLL_INTERVAL_MS = 3_000;
 
 interface CredentialView {
   platform: string;
@@ -34,16 +39,33 @@ interface CredentialView {
   last_validated_at?: string;
 }
 
+interface TaskProgress {
+  stage: string;
+  message: string;
+  done?: number;
+  total?: number;
+  updated_at: string;
+}
+
+interface TaskLease {
+  task: string;
+  started_at: string;
+  expires_at: string;
+  progress?: TaskProgress | null;
+}
+
 interface SyncState {
   last_article_watermark?: number;
   last_scrape_at?: string;
   last_scrape_mode?: string;
   last_scrape_stats?: Record<string, unknown>;
+  last_backfill_resume_page?: number | null;
   last_transfer_at?: string;
   last_transfer_stats?: Record<string, unknown>;
   last_metadata_backfill_at?: string;
   last_metadata_backfill_stats?: Record<string, unknown>;
-  running?: { task: string; started_at: string; expires_at: string } | null;
+  running_scrape?: TaskLease | null;
+  running_transfer?: TaskLease | null;
 }
 
 interface DramaStats {
@@ -62,9 +84,10 @@ interface RecentDrama {
 
 interface AdminShortDramasTabProps {
   onShowToast: (toast: ToastState) => void;
+  onShowConfirm: (confirm: ConfirmState) => void;
 }
 
-export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
+export function AdminShortDramasTab({ onShowToast, onShowConfirm }: AdminShortDramasTabProps) {
   const [cookieInput, setCookieInput] = useState("");
   const [credential, setCredential] = useState<CredentialView | null>(null);
   const [savingCredential, setSavingCredential] = useState(false);
@@ -73,8 +96,20 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
   const [recent, setRecent] = useState<RecentDrama[]>([]);
   const [coverMirrorReady, setCoverMirrorReady] = useState(false);
   const [runningAction, setRunningAction] = useState<string | null>(null);
+  /**
+   * background 启动后的「等租约」窗口：启动响应先于任务租约落库返回，
+   * 若只靠启动后那一次 loadState，可能读不到租约导致轮询永远不启动、
+   * 进度面板不出现。记录启动的任务与 60s 截止时间，强制进入轮询，
+   * 租约一出现即接管，超时未出现自动退出窗口。
+   */
+  const [pendingBackground, setPendingBackground] = useState<{
+    action: string;
+    until: number;
+  } | null>(null);
+  const lastLoadStateAtRef = useRef(0);
 
   const loadState = useCallback(async () => {
+    lastLoadStateAtRef.current = Date.now();
     try {
       const [credRes, syncRes] = await Promise.all([
         fetch("/api/admin/cloud-credentials", { cache: "no-store" }),
@@ -97,6 +132,54 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
   useEffect(() => {
     loadState();
   }, [loadState]);
+
+  // 未过期的运行租约（本页触发的或 curl 等外部触发的任务都算）；
+  // 抓取与转存租约独立，可同时各跑一个
+  const scrapeLease =
+    syncState?.running_scrape &&
+    new Date(syncState.running_scrape.expires_at).getTime() > Date.now()
+      ? syncState.running_scrape
+      : null;
+  const transferLease =
+    syncState?.running_transfer &&
+    new Date(syncState.running_transfer.expires_at).getTime() > Date.now()
+      ? syncState.running_transfer
+      : null;
+  const isPolling =
+    scrapeLease !== null ||
+    transferLease !== null ||
+    runningAction !== null ||
+    pendingBackground !== null;
+
+  // 任务执行期间轮询同步状态，驱动实时进度展示；节流由 loadState 内部兜底
+  useEffect(() => {
+    if (!isPolling) return;
+    const timer = setInterval(() => {
+      if (Date.now() - lastLoadStateAtRef.current < PROGRESS_POLL_INTERVAL_MS - 100) return;
+      lastLoadStateAtRef.current = Date.now();
+      loadState();
+    }, PROGRESS_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [isPolling, loadState]);
+
+  // 等租约窗口超时自动退出（任务秒退/未启动时不至于永久轮询）
+  useEffect(() => {
+    if (!pendingBackground) return;
+    const remaining = pendingBackground.until - Date.now();
+    if (remaining <= 0) {
+      setPendingBackground(null);
+      return;
+    }
+    const timer = setTimeout(() => setPendingBackground(null), remaining);
+    return () => clearTimeout(timer);
+  }, [pendingBackground]);
+
+  // 任一任务租约出现即接管展示，退出等待窗口
+  useEffect(() => {
+    if (pendingBackground && (scrapeLease !== null || transferLease !== null)) {
+      setPendingBackground(null);
+    }
+  }, [pendingBackground, scrapeLease, transferLease]);
 
   const saveCredential = async () => {
     if (!cookieInput.trim()) {
@@ -130,15 +213,21 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
 
   const runAction = async (action: string, label: string, body: Record<string, unknown> = {}) => {
     setRunningAction(action);
-    try {
-      const response = await fetch("/api/admin/short-dramas", {
+    try {      const response = await fetch("/api/admin/short-dramas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, ...body }),
       });
       const payload = await response.json();
       if (response.ok) {
-        onShowToast({ message: `${label}完成：${summarize(action, payload.data)}`, type: "success" });
+        // background 启动模式：请求立即返回，任务在后台跑（进度面板接管展示）
+        if (payload.data?.started) {
+          // 进入等租约窗口：保证下一次轮询无论租约是否已落库都能接上
+          setPendingBackground({ action, until: Date.now() + 60_000 });
+          onShowToast({ message: `${label}已在后台启动，下方进度实时更新`, type: "info" });
+        } else {
+          onShowToast({ message: `${label}完成：${summarize(action, payload.data)}`, type: "success" });
+        }
       } else {
         onShowToast({ message: `${label}失败：${payload.message || "未知错误"}`, type: "error" });
       }
@@ -152,6 +241,83 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
       loadState();
     }
   };
+
+  /** 取消运行中/残留的任务：活任务优雅停（当前条目完成后），死任务清残留 */
+  const cancelTask = async (target: "transfer" | "scrape") => {
+    try {
+      const response = await fetch("/api/admin/short-dramas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "task-cancel", target }),
+      });
+      const payload = await response.json();
+      onShowToast({
+        message: payload.message || (payload.code === 200 ? "已取消" : "无法取消"),
+        type: payload.code === 200 ? "success" : "error",
+      });
+      loadState();
+    } catch (error) {
+      onShowToast({
+        message: error instanceof Error ? error.message : "网络异常",
+        type: "error",
+      });
+    }
+  };
+
+  /** 全量回填：数小时长任务，后台启动 + 确认弹窗说明耗时 */
+  const startFullBackfill = () => {
+    onShowConfirm({
+      title: "启动全量回填？",
+      message:
+        "全量约 7 万条 / 2323 个列表页，预计连续运行数小时，将在后台执行（可关闭页面，服务器继续抓）。已入库的条目自动跳过、不重复抓取；中断后重新点击会从上次断点页自动续跑。抓取完可在「待转存数据」里批量转存。",
+      confirmText: "启动全量回填",
+      onConfirm: async () => {
+        await runAction("scrape-backfill", "全量回填", { background: true });
+      },
+    });
+  };
+
+  /** 全量补齐元数据：后台一次跑完整个补齐队列 + 确认弹窗说明耗时与终结标记 */
+  const startMetadataBackfill = () => {
+    onShowConfirm({
+      title: "启动全量补齐元数据？",
+      message:
+        "将对所有「转存完成但缺封面/简介/metadata」的条目重新列目录补齐（每部约 10-30 秒，队列可能上百部，将在后台执行，可关闭页面）。发布日期新的先补，补完即出现在首页前列。源站分享夹里本来就没有的部件会记为「源缺失」，之后不再重复尝试。",
+      confirmText: "启动全量补齐",
+      onConfirm: async () => {
+        await runAction("metadata-backfill", "全量补齐元数据", { background: true });
+      },
+    });
+  };
+
+  // 进度按任务归属分区展示：抓取区只显示 scrape 租约，转存区只显示
+  // transfer 租约（两者可同屏各自显示进度条）
+  const scrapeProgress = scrapeLease?.progress ?? null;
+  const transferProgress = transferLease?.progress ?? null;
+  const pendingTransfer =
+    pendingBackground !== null &&
+    (pendingBackground.action === "transfer" ||
+      pendingBackground.action === "metadata-backfill");
+  const pendingScrape =
+    pendingBackground !== null && pendingBackground.action === "scrape-backfill";
+  const scrapeSectionBusy =
+    runningAction === "scrape-incremental" ||
+    runningAction === "scrape-backfill" ||
+    runningAction === "tag-sync" ||
+    runningAction === "tag-group-sync" ||
+    scrapeLease !== null ||
+    pendingScrape;
+  const transferSectionBusy =
+    runningAction === "transfer" ||
+    runningAction === "metadata-backfill" ||
+    transferLease !== null ||
+    pendingTransfer;
+  const defaultScrapeMessage =
+    runningAction === "tag-sync" ? "正在逐标签搜索回填…" : "正在抓取源站…";
+  const defaultTransferMessage =
+    runningAction === "metadata-backfill" || pendingBackground?.action === "metadata-backfill"
+      ? "正在补齐元数据（封面/简介）…"
+      : "正在转存到自己夸克网盘…";
 
   return (
     <div className="space-y-8">
@@ -215,23 +381,31 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
         <div className="flex flex-wrap gap-3 mb-4">
           <button
             onClick={() => runAction("scrape-incremental", "增量抓取", {})}
-            disabled={runningAction !== null}
+            disabled={scrapeSectionBusy}
             className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
             <RefreshCw size={14} className={runningAction === "scrape-incremental" ? "animate-spin" : ""} />
             增量跟更
           </button>
           <button
-            onClick={() => runAction("scrape-backfill", "全量回填", { maxDetails: 500 })}
-            disabled={runningAction !== null}
+            onClick={() => runAction("scrape-backfill", "回填一批", { maxDetails: 500 })}
+            disabled={scrapeSectionBusy}
             className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
             <RefreshCw size={14} className={runningAction === "scrape-backfill" ? "animate-spin" : ""} />
             回填一批（500 条详情）
           </button>
           <button
+            onClick={startFullBackfill}
+            disabled={scrapeSectionBusy}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+          >
+            <Clapperboard size={14} />
+            全量回填（后台完整跑）
+          </button>
+          <button
             onClick={() => runAction("tag-sync", "标签回填", {})}
-            disabled={runningAction !== null}
+            disabled={scrapeSectionBusy}
             className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
             <Tag size={14} />
@@ -239,25 +413,49 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
           </button>
           <button
             onClick={() => runAction("tag-group-sync", "标签分组刷新", {})}
-            disabled={runningAction !== null}
+            disabled={scrapeSectionBusy}
             className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
             <Tags size={14} />
             刷新标签分组
           </button>
         </div>
+        {scrapeSectionBusy && (
+          <div className="space-y-2">
+            <TaskProgressPanel
+              message={scrapeProgress?.message || defaultScrapeMessage}
+              done={scrapeProgress?.done}
+              total={scrapeProgress?.total}
+              startedAt={scrapeProgress ? scrapeLease?.started_at : undefined}
+            />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => cancelTask("scrape")}
+                className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-red-900/40 hover:text-red-300 text-gray-400 border border-[#333] rounded-lg text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <XCircle size={12} />
+                取消任务
+              </button>
+            </div>
+          </div>
+        )}
         <p className="text-xs text-gray-600">
-          「刷新标签分组」同步源站标签归类（女性/男性/场景职业/爽设/单字）供前台标签云分组展示；「标签回填」逐标签搜索把标签写到对应短剧。全量回填约 7 万条、2323 个列表页，单次按钮只跑 500 条详情；完整回填建议服务器挂任务：
+          「全量回填」后台完整抓取约 7 万条 / 2323 个列表页（数小时），可关闭页面，进度实时展示；
+          「回填一批」同步跑 500 条详情，适合小步补抓。「刷新标签分组」同步源站标签归类供前台标签云分组展示；
+          「标签回填」逐标签搜索把标签写到对应短剧。抓取按源站文章 ID 幂等入库，重复执行不会产生重复数据；
+          也可用 curl 挂 crontab：
           <code className="ml-1 px-1.5 py-0.5 bg-black/40 rounded text-[11px] text-gray-400">
-            curl -X POST -b admin_session=… -H &apos;Content-Type: application/json&apos; -d &apos;{"{"}&quot;action&quot;:&quot;scrape-backfill&quot;{"}"}&apos; /api/admin/short-dramas
+            curl -X POST -b admin_session=… -H &apos;Content-Type: application/json&apos; -d &apos;{"{"}&quot;action&quot;:&quot;scrape-backfill&quot;,&quot;background&quot;:true{"}"}&apos; /api/admin/short-dramas
           </code>
-          （重复执行自动续跑，已有链接的条目会跳过）
         </p>
         {syncState?.last_scrape_at && (
           <p className="mt-3 text-xs text-gray-500">
             上次抓取：{syncState.last_scrape_mode || "-"} @{" "}
             {syncState.last_scrape_at.slice(0, 16).replace("T", " ")} · 水位文章 ID：{" "}
             {syncState.last_article_watermark ?? "-"}
+            {syncState.last_backfill_resume_page
+              ? ` · 回填断点：第 ${syncState.last_backfill_resume_page} 页（点「全量回填」自动续跑）`
+              : ""}
           </p>
         )}
       </section>
@@ -277,27 +475,62 @@ export function AdminShortDramasTab({ onShowToast }: AdminShortDramasTabProps) {
         <div className="flex flex-wrap gap-3 mb-4">
           <button
             onClick={() => runAction("transfer", "转存一批", { maxItems: 10 })}
-            disabled={runningAction !== null}
+            disabled={transferSectionBusy}
             className="px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
             <Send size={14} />
             转存 10 部
           </button>
           <button
-            onClick={() => runAction("metadata-backfill", "元数据补齐", { maxItems: 20 })}
-            disabled={runningAction !== null}
+            onClick={() => runAction("metadata-backfill", "补齐一批", { maxItems: 20 })}
+            disabled={transferSectionBusy}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
             <Send size={14} />
-            补齐元数据（封面/简介）
+            补齐一批（20 部）
+          </button>
+          <button
+            onClick={startMetadataBackfill}
+            disabled={transferSectionBusy}
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+          >
+            <Send size={14} />
+            全量补齐元数据（后台完整跑）
           </button>
         </div>
+        {transferSectionBusy && (
+          <div className="space-y-2">
+            <TaskProgressPanel
+              message={transferProgress?.message || defaultTransferMessage}
+              done={transferProgress?.done}
+              total={transferProgress?.total}
+              startedAt={transferProgress ? transferLease?.started_at : undefined}
+            />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => cancelTask("transfer")}
+                className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-red-900/40 hover:text-red-300 text-gray-400 border border-[#333] rounded-lg text-xs flex items-center gap-1.5 transition-colors"
+              >
+                <XCircle size={12} />
+                取消任务
+              </button>
+              <span className="text-xs text-gray-600">
+                运行中→当前这部完成后停止；无响应（进度 5 分钟未更新）→ 直接清理残留状态
+              </span>
+            </div>
+          </div>
+        )}
         {syncState?.last_transfer_at && (
           <p className="text-xs text-gray-500">
             上次转存：{syncState.last_transfer_at.slice(0, 16).replace("T", " ")}
             {syncState?.last_metadata_backfill_at && (
               <> · 上次补齐：{syncState.last_metadata_backfill_at.slice(0, 16).replace("T", " ")}</>
             )}
+          </p>
+        )}
+        {syncState?.last_metadata_backfill_stats && (
+          <p className="mt-1 text-xs text-gray-600">
+            {summarize("metadata-backfill", syncState.last_metadata_backfill_stats)}
           </p>
         )}
       </section>
@@ -371,7 +604,7 @@ function summarize(action: string, data: unknown): string {
     return `成功 ${stats.succeeded ?? 0}、失败 ${stats.failed ?? 0}、封面 ${stats.covers_mirrored ?? 0}`;
   }
   if (action === "metadata-backfill") {
-    return `补齐 ${stats.attempted ?? 0} 部：封面 ${stats.covers_mirrored ?? 0}、简介 ${stats.intros_set ?? 0}、metadata ${stats.metadata_set ?? 0}、仍缺 ${stats.still_missing ?? 0}`;
+    return `补齐 ${stats.attempted ?? 0} 部：封面 ${stats.covers_mirrored ?? 0}、简介 ${stats.intros_set ?? 0}、metadata ${stats.metadata_set ?? 0}；已完整 ${stats.resolved ?? 0}、待重试 ${stats.still_missing ?? 0}、源缺失 ${stats.source_missing ?? 0}`;
   }
   if (action === "tag-sync") {
     return `标签 ${stats.tags_processed ?? 0}/${stats.tags_total ?? 0}、命中 ${stats.dramas_tagged ?? 0}`;
