@@ -17,9 +17,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # NEXT_PUBLIC_* 变量会在 Next 构建阶段被静态替换；部署工作流通过
-# build-args 注入实际服务地址，服务端运行时仍会从 Compose 环境读取配置。
-ARG NEXT_PUBLIC_DOUBAN_API_URL
-ENV NEXT_PUBLIC_DOUBAN_API_URL=${NEXT_PUBLIC_DOUBAN_API_URL}
+# build-args 注入实际站点地址，服务端运行时仍会从 Compose 环境读取配置。
 ARG NEXT_PUBLIC_SITE_URL
 ENV NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
 
@@ -33,16 +31,6 @@ ENV NODE_ENV=production
 
 # 构建应用
 RUN npm run build
-
-# 将一次性数据库迁移编译为独立 CommonJS 运行器。mongodb 由 Next standalone
-# 运行时提供，其余依赖打入 bundle，生产镜像无需保留源码或 devDependencies。
-RUN mkdir -p /app/migrations && \
-    ./node_modules/.bin/esbuild scripts/pan-dedup.ts \
-      --bundle --platform=node --format=cjs --target=node20 --external:mongodb \
-      --outfile=/app/migrations/pan-dedup.cjs && \
-    ./node_modules/.bin/esbuild scripts/content-identity-backfill.ts \
-      --bundle --platform=node --format=cjs --target=node20 --external:mongodb \
-      --outfile=/app/migrations/content-identity-backfill.cjs
 
 # ==================== 阶段 3: 运行应用 ====================
 FROM node:20-alpine AS runner
@@ -61,7 +49,6 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/migrations ./migrations
 
 # 设置权限
 RUN chown -R nextjs:nodejs /app

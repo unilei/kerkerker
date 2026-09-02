@@ -1,0 +1,74 @@
+# duanju.aipan.me 服务器端 Docker Compose（short-drama 分支）
+# 用途：GitHub Actions 推送 GHCR 镜像后，在 VPS 上滚动更新短剧站
+# 与 cn-compliance（kerkerker-app / kerkerker-mongodb，端口 3003）完全隔离：
+#   独立 compose project 名、独立容器名、独立网络、独立 volume
+
+services:
+  # Next.js 应用（爱盼短剧站）
+  app:
+    image: ${IMAGE_NAME:-ghcr.io/unilei/kerkerker}:${IMAGE_TAG:-short-drama-latest}
+    container_name: kerkerker-duanju-app
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-3009}:3000"
+    environment:
+      - NODE_ENV=production
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_SESSION_SECRET=${ADMIN_SESSION_SECRET}
+      - MONGODB_URI=mongodb://mongodb:27017/kerkerker
+      - MONGODB_DB_NAME=${MONGODB_DB_NAME:-kerkerker}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY}
+      - DUANJUGOU_BASE_URL=${DUANJUGOU_BASE_URL:-}
+      - NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL:-https://duanju.aipan.me}
+      - CLOUDFLARE_R2_PUBLIC_URL=${CLOUDFLARE_R2_PUBLIC_URL:-}
+      - CLOUDFLARE_R2_UPLOAD_API_URL=${CLOUDFLARE_R2_UPLOAD_API_URL:-}
+      - CLOUDFLARE_R2_UPLOAD_API_TOKEN=${CLOUDFLARE_R2_UPLOAD_API_TOKEN:-}
+      - CLOUDFLARE_R2_KEY_PREFIX=${CLOUDFLARE_R2_KEY_PREFIX:-short-drama-covers}
+      - CLOUDFLARE_R2_MAX_IMAGE_BYTES=${CLOUDFLARE_R2_MAX_IMAGE_BYTES:-10485760}
+      - BAIDU_PUSH_TOKEN=${BAIDU_PUSH_TOKEN:-}
+      - INDEXNOW_KEY=${INDEXNOW_KEY:-}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - duanju-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # MongoDB 数据库服务（duanju 专用实例）
+  mongodb:
+    image: mongo:7
+    container_name: kerkerker-duanju-mongodb
+    environment:
+      - MONGO_INITDB_DATABASE=kerkerker
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - duanju-network
+    restart: unless-stopped
+
+networks:
+  duanju-network:
+    name: kerkerker-duanju-network
+    driver: bridge
+
+volumes:
+  mongodb-data:
+    name: kerkerker-duanju_mongodb-data
+    driver: local
+  mongodb-config:
+    name: kerkerker-duanju_mongodb-config
+    driver: local

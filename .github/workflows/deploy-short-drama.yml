@@ -1,0 +1,342 @@
+name: Deploy Kerkerker (duanju / short-drama)
+
+on:
+  push:
+    branches:
+      - short-drama
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional image tag (defaults to the commit SHA)"
+        required: false
+        type: string
+
+concurrency:
+  group: kerkerker-duanju-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+# 与 cn-compliance（www.aipan.me，3003）完全隔离：
+#   独立部署路径、独立端口 3009、独立 compose project，镜像 tag 也独立。
+# 复用仓库级 secrets（DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY /
+# DEPLOY_KNOWN_HOSTS / DEPLOY_ADMIN_PASSWORD / DEPLOY_ADMIN_SESSION_SECRET）。
+# 短剧站专用 secrets：DEPLOY_CREDENTIAL_ENCRYPTION_KEY、
+# DEPLOY_CLOUDFLARE_R2_PUBLIC_URL / DEPLOY_CLOUDFLARE_R2_UPLOAD_API_URL /
+# DEPLOY_CLOUDFLARE_R2_UPLOAD_API_TOKEN（与 douban-service 同一组 R2）。
+env:
+  IMAGE_NAME: ${{ vars.DUANJU_IMAGE_NAME || format('ghcr.io/{0}/kerkerker', github.repository_owner) }}
+  IMAGE_STABLE_TAG: duanju-latest
+  SITE_URL: https://duanju.aipan.me
+  DEPLOY_PATH: /www/wwwroot/duanju
+  DEPLOY_PORT: '3009'
+  DEPLOY_BIND: '0.0.0.0'
+  COMPOSE_FILE: docker-compose.duanju.server.yml
+  COMPOSE_PROJECT: kerkerker-duanju
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          test_files=(tests/*.test.ts)
+          if (( ${#test_files[@]} == 0 )); then
+            echo "No test files found" >&2
+            exit 1
+          fi
+          for test_file in "${test_files[@]}"; do
+            npx tsx "$test_file"
+          done
+
+  publish:
+    name: Build and publish Docker image
+    needs: verify
+    outputs:
+      image_tag: ${{ steps.image.outputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Resolve image tag
+        id: image
+        env:
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${INPUT_IMAGE_TAG:-${GITHUB_SHA}}"
+          if [[ ! "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid image tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_SITE_URL=${{ env.SITE_URL }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_STABLE_TAG }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy:
+    name: Deploy duanju to Docker VPS
+    needs: publish
+    if: github.repository_owner == 'unilei'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deployment files
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_ADMIN_PASSWORD: ${{ secrets.DEPLOY_ADMIN_PASSWORD }}
+          DEPLOY_ADMIN_SESSION_SECRET: ${{ secrets.DEPLOY_ADMIN_SESSION_SECRET }}
+          DEPLOY_CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.DEPLOY_CREDENTIAL_ENCRYPTION_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DEPLOY_ADMIN_PASSWORD DEPLOY_ADMIN_SESSION_SECRET DEPLOY_CREDENTIAL_ENCRYPTION_KEY; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required repository secret: $name" >&2
+              exit 1
+            fi
+          done
+          [[ "$DEPLOY_HOST" != *$'\n'* ]] || { echo "DEPLOY_HOST contains a newline" >&2; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]] || { echo "Invalid DEPLOY_USER" >&2; exit 1; }
+          [[ "$DEPLOY_CREDENTIAL_ENCRYPTION_KEY" =~ ^[0-9a-fA-F]{64}$ ]] || {
+            echo "DEPLOY_CREDENTIAL_ENCRYPTION_KEY must be a 64-char hex string (openssl rand -hex 32)" >&2
+            exit 1
+          }
+
+      - name: Prepare SSH
+        id: ssh
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          key_file="$RUNNER_TEMP/kerkerker_deploy_key"
+          known_hosts="$RUNNER_TEMP/kerkerker_known_hosts"
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key_file"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts"
+          test -s "$known_hosts"
+          echo "key_file=$key_file" >> "$GITHUB_OUTPUT"
+          echo "known_hosts=$known_hosts" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Compose file
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "mkdir -p '$DEPLOY_PATH'"
+          scp -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            "$COMPOSE_FILE" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.server.yml.new"
+
+      - name: Upload environment file
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ env.DEPLOY_PORT }}
+          DEPLOY_BIND: ${{ env.DEPLOY_BIND }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.publish.outputs.image_tag }}
+          SITE_URL: ${{ env.SITE_URL }}
+          ADMIN_PASSWORD: ${{ secrets.DEPLOY_ADMIN_PASSWORD }}
+          ADMIN_SESSION_SECRET: ${{ secrets.DEPLOY_ADMIN_SESSION_SECRET }}
+          CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.DEPLOY_CREDENTIAL_ENCRYPTION_KEY }}
+          MONGODB_DB_NAME: ${{ secrets.DEPLOY_DUANJU_MONGODB_DB_NAME || 'kerkerker' }}
+          DUANJUGOU_BASE_URL: ${{ secrets.DEPLOY_DUANJUGOU_BASE_URL }}
+          R2_PUBLIC_URL: ${{ secrets.DEPLOY_CLOUDFLARE_R2_PUBLIC_URL }}
+          R2_UPLOAD_API_URL: ${{ secrets.DEPLOY_CLOUDFLARE_R2_UPLOAD_API_URL }}
+          R2_UPLOAD_API_TOKEN: ${{ secrets.DEPLOY_CLOUDFLARE_R2_UPLOAD_API_TOKEN }}
+          R2_KEY_PREFIX: ${{ vars.DUANJU_CLOUDFLARE_R2_KEY_PREFIX || 'short-drama-covers' }}
+          R2_MAX_IMAGE_BYTES: ${{ vars.DUANJU_CLOUDFLARE_R2_MAX_IMAGE_BYTES || '10485760' }}
+          BAIDU_PUSH_TOKEN: ${{ secrets.DEPLOY_BAIDU_PUSH_TOKEN }}
+          INDEXNOW_KEY: ${{ secrets.DEPLOY_INDEXNOW_KEY }}
+          KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file="$RUNNER_TEMP/kerkerker-duanju.env"
+          umask 077
+          python3 - "$env_file" <<'PY'
+          import os
+          import sys
+
+          pairs = (
+              ("IMAGE_NAME", "IMAGE_NAME"),
+              ("IMAGE_TAG", "IMAGE_TAG"),
+              ("APP_PORT", "DEPLOY_PORT"),
+              ("APP_BIND", "DEPLOY_BIND"),
+              ("ADMIN_PASSWORD", "ADMIN_PASSWORD"),
+              ("ADMIN_SESSION_SECRET", "ADMIN_SESSION_SECRET"),
+              ("CREDENTIAL_ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY"),
+              ("MONGODB_DB_NAME", "MONGODB_DB_NAME"),
+              ("DUANJUGOU_BASE_URL", "DUANJUGOU_BASE_URL"),
+              ("NEXT_PUBLIC_SITE_URL", "SITE_URL"),
+              ("CLOUDFLARE_R2_PUBLIC_URL", "R2_PUBLIC_URL"),
+              ("CLOUDFLARE_R2_UPLOAD_API_URL", "R2_UPLOAD_API_URL"),
+              ("CLOUDFLARE_R2_UPLOAD_API_TOKEN", "R2_UPLOAD_API_TOKEN"),
+              ("CLOUDFLARE_R2_KEY_PREFIX", "R2_KEY_PREFIX"),
+              ("CLOUDFLARE_R2_MAX_IMAGE_BYTES", "R2_MAX_IMAGE_BYTES"),
+              ("BAIDU_PUSH_TOKEN", "BAIDU_PUSH_TOKEN"),
+              ("INDEXNOW_KEY", "INDEXNOW_KEY"),
+          )
+
+          def quote(value: str) -> str:
+              if "\x00" in value or "\n" in value or "\r" in value:
+                  raise ValueError("deployment environment values must be single-line")
+              return "'" + value.replace("'", "\\'") + "'"
+
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              for output_name, environment_name in pairs:
+                  handle.write(f"{output_name}={quote(os.environ.get(environment_name, ''))}\n")
+          PY
+          chmod 600 "$env_file"
+          scp -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            "$env_file" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/.env.new"
+          rm -f "$env_file"
+
+      - name: Log in to GHCR on VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+          KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | ssh -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+
+      - name: Write environment and roll out
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ env.DEPLOY_PORT }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.publish.outputs.image_tag }}
+          COMPOSE_PROJECT: ${{ env.COMPOSE_PROJECT }}
+          KEY_FILE: ${{ steps.ssh.outputs.key_file }}
+          KNOWN_HOSTS: ${{ steps.ssh.outputs.known_hosts }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$KEY_FILE" -o BatchMode=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' APP_PORT='$DEPLOY_PORT' COMPOSE_PROJECT='$COMPOSE_PROJECT' EXPECTED_IMAGE='$IMAGE_NAME:$IMAGE_TAG' EXPECTED_REVISION='$GITHUB_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          mkdir -p "$DEPLOY_PATH"
+          cd "$DEPLOY_PATH"
+          if [ -f .env ]; then
+            cp .env ".env.backup.$(date -u +%Y%m%d%H%M%S)"
+          fi
+          if [ -f docker-compose.server.yml ]; then
+            cp docker-compose.server.yml docker-compose.server.yml.previous
+          fi
+          mv .env.new .env
+          mv docker-compose.server.yml.new docker-compose.server.yml
+          chmod 600 .env
+
+          project=(docker compose --project-name "$COMPOSE_PROJECT" -f docker-compose.server.yml)
+          rollback() {
+            echo "Deployment failed; restoring previous environment and image" >&2
+            latest_backup="$(ls -1t .env.backup.* 2>/dev/null | head -1 || true)"
+            if [ -n "$latest_backup" ]; then cp "$latest_backup" .env; fi
+            if [ -f docker-compose.server.yml.previous ]; then mv docker-compose.server.yml.previous docker-compose.server.yml; fi
+            "${project[@]}" up -d --remove-orphans || true
+          }
+          trap 'status=$?; if [ "$status" -ne 0 ]; then rollback; fi' EXIT
+
+          "${project[@]}" pull app
+          "${project[@]}" up -d --remove-orphans app
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:${APP_PORT}/api/health" >/dev/null; then
+              running_image="$(docker inspect kerkerker-duanju-app --format '{{.Config.Image}}')"
+              running_revision="$(docker inspect kerkerker-duanju-app --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+              [ "$running_image" = "$EXPECTED_IMAGE" ] || {
+                echo "Running image mismatch: expected $EXPECTED_IMAGE, got $running_image" >&2
+                exit 1
+              }
+              [ "$running_revision" = "$EXPECTED_REVISION" ] || {
+                echo "Running revision mismatch: expected $EXPECTED_REVISION, got $running_revision" >&2
+                exit 1
+              }
+              trap - EXIT
+              echo "duanju deployment healthy on port ${APP_PORT}"
+              exit 0
+            fi
+            [ "$attempt" -eq 40 ] && { echo "duanju health check failed" >&2; exit 1; }
+            sleep 3
+          done
+          REMOTE
+
+      - name: Deployment summary
+        env:
+          IMAGE_TAG: ${{ needs.publish.outputs.image_tag }}
+        run: |
+          echo "Deployed ${IMAGE_NAME}:${IMAGE_TAG} from ${GITHUB_REF_NAME}"
+          echo "Site: duanju.aipan.me (ip:${DEPLOY_PORT})"
+          echo "Server path: ${DEPLOY_PATH}"
