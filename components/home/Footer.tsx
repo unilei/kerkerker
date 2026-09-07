@@ -1,6 +1,7 @@
 "use client";
 
 import { useLocale } from "@/components/providers/locale-provider";
+import { OnlineCounter } from "@/components/home/OnlineCounter";
 
 export function Footer() {
   const { locale } = useLocale();
@@ -57,10 +58,12 @@ export function Footer() {
 
         {/* 底部信息 */}
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-gray-500">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-center">
             <span>© 2026 爱盼短剧</span>
             <span className="text-gray-700">|</span>
             <span>{isEnglish ? "For learning and discussion" : "仅供学习交流使用"}</span>
+            <span className="text-gray-700">|</span>
+            <OnlineCounter />
           </div>
 
           <div className="flex items-center gap-6">

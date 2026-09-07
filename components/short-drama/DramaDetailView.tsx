@@ -6,6 +6,7 @@ import { ArrowLeft, Layers } from "lucide-react";
 import Link from "next/link";
 import { useLocale } from "@/components/providers/locale-provider";
 import { LanguageSwitcher } from "@/components/home/LanguageSwitcher";
+import { Footer } from "@/components/home/Footer";
 import { ShortDramaPanSection, ShortDramaIntro } from "@/components/short-drama/ShortDramaPanSection";
 import ShortDramaCard, {
   type ShortDramaCardData,
@@ -179,6 +180,7 @@ export default function DramaDetailView({ drama }: { drama: DramaDetailViewData 
           </section>
         )}
       </main>
+      <Footer />
     </div>
   );
 }

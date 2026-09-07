@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useScrollState } from "@/hooks/useScrollState";
 import { Navbar } from "@/components/home/Navbar";
+import { Footer } from "@/components/home/Footer";
 import { SearchModal } from "@/components/short-drama/SearchModal";
 
 /**
@@ -29,6 +30,7 @@ export function PageShell({ children }: { children: ReactNode }) {
         />
       )}
       {children}
+      <Footer />
     </div>
   );
 }

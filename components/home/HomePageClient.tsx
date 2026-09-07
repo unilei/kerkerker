@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { useScrollState } from "@/hooks/useScrollState";
 import { Navbar } from "@/components/home/Navbar";
+import { Footer } from "@/components/home/Footer";
 import { EmptyState } from "@/components/home/EmptyState";
 import { ErrorState } from "@/components/home/ErrorState";
 import { PaginationNav } from "@/components/home/PaginationNav";
@@ -454,6 +455,7 @@ export function HomePageClient({
           </>
         )}
       </main>
+      <Footer />
     </div>
   );
 }
