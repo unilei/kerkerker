@@ -380,7 +380,7 @@ export function AdminShortDramasTab({ onShowToast, onShowConfirm }: AdminShortDr
         </h2>
         <div className="flex flex-wrap gap-3 mb-4">
           <button
-            onClick={() => runAction("scrape-incremental", "增量抓取", {})}
+            onClick={() => runAction("scrape-incremental", "增量抓取", { background: true })}
             disabled={scrapeSectionBusy}
             className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
@@ -388,7 +388,12 @@ export function AdminShortDramasTab({ onShowToast, onShowConfirm }: AdminShortDr
             增量跟更
           </button>
           <button
-            onClick={() => runAction("scrape-backfill", "回填一批", { maxDetails: 500 })}
+            onClick={() =>
+              runAction("scrape-backfill", "回填一批", {
+                maxDetails: 500,
+                background: true,
+              })
+            }
             disabled={scrapeSectionBusy}
             className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
@@ -404,7 +409,7 @@ export function AdminShortDramasTab({ onShowToast, onShowConfirm }: AdminShortDr
             全量回填（后台完整跑）
           </button>
           <button
-            onClick={() => runAction("tag-sync", "标签回填", {})}
+            onClick={() => runAction("tag-sync", "标签回填", { background: true })}
             disabled={scrapeSectionBusy}
             className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
@@ -474,7 +479,9 @@ export function AdminShortDramasTab({ onShowToast, onShowConfirm }: AdminShortDr
         )}
         <div className="flex flex-wrap gap-3 mb-4">
           <button
-            onClick={() => runAction("transfer", "转存一批", { maxItems: 10 })}
+            onClick={() =>
+              runAction("transfer", "转存一批", { maxItems: 10, background: true })
+            }
             disabled={transferSectionBusy}
             className="px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >
@@ -482,7 +489,12 @@ export function AdminShortDramasTab({ onShowToast, onShowConfirm }: AdminShortDr
             转存 10 部
           </button>
           <button
-            onClick={() => runAction("metadata-backfill", "补齐一批", { maxItems: 20 })}
+            onClick={() =>
+              runAction("metadata-backfill", "补齐一批", {
+                maxItems: 20,
+                background: true,
+              })
+            }
             disabled={transferSectionBusy}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
           >

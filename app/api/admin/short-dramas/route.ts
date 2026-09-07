@@ -30,8 +30,8 @@ import { isR2CoverMirrorConfigured } from "@/lib/short-drama/cover-mirror";
  *        → 同步执行对应任务并返回统计（任务有租约防并发；长任务建议
  *          由脚本/curl 携带 admin cookie 调用并轮询 GET 查看进度）。
  *          transfer 支持 ids（后台单个/批量转存指定条目）；
- *          scrape/transfer/metadata-backfill 支持 background=true（立即
- *          返回，后台执行；metadata-backfill 缺省跑完整个补齐队列），
+ *          scrape/transfer/metadata-backfill/tag-sync 支持 background=true
+ *          （立即返回，后台执行；metadata-backfill 缺省跑完整个补齐队列），
  *          进度经 GET 轮询 sync_state 的 running_scrape/running_transfer
  *          槽位展示。抓取与转存租约独立、可并行；同类任务互斥。
  * DELETE { ids }     → 删除短剧：先删自己夸克网盘的转存目录（分享随之
@@ -254,6 +254,35 @@ export async function POST(request: NextRequest) {
         );
       }
       case "tag-sync": {
+        // background=true：72 标签 × 每标签最多 10 页逐页抓源站，同步请求
+        // 会超反代超时（nginx 60s 返回 HTML 错误页，前端 JSON 解析报错）。
+        // 与抓取共用 scrape 租约互斥，进度经 GET 轮询 running_scrape 展示。
+        if (payload.background) {
+          if (activeShortDramaLease(await getShortDramaSyncState(), "scrape")) {
+            return NextResponse.json(
+              {
+                code: 409,
+                message: "已有抓取类任务在运行（抓取/标签），请等其完成再启动",
+                data: null,
+              },
+              { status: 409 }
+            );
+          }
+          void runShortDramaTagSync({})
+            .then((result) => {
+              console.log(
+                `后台标签回填结束: 打标 ${result.dramas_tagged}、失败标签 ${result.failed_tags}`
+              );
+            })
+            .catch((error) => {
+              console.error("后台标签回填异常:", error);
+            });
+          return NextResponse.json({
+            code: 200,
+            message: "ok",
+            data: { started: true },
+          });
+        }
         const result = await runShortDramaTagSync({});
         return NextResponse.json(
           { code: result.failed ? 502 : 200, message: result.error || "ok", data: result },
