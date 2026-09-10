@@ -234,14 +234,69 @@ interface CollectedMetadata {
   sourceMissing: ShortDramaMetadataPiece[];
 }
 
-// 元数据三件套按类型识别（分享夹里命名不固定，未必叫 封面/简介/metadata.json，
-// 且排在剧集合集文件列表的最底部），优先精确命名，缺失时退回同类型任意文件
-const IMAGE_FILE_PATTERN = /\.(jpe?g|png|webp|gif|avif|bmp)$/i;
-const TEXT_FILE_PATTERN = /\.(txt|md)$/i;
-const JSON_FILE_PATTERN = /\.json$/i;
+// ---------------------------------------------------------------------------
+// 元数据三件套识别：按文件大类找（kkpan 转存来源多、命名五花八门——
+// 实测同一分享夹里文本有 简介.txt/详细简介.txt/视频信息.txt，图片有
+// 封面.jpg/0.jpg/海报.jpg/剧名.jpg），扩展名放宽 + 大类内部按优先级
+// 挑选。以下 pick 系列均为纯函数，供单测。
+// ---------------------------------------------------------------------------
+
+// 图片：常见位图全收（含 jfif/heic 等手机/截图形态）
+const IMAGE_FILE_PATTERN = /\.(jpe?g|png|webp|gif|avif|bmp|jfif|tiff?|heic|heif)$/i;
+// 文本：文本类简介/信息文件；刻意排除 srt/ass 等字幕（不是简介）
+const TEXT_FILE_PATTERN = /\.(txt|md|nfo|log|text)$/i;
+const JSON_FILE_PATTERN = /\.jsonc?$/i;
 // 剧集视频文件：源缺失核实的「目录确有其物」证据（无视频时列目录结果
 // 不可信——可能整目录被过滤/空目录，不能据此判定三件套缺失）
 const VIDEO_FILE_PATTERN = /\.(mp4|mkv|ts|flv|mov|m4v)$/i;
+
+/** 封面挑选：关键词命名（封面/海报等）> 剧名同名图 > 体积最大（海报通常
+ *  比缩略图/截图大）> 原始顺序。绝不因为命名不固定而放弃图片类。 */
+export function pickCoverFile<T extends { name: string; size?: number | null }>(
+  images: T[],
+  dramaTitle?: string
+): T | undefined {
+  if (images.length === 0) return undefined;
+  const keyword = images.find((item) => /封面|海报|cover|poster/i.test(item.name));
+  if (keyword) return keyword;
+  if (dramaTitle) {
+    const baseTitle = dramaTitle.replace(/\s+/g, "").slice(0, 12);
+    const byTitle =
+      baseTitle.length >= 4 &&
+      images.find((item) => item.name.replace(/\.[^.]+$/, "").replace(/\s+/g, "").includes(baseTitle));
+    if (byTitle) return byTitle;
+  }
+  return [...images].sort((a, b) => (b.size ?? 0) - (a.size ?? 0))[0] ?? images[0];
+}
+
+/** 简介挑选：简介/剧情类命名优先，「详细简介」优于「简介」，技术参数类
+ *  （视频信息等）垫底；同级取体积最大（更长更完整）。 */
+export function pickIntroFile<T extends { name: string; size?: number | null }>(
+  texts: T[]
+): T | undefined {
+  if (texts.length === 0) return undefined;
+  const score = (name: string): number => {
+    const lower = name.toLowerCase();
+    if (/详细简介|详细介绍|详细剧情/.test(lower)) return 3;
+    if (/简介|intro|synopsis|剧情|故事梗概/.test(lower)) return 2;
+    if (/视频信息|参数|规格|技术/.test(lower)) return 0;
+    return 1;
+  };
+  return [...texts].sort(
+    (a, b) => score(b.name) - score(a.name) || (b.size ?? 0) - (a.size ?? 0)
+  )[0];
+}
+
+/** metadata JSON 挑选：精确 metadata.json 优先，其次任意 json（同为 json
+ *  时取体积最大，内容更可能完整）。 */
+export function pickMetadataFile<T extends { name: string; size?: number | null }>(
+  jsons: T[]
+): T | undefined {
+  if (jsons.length === 0) return undefined;
+  const exact = jsons.find((item) => item.name.toLowerCase() === "metadata.json");
+  if (exact) return exact;
+  return [...jsons].sort((a, b) => (b.size ?? 0) - (a.size ?? 0))[0] ?? jsons[0];
+}
 
 /**
  * 列 kkpan 分享树并抓取三件套（封面→R2 镜像、简介、metadata JSON）。
@@ -274,13 +329,9 @@ export async function collectMetadata(
     if (textFiles.length === 0) sourceMissing.push("intro");
     if (jsonFiles.length === 0) sourceMissing.push("metadata");
   }
-  const cover =
-    imageFiles.find((item) => /封面|cover|poster/i.test(item.name)) ?? imageFiles[0];
-  const metadataFile =
-    jsonFiles.find((item) => item.name.toLowerCase() === "metadata.json") ??
-    jsonFiles[0];
-  const introFile =
-    textFiles.find((item) => /简介|intro/i.test(item.name)) ?? textFiles[0];
+  const cover = pickCoverFile(imageFiles, drama.title);
+  const metadataFile = pickMetadataFile(jsonFiles);
+  const introFile = pickIntroFile(textFiles);
 
   if (cover) {
     const download = await fetchQuarkDownloadUrlForFile(cookie, cover.fid);
