@@ -156,10 +156,13 @@ async function initializeDatabase(db: Db) {
   try {
     // 短剧库：归一化剧名键唯一去重（同一部剧跨 kkpan 行变化身份稳定）；
     // 前台按状态/时间查询。旧流水线时代的索引（enabled/tags/五态）清理掉。
+    // 唯一索引必须 partial：迁移期库里还留着无 content_key 的旧 duanjugou
+    // 文档，全量唯一索引会让它们全部等价于 (source, null) 而撞 E11000，
+    // 应用启动建索引失败 → 整站 503（2026-09-10 部署实测踩坑）
     const shortDramasCollection = db.collection(COLLECTIONS.SHORT_DRAMAS);
     await shortDramasCollection.createIndex(
       { source: 1, content_key: 1 },
-      { unique: true }
+      { unique: true, partialFilterExpression: { content_key: { $exists: true } } }
     );
     await shortDramasCollection.createIndex({ title: 1 });
     // 前台列表主查询（首页/公开接口）：published 等值在前，前台排序
