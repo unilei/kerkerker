@@ -1,5 +1,6 @@
 import {
   fetchQuarkDownloadUrlForFile,
+  listQuarkOwnDirectory,
   QuarkApiClient,
   QuarkCredentialInvalidError,
 } from "@/lib/quark/quark-api-client";
@@ -19,20 +20,34 @@ import {
 } from "@/lib/short-drama-db";
 import type { ShortDrama, ShortDramaMetadataPiece } from "@/types/short-drama";
 import { withWatchdog } from "@/lib/short-drama/watchdog";
+import {
+  buildContentKey,
+  formatDisplayTitle,
+  stripPlatformSuffix,
+  stripSerialPrefix,
+} from "@/lib/short-drama/kkpan-sync";
 
 /**
- * 元数据同步：对已发布且有 kkpan 分享链接的短剧，列 kkpan 的分享目录
- * （分享树）、下载封面/简介/metadata 三件套（封面 R2 镜像），回填本地库。
- * 不做转存、不建分享——条目与链接都来自 kkpan。
+ * 元数据同步：对已发布且缺三件套的短剧，从 kkpan 转存账号的夸克网盘
+ * 目录采集封面/简介/metadata（封面 R2 镜像），回填本地库。不做转存、
+ * 不建分享。
  *
- * 每条流程：inspectShareTree 列分享目录（三件套按类型识别，排在剧集
- * 视频列表最底部）→ 下载：
+ * 每条流程：
+ *   1. 在「网盘剧集目录索引」（本轮启动时构建：根目录 + 根下各文件夹的
+ *      子目录，按归一化剧名键 → 目录 fid）里找该剧的转存目录；
+ *   2. 命中 → file/sort 列目录（分页证据防提前终止）按大类挑三件套，
+ *      file/download 下载（真实 fid，旧流水线验证过的路径）；
+ *   3. 未命中 → 退回分享树（inspectShareTree）按分享 fid 下载（命名空间
+ *      可能不匹配，尽力而为）；
  *   - 图片：签名直链下载 → R2 镜像（未配置 R2 时跳过，封面留空）
  *   - JSON：下载并 JSON 解析（坏 JSON 原文丢弃）
  *   - 文本：下载按 UTF-8 解码
- * 下载用 kkpan 同账号的凭证 cookie（分享树里的 fid 即 kkpan 网盘内
- * 文件的真实 fid）。目录里确认源目录本就没有的部件写入 missing_at_source
- * 终结标记并豁免出队（转存目录是静态副本，重试无果）。
+ * 目录里确认本就没有对应大类文件的部件写入 missing_at_source 终结标记
+ * 并豁免出队（转存目录是静态副本，重试无果）。
+ *
+ * 预检：启动时抽查前 10 部剧在网盘索引中的命中数，0/10 直接致命失败——
+ * 大概率粘贴的 cookie 不是 kkpan 转存账号（实测踩坑：账号不对时 20 部
+ * 全部 file not found 静默失败）。网络类失败（fetch failed）带退避重试。
  */
 
 const SYNC_LEASE_TTL_MS = 60 * 60 * 1_000;
@@ -117,7 +132,7 @@ export async function runShortDramaMetadataSync(
     if (!cookie) {
       stats.stopped_reason = "credential_invalid";
       stats.failed_fatal = true;
-      stats.error = "未配置夸克凭证，请先在后台粘贴 kkpan 同账号的 cookie";
+      stats.error = "未配置夸克凭证，请先在后台粘贴 kkpan 转存账号的 cookie";
       return stats;
     }
 
@@ -128,6 +143,29 @@ export async function runShortDramaMetadataSync(
       stats.stopped_reason = "nothing_to_do";
       return stats;
     }
+
+    // 网盘剧集目录索引：归一化剧名键 → 转存目录 fid（根目录 + 根下各
+    // 文件夹的子目录，每轮构建一次）
+    reportMetadataSyncProgress("metadata_sync", "正在构建网盘剧集目录索引…");
+    const folderIndex = await buildDriveDramaFolderIndex(cookie);
+    // 预检：抽查前 10 部的命中数，0/10 直接致命失败——大概率是 cookie
+    // 不是 kkpan 转存账号（账号不对时每部都 file not found，20 部静默
+    // 全败的实测教训），或者该网盘里根本没有剧集目录
+    const probe = queue.slice(0, 10);
+    const probeHits = probe.filter((drama) => folderIndex.has(drama.content_key)).length;
+    if (probe.length > 0 && probeHits === 0) {
+      stats.stopped_reason = "credential_invalid";
+      stats.failed_fatal = true;
+      stats.error =
+        folderIndex.size === 0
+          ? `网盘目录索引为空（未发现任何剧集文件夹）——当前粘贴的夸克 cookie 大概率不是 kkpan 转存账号，请用 kkpan 转存所用账号的 cookie 重新保存凭证后重试`
+          : `抽查前 ${probe.length} 部剧在网盘中均未找到对应转存目录（0/${probe.length} 命中，索引 ${folderIndex.size} 项）——当前粘贴的夸克 cookie 大概率不是 kkpan 转存账号，请用 kkpan 转存所用账号的 cookie 重新保存凭证后重试`;
+      console.warn("短剧元数据同步预检失败:", stats.error);
+      return stats;
+    }
+    console.log(
+      `短剧元数据同步：网盘目录索引 ${folderIndex.size} 个，抽查命中 ${probeHits}/${probe.length}`
+    );
 
     // 新一轮任务强制写第一条进度（清掉上一轮遗留的节流时间戳）
     lastProgressWriteAt = 0;
@@ -156,7 +194,9 @@ export async function runShortDramaMetadataSync(
       );
       try {
         const meta = await withWatchdog(
-          collectMetadata(cookie, drama.share_url, drama)
+          collectMetadata(cookie, drama.share_url, drama, {
+            folderFid: folderIndex.get(drama.content_key)?.fid,
+          })
         );
         if (meta.coverUrl) {
           stats.covers_mirrored += 1;
@@ -299,26 +339,104 @@ export function pickMetadataFile<T extends { name: string; size?: number | null 
 }
 
 /**
- * 列 kkpan 分享树并抓取三件套（封面→R2 镜像、简介、metadata JSON）。
- * 分享树里的 fid 即 kkpan 网盘内文件的真实 fid，用 kkpan 同账号凭证
- * 的 file/download 直链下载。
+ * 网络类失败的退避重试：夸克 API 在高频串行调用下偶发 fetch failed
+ * （实测约一半请求），凭证失效类错误不重试直接上抛。
+ */
+async function withRetry<T>(
+  label: string,
+  action: () => Promise<T>,
+  attempts = 3
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      if (error instanceof QuarkCredentialInvalidError) throw error;
+      lastError = error;
+      if (attempt < attempts - 1) {
+        await sleep(1_000 * 2 ** attempt);
+      }
+    }
+  }
+  console.warn(`短剧元数据同步: ${label} 重试 ${attempts} 次仍失败`);
+  throw lastError;
+}
+
+interface DramaFolderIndexEntry {
+  fid: string;
+  name: string;
+}
+
+/**
+ * 构建「网盘剧集目录索引」：归一化剧名键 → 转存目录 fid。
+ * 扫根目录 + 根下各文件夹的子目录（两层），目录名用与条目同步相同的
+ * 清洗链归一，保证「178.剧名（40集）AI短剧」与库内 content_key 对得上。
+ * 返回的 index 恒非空对象（可能 0 命中，由调用方预检判断）。
+ */
+export async function buildDriveDramaFolderIndex(
+  cookie: string
+): Promise<Map<string, DramaFolderIndexEntry>> {
+  const index = new Map<string, DramaFolderIndexEntry>();
+  const put = (name: string, fid: string) => {
+    const key = buildContentKey(formatDisplayTitle(stripSerialPrefix(stripPlatformSuffix(name))));
+    if (key && !index.has(key)) index.set(key, { fid, name });
+  };
+  const roots = await withRetry("列网盘根目录", () => listQuarkOwnDirectory(cookie, "0"));
+  for (const root of roots.filter((item) => item.dir)) {
+    let children: Awaited<ReturnType<typeof listQuarkOwnDirectory>>;
+    try {
+      children = await withRetry(`列目录「${root.name}」`, () =>
+        listQuarkOwnDirectory(cookie, root.fid)
+      );
+    } catch (error) {
+      console.warn(
+        `短剧元数据同步: 列目录「${root.name}」失败，跳过该层:`,
+        error instanceof Error ? error.message : String(error)
+      );
+      continue;
+    }
+    for (const child of children.filter((item) => item.dir)) {
+      put(child.name, child.fid);
+    }
+  }
+  return index;
+}
+
+/**
+ * 采集三件套（封面→R2 镜像、简介、metadata JSON）。
+ * 优先走网盘目录（真实 fid，file/download 稳定可用）；目录索引未命中时
+ * 退回分享树（分享 fid 的命名空间不一定能用于 file/download，尽力而为）。
  */
 export async function collectMetadata(
   cookie: string,
   shareUrl: string,
-  drama: ShortDrama
+  drama: ShortDrama,
+  options: { folderFid?: string } = {}
 ): Promise<CollectedMetadata> {
   const result: CollectedMetadata = { coverMirrored: false, sourceMissing: [] };
 
-  const client = new QuarkApiClient({ cookie });
-  const items = await client.inspectShareTree(shareUrl);
-  const files = items.filter((item) => !item.dir);
+  let files: Array<{ name: string; fid: string; size?: number | null; dir: boolean }>;
+  if (options.folderFid) {
+    const items = await withRetry("列剧集目录", () =>
+      listQuarkOwnDirectory(cookie, options.folderFid!)
+    );
+    files = items;
+  } else {
+    console.warn(
+      `短剧元数据 id=${drama.id}: 网盘索引未命中「${drama.title}」，退回分享树链路`
+    );
+    const client = new QuarkApiClient({ cookie });
+    const items = await withRetry("列分享树", () => client.inspectShareTree(shareUrl));
+    files = items;
+  }
+  files = files.filter((item) => !item.dir);
   const imageFiles = files.filter((item) => IMAGE_FILE_PATTERN.test(item.name));
   const textFiles = files.filter((item) => TEXT_FILE_PATTERN.test(item.name));
   const jsonFiles = files.filter((item) => JSON_FILE_PATTERN.test(item.name));
   if (imageFiles.length === 0 && textFiles.length === 0 && jsonFiles.length === 0) {
     console.warn(
-      `短剧元数据 id=${drama.id}: 转存目录 ${items.length} 项未见图片/文本/JSON 元数据文件（可能仍在校验/过滤中）`
+      `短剧元数据 id=${drama.id}: 转存目录 ${files.length} 项未见图片/文本/JSON 元数据文件（可能仍在校验/过滤中）`
     );
   }
   // 源缺失核实：目录里能看到剧集视频（说明列目录确有其物、不是空响应），
@@ -334,7 +452,9 @@ export async function collectMetadata(
   const introFile = pickIntroFile(textFiles);
 
   if (cover) {
-    const download = await fetchQuarkDownloadUrlForFile(cookie, cover.fid);
+    const download = await withRetry("封面直链", () =>
+      fetchQuarkDownloadUrlForFile(cookie, cover.fid)
+    );
     const bytes = await fetchSignedDownloadBytes(download.downloadUrl, undefined, cookie);
     if (bytes) {
       const ext = extensionForContentType(bytes.contentType, cover.name);
@@ -363,7 +483,9 @@ export async function collectMetadata(
   }
 
   if (metadataFile) {
-    const download = await fetchQuarkDownloadUrlForFile(cookie, metadataFile.fid);
+    const download = await withRetry("metadata 直链", () =>
+      fetchQuarkDownloadUrlForFile(cookie, metadataFile.fid)
+    );
     const bytes = await fetchSignedDownloadBytes(
       download.downloadUrl,
       1024 * 1024,
@@ -383,7 +505,9 @@ export async function collectMetadata(
   }
 
   if (introFile) {
-    const download = await fetchQuarkDownloadUrlForFile(cookie, introFile.fid);
+    const download = await withRetry("简介直链", () =>
+      fetchQuarkDownloadUrlForFile(cookie, introFile.fid)
+    );
     const bytes = await fetchSignedDownloadBytes(download.downloadUrl, 1024 * 1024, cookie);
     if (bytes) {
       result.intro = new TextDecoder("utf-8", { fatal: false })
