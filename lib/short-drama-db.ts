@@ -22,10 +22,10 @@ import type {
 /**
  * 短剧库（MongoDB short_dramas）
  *
- * 抓取器按 (source, source_article_id) 幂等 upsert；转存流水线更新
- * 状态机与元数据关联；前台按标签/搜索/时间分页读取（只读公开）。
- * 公开读路径（详情/标签聚合/相关推荐/sitemap）走进程内 TTL 缓存，
- * 由下方写函数 bumpShortDramaCache() 即时失效。
+ * 条目同步按 (source, content_key) 幂等 upsert（content_key 是归一化
+ * 剧名键，跨 kkpan 行变化稳定）；元数据同步回填三件套并维护
+ * missing_at_source 终结标记；前台按标签/搜索/时间分页读取（只读公开，
+ * 走进程内 TTL 缓存，由写函数 bumpShortDramaCache() 即时失效）。
  */
 
 const sdCacheKey = (suffix: string) => `${SHORT_DRAMA_CACHE_PREFIX}${suffix}`;
@@ -47,83 +47,103 @@ function boundedText(value: unknown, max = 500): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max);
 }
 
-/** 抓取入库：按源内文章 ID 幂等 upsert；已存在时只补抓取期可变字段 */
-export async function upsertShortDramaFromScrape(
-  input: ShortDramaUpsertInput
-): Promise<{ drama: ShortDrama; created: boolean }> {
+/**
+ * 条目同步批量入库：按 (source, content_key) 幂等 upsert。
+ * 可变字段放 $set（kkpan 侧标题/链接/集数/日期变化即回写）；首建字段放
+ * $setOnInsert——description 兜底简介只写一次，避免覆盖元数据同步采集的
+ * 简介.txt。返回新建/更新计数与新建文档的 id（供搜索引擎推送）。
+ */
+export async function upsertShortDramasFromKkpan(
+  inputs: ShortDramaUpsertInput[]
+): Promise<{ created: number; updated: number; createdIds: string[] }> {
+  if (inputs.length === 0) return { created: 0, updated: 0, createdIds: [] };
   const db = await getDatabase();
   const collection = db.collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS);
   const now = new Date().toISOString();
 
-  const title = boundedText(input.title);
-  if (!title) throw new RangeError("短剧标题不能为空");
-  if (!/^\d{1,10}$/.test(input.source_article_id)) {
-    throw new RangeError("source_article_id 必须是数字");
+  const ops = inputs.map((input) => {
+    const shareUrl = boundedText(input.share_url, 2000);
+    if (!input.title) throw new RangeError("短剧标题不能为空");
+    if (!input.content_key) throw new RangeError("content_key 不能为空");
+    if (!shareUrl) throw new RangeError("share_url 不能为空");
+    return {
+      updateOne: {
+        filter: { source: input.source, content_key: input.content_key },
+        update: {
+          $set: {
+            updated_at: now,
+            source_article_id: input.source_article_id,
+            title: input.title,
+            ...(Number.isInteger(input.episode_count)
+              ? { episode_count: input.episode_count }
+              : {}),
+            share_url: shareUrl,
+            ...(input.share_code ? { share_code: boundedText(input.share_code, 32) } : {}),
+            ...(input.publish_date
+              ? { publish_date: boundedText(input.publish_date, 10) }
+              : {}),
+            status: "published" as ShortDramaStatus,
+          },
+          $setOnInsert: {
+            tags: [] as string[],
+            ...(input.description ? { intro: input.description.slice(0, MAX_TEXT_LENGTH) } : {}),
+            created_at: now,
+          },
+        },
+        upsert: true,
+      },
+    };
+  });
+
+  // bulkWrite 单批上限 100k ops，按 500 一批控制内存与失败重放粒度；
+  // upsertedIds 的键是批内 op 下标，映射回全局 inputs 下标取新建文档 id
+  const createdIds: string[] = [];
+  for (let i = 0; i < ops.length; i += 500) {
+    const result = await collection.bulkWrite(ops.slice(i, i + 500), { ordered: false });
+    for (const [opIndex, insertedId] of Object.entries(result.upsertedIds)) {
+      const input = inputs[i + Number(opIndex)];
+      if (input) createdIds.push(insertedId.toString());
+    }
   }
-
-  // 重抓刷新字段放 $set（源站可能补标签/换链接/补发布日期）；初始创建
-  // 字段放 $setOnInsert。同一路径绝不能同时出现在 $set 与 $setOnInsert
-  // （Mongo 报 ConflictingUpdateOperators）。
-  const providedTags = (input.tags || [])
-    .map((tag) => boundedText(tag, 40))
-    .filter(Boolean);
-  const result = await collection.findOneAndUpdate(
-    {
-      source: input.source,
-      source_article_id: input.source_article_id,
-    },
-    {
-      $set: {
-        updated_at: now,
-        ...(providedTags.length > 0 ? { tags: providedTags } : {}),
-        ...(input.source_share_url
-          ? { source_share_url: boundedText(input.source_share_url, 2000) }
-          : {}),
-        // publish_date/episode_count 放 $set：重抓即可回填早期缺失的日期
-        //（解析增强后），值与源站一致时写回无副作用
-        ...(input.publish_date
-          ? { publish_date: boundedText(input.publish_date, 10) }
-          : {}),
-        ...(Number.isInteger(input.episode_count)
-          ? { episode_count: input.episode_count }
-          : {}),
-      },
-      $setOnInsert: {
-        source: input.source,
-        source_article_id: input.source_article_id,
-        title,
-        ...(providedTags.length === 0 ? { tags: [] } : {}),
-        status: "discovered" as ShortDramaStatus,
-        transfer_attempts: 0,
-        enabled: true,
-        created_at: now,
-      },
-    },
-    { upsert: true, returnDocument: "after" }
-  );
-
-  const doc = result as ShortDramaDoc | null;
-  if (!doc) throw new Error("短剧 upsert 失败");
   bumpShortDramaCache();
-  return { drama: toView(doc), created: !doc.created_at || doc.created_at === now };
+  return { created: createdIds.length, updated: inputs.length - createdIds.length, createdIds };
+}
+
+/** 全量同步收尾：content_key 不在 kkpan 当前集合里的条目置 offline（复活语义：
+ *  条目重新出现在 kkpan 时下轮全量同步会自动置回 published） */
+export async function markShortDramasOfflineNotInContentKeys(
+  contentKeys: Set<string>
+): Promise<number> {
+  const db = await getDatabase();
+  const result = await db
+    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
+    .updateMany(
+      {
+        source: "kkpan" as ShortDrama["source"],
+        status: "published" as ShortDramaStatus,
+        content_key: { $nin: Array.from(contentKeys) },
+      },
+      { $set: { status: "offline", updated_at: new Date().toISOString() } }
+    );
+  if (result.modifiedCount > 0) bumpShortDramaCache();
+  return result.modifiedCount;
 }
 
 export interface ShortDramaListQuery {
   tag?: string;
   search?: string;
   status?: ShortDramaStatus;
-  /** 多状态筛选（后台待转存列表：discovered + failed） */
-  statuses?: ShortDramaStatus[];
-  /** 只列已有自有网盘链接的（/all 分页页与 sitemap 同口径，保证总页数一致） */
-  hasOwnShareUrl?: boolean;
+  /** 后台账账等管理视图：不做 published 默认过滤（可再叠加 status 精筛） */
+  includeOffline?: boolean;
+  /** 只列已有分享链接的（/all 分页页与 sitemap 同口径，保证总页数一致） */
+  hasShareUrl?: boolean;
   page?: number;
   limit?: number;
   /**
-   * 覆写默认 100 的 limit 钳制：仅供后台范围转存批量取整个页码区间的
-   * 队列用；公开接口保持 100 上限，防止外部一次拉走大半张表
+   * 覆写默认 100 的 limit 钳制：仅供后台批量取数用；公开接口保持 100
+   * 上限，防止外部一次拉走大半张表
    */
   limitMax?: number;
-  includeDisabled?: boolean;
   /**
    * keyset 游标（首页「加载更多」）：取该锚点之后的条目，page 被忽略、
    * skip=0。游标翻页不受后台写入造成的排序漂移影响。
@@ -148,10 +168,9 @@ export async function listShortDramas(
   const [docs, total] = await Promise.all([
     collection
       .find(filter)
-      // 前台排序（全序）：源站发布日期新的在前；无日期的退回 created_at
-      // （抓取按源站发布顺序遍历，顺序语义一致）；_id 兜底保证同键文档
-      // 顺序稳定，是 keyset 分页不重不漏的前提（source_article_id 是字
-      // 符串，字典序与数值序不一致，不能作排序键）
+      // 前台排序（全序）：最近更新在前；无日期的退回 created_at（条目同步
+      // 首见顺序）；_id 兜底保证同键文档顺序稳定，是 keyset 分页不重不漏
+      // 的前提
       .sort({
         publish_date: -1,
         created_at: -1,
@@ -169,13 +188,13 @@ export async function listShortDramas(
 /** countDocuments 用：剔除 keyset 条件，游标翻页时总数与跳页口径一致 */
 function baseFilterOf(query: ShortDramaListQuery): Record<string, unknown> {
   const filter: Record<string, unknown> = {};
-  if (!query.includeDisabled) filter.enabled = true;
-  if (query.status) filter.status = query.status;
-  else if (query.statuses && query.statuses.length > 0) {
-    filter.status = { $in: query.statuses };
+  if (query.includeOffline) {
+    if (query.status) filter.status = query.status;
+  } else {
+    filter.status = query.status ?? ("published" as ShortDramaStatus);
   }
   if (query.tag) filter.tags = boundedText(query.tag, 40);
-  if (query.hasOwnShareUrl) filter.own_share_url = { $type: "string" };
+  if (query.hasShareUrl) filter.share_url = { $type: "string" };
   if (query.search) {
     const search = boundedText(query.search, 100);
     if (search) filter.title = { $regex: escapeRegex(search), $options: "i" };
@@ -183,7 +202,7 @@ function baseFilterOf(query: ShortDramaListQuery): Record<string, unknown> {
   return filter;
 }
 
-/** Sitemap 用：可公开访问（done 且已有自有网盘链接）的短剧，只投影 id 与时间字段 */
+/** Sitemap 用：可公开访问（published 且已有分享链接）的短剧，只投影 id 与时间字段 */
 export async function listShortDramaSitemapEntries(
   limit = 50_000
 ): Promise<{ id: string; updated_at?: string; publish_date?: string }[]> {
@@ -196,9 +215,8 @@ export async function listShortDramaSitemapEntries(
         .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
         .find(
           {
-            enabled: true,
-            status: "done" as ShortDramaStatus,
-            own_share_url: { $type: "string" },
+            status: "published" as ShortDramaStatus,
+            share_url: { $type: "string" },
           },
           { projection: { _id: 1, updated_at: 1, publish_date: 1 } }
         )
@@ -222,116 +240,13 @@ export async function getShortDramaById(id: string): Promise<ShortDrama | null> 
       const db = await getDatabase();
       const doc = await db
         .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
-        .findOne({ _id: new ObjectId(id), enabled: true });
+        .findOne({ _id: new ObjectId(id), status: "published" as ShortDramaStatus });
       return doc ? toView(doc) : null;
     }
   );
 }
 
-/** 按源 + 源文章 ID 精确查找（抓取续跑判重用） */
-export async function getShortDramaBySourceArticleId(
-  source: ShortDrama["source"],
-  sourceArticleId: string
-): Promise<ShortDrama | null> {
-  if (!/^\d{1,10}$/.test(sourceArticleId)) return null;
-  const db = await getDatabase();
-  const doc = await db
-    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
-    .findOne({ source, source_article_id: sourceArticleId });
-  return doc ? toView(doc) : null;
-}
-
-/** 给短剧追加标签（已存在则跳过）；命中返回 true */
-export async function appendShortDramaTags(
-  source: ShortDrama["source"],
-  sourceArticleId: string,
-  tags: string[]
-): Promise<boolean> {
-  if (!/^\d{1,10}$/.test(sourceArticleId) || tags.length === 0) return false;
-  const db = await getDatabase();
-  const result = await db
-    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
-    .updateOne(
-      { source, source_article_id: sourceArticleId },
-      {
-        $addToSet: { tags: { $each: tags.map((tag) => boundedText(tag, 40)).filter(Boolean) } },
-        $set: { updated_at: new Date().toISOString() },
-      }
-    );
-  if (result.modifiedCount === 1) bumpShortDramaCache();
-  return result.modifiedCount === 1;
-}
-
-/** 转存流水线取下一批待转存短剧（discovered 优先，failed 可重试；最新发布的先转） */
-export async function takeShortDramasForTransfer(
-  limit: number,
-  maxAttempts: number
-): Promise<ShortDrama[]> {
-  const db = await getDatabase();
-  const docs = await db
-    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
-    .find({
-      enabled: true,
-      source_share_url: { $type: "string" },
-      $and: [
-        { status: { $ne: "done" } },
-        { status: { $ne: "invalid" } },
-        { status: { $ne: "transferring" } },
-        { $or: [{ status: "discovered" }, { transfer_attempts: { $lt: maxAttempts } }] },
-      ],
-    })
-    // 容量有限时优先转存最新发布的（与前台展示顺序一致）
-    .sort({ publish_date: -1, created_at: -1 })
-    .limit(Math.min(Math.max(limit, 1), 50))
-    .toArray();
-  return docs.map(toView);
-}
-
-/**
- * 元数据补齐队列过滤器（纯函数，供单测）：
- * 任一三件套「值缺失（字段不存在或为 null）且未被 missing_at_source 豁免」
- * 的 done 条目。{ field: null } 同时匹配字段缺失与显式 null；
- * { metadata_missing…: { $ne } } 对数组字段=「不含该元素」，对缺省字段恒真。
- */
-const METADATA_PIECE_FIELDS: ReadonlyArray<readonly [ShortDramaMetadataPiece, string]> = [
-  ["cover", "cover_url"],
-  ["intro", "intro"],
-  ["metadata", "metadata"],
-];
-
-export function shortDramaMetadataBackfillFilter(): Record<string, unknown> {
-  return {
-    enabled: true,
-    status: "done",
-    own_folder_fid: { $type: "string" },
-    $or: METADATA_PIECE_FIELDS.map(([piece, field]) => ({
-      $and: [
-        { $or: [{ [field]: { $exists: false } }, { [field]: null }] },
-        { missing_at_source: { $ne: piece } },
-      ],
-    })),
-  };
-}
-
-/**
- * 元数据补齐取队列：转存完成但缺三件套（且未被源缺失标记豁免）的条目，
- * 与前台同序（发布日期新→旧）——先补首屏可见的，补完立刻能在首页看到。
- * limit 上限放宽到 5 万：后台全量补齐要一次取完整个队列。
- */
-export async function takeShortDramasForMetadataBackfill(
-  limit: number
-): Promise<ShortDrama[]> {
-  const db = await getDatabase();
-  const docs = await db
-    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
-    .find(shortDramaMetadataBackfillFilter() as Filter<ShortDramaDoc>)
-    .sort({ publish_date: -1, created_at: -1, updated_at: -1 })
-    .limit(Math.min(Math.max(limit, 1), 50_000))
-    .toArray();
-  return docs.map(toView);
-}
-
-/** 按后台勾选的 id 精确取短剧（单个/批量转存与删除用；含 disabled） */
+/** 按后台勾选的 id 精确取短剧（管理操作用；含 offline） */
 export async function getShortDramasByIds(ids: string[]): Promise<ShortDrama[]> {
   const objectIds = ids
     .filter((id) => typeof id === "string" && ObjectId.isValid(id) && /^[0-9a-f]{24}$/i.test(id))
@@ -341,14 +256,14 @@ export async function getShortDramasByIds(ids: string[]): Promise<ShortDrama[]> 
   const docs = await db
     .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
     .find({ _id: { $in: objectIds } })
-    // 转存按发布日期新→旧执行，与待转存列表顺序一致
-    .sort({ publish_date: -1, created_at: -1 })
+    // 管理操作按最近更新新→旧执行
+    .sort({ updated_at: -1 })
     .limit(200)
     .toArray();
   return docs.map(toView);
 }
 
-/** 删除本地短剧记录（网盘文件由调用方先行清理）；返回实际删除的文档 */
+/** 删除本地短剧记录（纯本地操作，不涉及网盘）；返回实际删除的文档 */
 export async function deleteShortDramasByIds(
   ids: string[]
 ): Promise<{ deleted: ShortDrama[]; invalidIds: string[] }> {
@@ -379,33 +294,77 @@ export async function deleteShortDramasByIds(
   return { deleted: docs.map(toView), invalidIds };
 }
 
-export interface ShortDramaTransferPatch {
-  status?: ShortDramaStatus;
-  transfer_error?: string;
-  clear_transfer_error?: boolean;
-  own_share_url?: string;
-  own_share_code?: string;
-  own_folder_fid?: string;
+/** 清空短剧库（purge-legacy 一次性动作；sync_state 不动，tag_groups 保留） */
+export async function purgeAllShortDramas(): Promise<number> {
+  const db = await getDatabase();
+  const result = await db
+    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
+    .deleteMany({});
+  bumpShortDramaCache();
+  return result.deletedCount;
+}
+
+/**
+ * 元数据同步队列过滤器（纯函数，供单测）：
+ * published 且有分享链接，任一三件套「值缺失（字段不存在或为 null）
+ * 且未被 missing_at_source 豁免」。{ field: null } 同时匹配字段缺失与
+ * 显式 null；{ metadata_missing…: { $ne } } 对数组字段=「不含该元素」，
+ * 对缺省字段恒真。
+ */
+const METADATA_PIECE_FIELDS: ReadonlyArray<readonly [ShortDramaMetadataPiece, string]> = [
+  ["cover", "cover_url"],
+  ["intro", "intro"],
+  ["metadata", "metadata"],
+];
+
+export function shortDramaMetadataSyncFilter(): Record<string, unknown> {
+  return {
+    status: "published" as ShortDramaStatus,
+    share_url: { $type: "string" },
+    $or: METADATA_PIECE_FIELDS.map(([piece, field]) => ({
+      $and: [
+        { $or: [{ [field]: { $exists: false } }, { [field]: null }] },
+        { missing_at_source: { $ne: piece } },
+      ],
+    })),
+  };
+}
+
+/**
+ * 元数据同步取队列：已发布但缺三件套（且未被源缺失标记豁免）的条目，
+ * 与前台同序（最近更新新→旧）——先补首屏可见的，补完立刻能在首页看到。
+ * limit 上限放宽到 5 万：后台全量补齐要一次取完整个队列。
+ */
+export async function takeShortDramasForMetadataSync(
+  limit: number
+): Promise<ShortDrama[]> {
+  const db = await getDatabase();
+  const docs = await db
+    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
+    .find(shortDramaMetadataSyncFilter() as Filter<ShortDramaDoc>)
+    .sort({ publish_date: -1, created_at: -1, updated_at: -1 })
+    .limit(Math.min(Math.max(limit, 1), 50_000))
+    .toArray();
+  return docs.map(toView);
+}
+
+export interface ShortDramaMetadataPatch {
   cover_url?: string;
   intro?: string;
   metadata?: Record<string, unknown>;
-  /** 把这些部件标记为「源分享夹里确认不存在」（补齐队列随后豁免它们） */
+  /** 把这些部件标记为「kkpan 转存目录里确认不存在」（同步队列随后豁免） */
   missing_at_source?: ShortDramaMetadataPiece[];
 }
 
-/** 转存结果回写（状态机推进） */
-export async function patchShortDramaTransfer(
+/** 元数据同步结果回写 */
+export async function patchShortDramaMetadata(
   id: string,
-  patch: ShortDramaTransferPatch
+  patch: ShortDramaMetadataPatch
 ): Promise<void> {
   if (!ObjectId.isValid(id)) throw new RangeError("短剧 ID 无效");
   const db = await getDatabase();
   const now = new Date().toISOString();
   const set: Record<string, unknown> = { updated_at: now };
-  if (patch.status) set.status = patch.status;
-  if (patch.own_share_url) set.own_share_url = boundedText(patch.own_share_url, 2000);
-  if (patch.own_share_code) set.own_share_code = boundedText(patch.own_share_code, 32);
-  if (patch.own_folder_fid) set.own_folder_fid = boundedText(patch.own_folder_fid, 128);
   if (patch.cover_url) set.cover_url = boundedText(patch.cover_url, 2000);
   if (patch.intro) set.intro = patch.intro.slice(0, MAX_TEXT_LENGTH);
   if (patch.metadata) set.metadata = patch.metadata;
@@ -416,20 +375,14 @@ export async function patchShortDramaTransfer(
     );
     set.missing_at_source = pieces;
   }
-  if (patch.transfer_error) set.transfer_error = patch.transfer_error.slice(0, 2000);
-  if (patch.clear_transfer_error) set.transfer_error = null;
 
-  const inc: Record<string, number> = {};
-  if (patch.status === "transferring") inc.transfer_attempts = 1;
-
-  await db.collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS).updateOne(
-    { _id: new ObjectId(id) },
-    inc.transfer_attempts > 0 ? { $set: set, $inc: inc } : { $set: set }
-  );
+  await db
+    .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
+    .updateOne({ _id: new ObjectId(id) }, { $set: set });
   bumpShortDramaCache();
 }
 
-/** 标签聚合计数（前台标签云） */
+/** 标签聚合计数（前台标签云，published 口径） */
 export async function listShortDramaTagCounts(
   limit = 100
 ): Promise<Array<{ tag: string; count: number }>> {
@@ -437,7 +390,7 @@ export async function listShortDramaTagCounts(
   const rows = await db
     .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
     .aggregate<{ _id: string; count: number }>([
-      { $match: { enabled: true } },
+      { $match: { status: "published" as ShortDramaStatus } },
       { $unwind: "$tags" },
       { $group: { _id: "$tags", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
@@ -448,9 +401,8 @@ export async function listShortDramaTagCounts(
 }
 
 /**
- * 标签聚合计数——公开口径（done 且已有自有网盘链接，与详情页可达性一致）。
- * 标签落地页/目录/sitemap 都以这里的数据为准；listShortDramaTagCounts
- * 是「全部 enabled」口径，仅菜单展示用。
+ * 标签聚合计数——公开口径（published 且已有分享链接，与详情页可达性
+ * 一致），带进程内缓存。标签落地页/目录/sitemap 都以这里的数据为准。
  */
 export async function listPublicShortDramaTagCounts(
   limit = 200
@@ -465,9 +417,8 @@ export async function listPublicShortDramaTagCounts(
         .aggregate<{ _id: string; count: number }>([
           {
             $match: {
-              enabled: true,
-              status: "done" as ShortDramaStatus,
-              own_share_url: { $type: "string" },
+              status: "published" as ShortDramaStatus,
+              share_url: { $type: "string" },
             },
           },
           { $unwind: "$tags" },
@@ -498,9 +449,8 @@ export async function listRelatedShortDramas(
         .collection<ShortDramaDoc>(COLLECTIONS.SHORT_DRAMAS)
         .find({
           _id: { $ne: new ObjectId(id) },
-          enabled: true,
-          status: "done" as ShortDramaStatus,
-          own_share_url: { $type: "string" },
+          status: "published" as ShortDramaStatus,
+          share_url: { $type: "string" },
           tags: { $in: normalizedTags },
         })
         .sort({ publish_date: -1, created_at: -1 })
@@ -528,11 +478,8 @@ export async function getShortDramaStats(): Promise<ShortDramaStats> {
       .toArray(),
   ]);
   const by_status: Record<ShortDramaStatus, number> = {
-    discovered: 0,
-    transferring: 0,
-    done: 0,
-    failed: 0,
-    invalid: 0,
+    published: 0,
+    offline: 0,
   };
   for (const row of byStatus) {
     if (row._id in by_status) by_status[row._id] = row.count;
@@ -568,37 +515,59 @@ export async function updateShortDramaSyncState(
     );
 }
 
-/**
- * 任务租约：防同类任务并发跑批（内存多实例由 expires_at 兜底）。
- * 抓取与转存各持一把独立租约（running_scrape / running_transfer），
- * 两类任务可并行；同任务（scrape/scrape、transfer/transfer，含删除
- * 与元数据补齐复用 transfer 租约）仍互斥。
- */
-const LEASE_SLOT_BY_TASK: Record<"scrape" | "transfer", "running_scrape" | "running_transfer"> = {
-  scrape: "running_scrape",
-  transfer: "running_transfer",
-};
+/** 清库后复位同步进度（水位/统计清零；tag_groups 与租约结构保留） */
+export async function resetShortDramaSyncProgress(): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  // 复位是把字段置 null（sync_state 文档的字段允许 null），不能用泛型
+  // ShortDramaSyncState 约束（其可选字段类型不含 null）
+  await db
+    .collection(COLLECTIONS.SHORT_DRAMA_SYNC_STATE)
+    .updateOne(
+      { id: 1 },
+      {
+        $set: {
+          last_entries_sync_at: null,
+          last_entries_sync_stats: null,
+          last_metadata_sync_at: null,
+          last_metadata_sync_stats: null,
+          updated_at: now,
+        },
+        $setOnInsert: { id: 1 },
+      },
+      { upsert: true }
+    );
+}
 
-export async function tryAcquireShortDramaLease(
-  task: "scrape" | "transfer",
-  ttlMs: number
-): Promise<boolean> {
+// ---------------------------------------------------------------------------
+// 元数据同步任务租约（单槽 running_sync，防长任务并发跑批；内存多实例
+// 由 expires_at 兜底）。条目同步是快速同步请求，不使用租约。
+// ---------------------------------------------------------------------------
+
+const SYNC_LEASE_SLOT = "running_sync" as const;
+const SYNC_LEASE_TASK = "metadata-sync" as const;
+
+export async function tryAcquireShortDramaSyncLease(ttlMs: number): Promise<boolean> {
   const db = await getDatabase();
   const now = new Date().toISOString();
   const nowMs = Date.now();
-  const slot = LEASE_SLOT_BY_TASK[task];
   const collection = db.collection<ShortDramaSyncState>(
     COLLECTIONS.SHORT_DRAMA_SYNC_STATE
   );
 
-  // 过期租约直接清除（本槽位）；旧版单槽 running 一并清掉（迁移）
-  const staleFilter: Record<string, unknown> = {
-    id: SYNC_STATE_ID,
-    [`${slot}.expires_at`]: { $lte: now },
-  };
+  // 过期租约直接清除；旧版双槽（running_scrape/running_transfer）与更旧
+  // 的单槽 running 一并清掉（迁移）
   await collection.updateOne(
-    staleFilter,
-    { $set: { [slot]: null, running: null, updated_at: now } }
+    { id: SYNC_STATE_ID, [`${SYNC_LEASE_SLOT}.expires_at`]: { $lte: now } },
+    {
+      $set: {
+        [SYNC_LEASE_SLOT]: null,
+        running: null,
+        running_scrape: null,
+        running_transfer: null,
+        updated_at: now,
+      },
+    }
   );
   await collection.updateOne(
     { id: SYNC_STATE_ID, running: { $ne: null } },
@@ -607,11 +576,11 @@ export async function tryAcquireShortDramaLease(
 
   try {
     const result = await collection.updateOne(
-      { id: SYNC_STATE_ID, [slot]: null },
+      { id: SYNC_STATE_ID, [SYNC_LEASE_SLOT]: null },
       {
         $set: {
-          [slot]: {
-            task,
+          [SYNC_LEASE_SLOT]: {
+            task: SYNC_LEASE_TASK,
             started_at: now,
             expires_at: new Date(nowMs + ttlMs).toISOString(),
           },
@@ -623,8 +592,8 @@ export async function tryAcquireShortDramaLease(
     );
     return result.upsertedCount === 1 || result.modifiedCount === 1;
   } catch (error) {
-    // 租约被未过期同类任务持有时 filter 不命中，upsert 会撞 id 唯一索引：
-    // 这里的语义等价于「已有同类任务在运行」，不能向上抛 500
+    // 租约被未过期任务持有时 filter 不命中，upsert 会撞 id 唯一索引：
+    // 这里的语义等价于「已有任务在运行」，不能向上抛 500
     if (
       typeof error === "object" &&
       error !== null &&
@@ -636,88 +605,63 @@ export async function tryAcquireShortDramaLease(
   }
 }
 
-export async function releaseShortDramaLease(
-  task: "scrape" | "transfer"
-): Promise<void> {
+export async function releaseShortDramaSyncLease(): Promise<void> {
   const db = await getDatabase();
-  const slot = LEASE_SLOT_BY_TASK[task];
   await db
     .collection<ShortDramaSyncState>(COLLECTIONS.SHORT_DRAMA_SYNC_STATE)
     .updateOne(
-      { id: SYNC_STATE_ID, [`${slot}.task`]: task },
-      { $set: { [slot]: null, updated_at: new Date().toISOString() } }
+      { id: SYNC_STATE_ID, [`${SYNC_LEASE_SLOT}.task`]: SYNC_LEASE_TASK },
+      { $set: { [SYNC_LEASE_SLOT]: null, updated_at: new Date().toISOString() } }
     );
 }
 
 /**
  * 请求取消任务：只在租约上置 cancel_requested 标记，任务循环在下一部剧
- * 的检查点（tryAcquire 之后的每轮开头）看到后停止取新任务。
- * 当前正在处理的这部剧会跑完（转存不可半途中断，中断会留脏数据）。
+ * 的检查点看到后停止取新任务。当前正在处理的这部剧会跑完（采集不可
+ * 半途中断）。
  */
-export async function requestShortDramaTaskCancel(
-  task: "scrape" | "transfer"
-): Promise<boolean> {
+export async function requestShortDramaSyncCancel(): Promise<boolean> {
   const db = await getDatabase();
   const now = new Date().toISOString();
-  const slot = LEASE_SLOT_BY_TASK[task];
   const result = await db
     .collection<ShortDramaSyncState>(COLLECTIONS.SHORT_DRAMA_SYNC_STATE)
     .updateOne(
       {
         id: SYNC_STATE_ID,
-        [`${slot}.task`]: task,
-        [`${slot}.expires_at`]: { $gt: now },
+        [`${SYNC_LEASE_SLOT}.task`]: SYNC_LEASE_TASK,
+        [`${SYNC_LEASE_SLOT}.expires_at`]: { $gt: now },
       },
-      { $set: { [`${slot}.cancel_requested`]: true, updated_at: now } }
+      { $set: { [`${SYNC_LEASE_SLOT}.cancel_requested`]: true, updated_at: now } }
     );
   return result.modifiedCount === 1;
 }
 
 /** 读取并清除取消标记（任务循环检查点调用：读到即返回 true 并复位） */
-export async function consumeShortDramaTaskCancel(
-  task: "scrape" | "transfer"
-): Promise<boolean> {
+export async function consumeShortDramaSyncCancel(): Promise<boolean> {
   const db = await getDatabase();
   const now = new Date().toISOString();
-  const slot = LEASE_SLOT_BY_TASK[task];
   const result = await db
     .collection<ShortDramaSyncState>(COLLECTIONS.SHORT_DRAMA_SYNC_STATE)
     .updateOne(
-      { id: SYNC_STATE_ID, [`${slot}.cancel_requested`]: true },
-      { $set: { [`${slot}.cancel_requested`]: false, updated_at: now } }
+      { id: SYNC_STATE_ID, [`${SYNC_LEASE_SLOT}.cancel_requested`]: true },
+      { $set: { [`${SYNC_LEASE_SLOT}.cancel_requested`]: false, updated_at: now } }
     );
   return result.modifiedCount === 1;
 }
 
 /**
- * 清理残留任务状态（进程重启后租约/进度无人认领时）：
- * 清空租约槽位，并把卡在 transferring 超过安全时长的剧复位为 discovered。
+ * 清理残留任务状态（进程重启后租约/进度无人认领时）：清空租约槽位。
  * 返回是否清理了租约。
  */
-export async function clearStaleShortDramaLease(
-  task: "scrape" | "transfer"
-): Promise<boolean> {
+export async function clearStaleShortDramaSyncLease(): Promise<boolean> {
   const db = await getDatabase();
   const now = new Date().toISOString();
-  const slot = LEASE_SLOT_BY_TASK[task];
   const result = await db
     .collection<ShortDramaSyncState>(COLLECTIONS.SHORT_DRAMA_SYNC_STATE)
     .updateOne(
-      { id: SYNC_STATE_ID, [slot]: { $ne: null } },
-      { $set: { [slot]: null, updated_at: now } }
+      { id: SYNC_STATE_ID, [SYNC_LEASE_SLOT]: { $ne: null } },
+      { $set: { [SYNC_LEASE_SLOT]: null, updated_at: now } }
     );
-  if (task === "transfer" && result.modifiedCount === 1) {
-    // 卡在 transferring 的剧复位（10 分钟安全时长，防误伤真在跑的条目）
-    await db
-      .collection(COLLECTIONS.SHORT_DRAMAS)
-      .updateMany(
-        {
-          status: "transferring",
-          updated_at: { $lt: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
-        },
-        { $set: { status: "discovered", updated_at: now } }
-      );
-  }
   return result.modifiedCount === 1;
 }
 
@@ -728,13 +672,11 @@ export interface ShortDramaLeaseProgress {
   total?: number;
 }
 
-/** 读取指定任务未过期的租约；无 / 已过期返回 null（route 预检与展示共用） */
-export function activeShortDramaLease(
-  state: ShortDramaSyncState | null,
-  task: "scrape" | "transfer"
+/** 读取未过期的元数据同步租约；无 / 已过期返回 null（route 预检与展示共用） */
+export function activeShortDramaSyncLease(
+  state: ShortDramaSyncState | null
 ): ShortDramaTaskLease | null {
-  const slot = LEASE_SLOT_BY_TASK[task];
-  const lease = state?.[slot] ?? null;
+  const lease = state?.[SYNC_LEASE_SLOT] ?? null;
   return lease && new Date(lease.expires_at).getTime() > Date.now() ? lease : null;
 }
 
@@ -742,25 +684,23 @@ export function activeShortDramaLease(
  * 写入当前租约的实时进度（管理端轮询 GET 读取展示）。
  * progress 写失败、租约已不存在（任务刚释放）时静默跳过——进度是
  * 尽力而为的展示数据，不能影响主任务。
- * options.extendTtlMs 同时顺延租约 TTL，防止长任务（全量回填可超
+ * options.extendTtlMs 同时顺延租约 TTL，防止长任务（全量补齐可超
  * 30 分钟）执行中途租约过期被并发任务抢锁。
  */
-export async function updateShortDramaLeaseProgress(
-  task: "scrape" | "transfer",
+export async function updateShortDramaSyncLeaseProgress(
   progress: ShortDramaLeaseProgress,
   options?: { extendTtlMs?: number }
 ): Promise<void> {
   try {
     const db = await getDatabase();
     const now = new Date().toISOString();
-    const slot = LEASE_SLOT_BY_TASK[task];
     await db
       .collection<ShortDramaSyncState>(COLLECTIONS.SHORT_DRAMA_SYNC_STATE)
       .updateOne(
-        { id: SYNC_STATE_ID, [`${slot}.task`]: task },
+        { id: SYNC_STATE_ID, [`${SYNC_LEASE_SLOT}.task`]: SYNC_LEASE_TASK },
         {
           $set: {
-            [`${slot}.progress`]: {
+            [`${SYNC_LEASE_SLOT}.progress`]: {
               stage: progress.stage,
               message: progress.message.slice(0, 200),
               ...(progress.done !== undefined ? { done: progress.done } : {}),
@@ -769,7 +709,7 @@ export async function updateShortDramaLeaseProgress(
             },
             ...(options?.extendTtlMs
               ? {
-                  [`${slot}.expires_at`]: new Date(
+                  [`${SYNC_LEASE_SLOT}.expires_at`]: new Date(
                     Date.now() + options.extendTtlMs
                   ).toISOString(),
                 }
@@ -800,20 +740,4 @@ export async function getShortDramaTagGroups(): Promise<Record<string, string[]>
       tags.length > 0
   );
   return entries.length > 0 ? Object.fromEntries(entries) : null;
-}
-
-/** 持久化标签归类映射（runTagGroupSync 调用，整体覆盖） */
-export async function appendShortDramaTagGroups(
-  groups: Record<string, string[]>
-): Promise<void> {
-  const cleaned: Record<string, string[]> = {};
-  for (const [category, tags] of Object.entries(groups)) {
-    const name = category.trim();
-    const list = Array.isArray(tags)
-      ? tags.map((tag) => String(tag).trim()).filter(Boolean)
-      : [];
-    if (name && list.length > 0) cleaned[name] = list;
-  }
-  if (Object.keys(cleaned).length === 0) return;
-  await updateShortDramaSyncState({ tag_groups: cleaned });
 }

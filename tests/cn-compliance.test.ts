@@ -4,7 +4,7 @@
  * 覆盖：
  *   - 前台不出现"在线播放/立即播放"等播放类文案（合规红线：信息展示 + 网盘导航）
  *   - 影视站旧路由不回归（本分支是纯短剧站）
- *   - 短剧流水线关键约束守门（水位语义 / 转存串行 / 凭证加密 / 失效分类）
+ *   - 短剧同步链路关键约束守门（条目水位 / 元数据串行 / 凭证加密 / 公开口径）
  *
  * 运行：npx tsx tests/cn-compliance.test.ts
  */
@@ -96,27 +96,27 @@ test("P1-5: layout metadata 改为信息检索口径", () => {
 // 短剧流水线关键约束守门
 // ---------------------------------------------------------------------------
 
-test("守门: 抓取水位只由成功处理条目推进（KKPAN 水位教训）", () => {
-  const source = readFile("lib/short-drama/scrape.ts");
+test("守门: 条目同步全量收敛下线 + 按剧折叠（KKPAN 水位教训）", () => {
+  const source = readFile("lib/short-drama/kkpan-sync.ts");
   assert.ok(
-    source.includes("last_article_watermark"),
-    "增量抓取应使用文章 ID 水位（last_article_watermark）"
+    source.includes("KKPAN_API_BASE_URL"),
+    "条目同步应走 kkpan 公开 API（KKPAN_API_BASE_URL）"
   );
   assert.ok(
-    source.includes("processedIds"),
-    "水位只统计成功处理的条目（processedIds），预算中断不推高水位"
+    source.includes("markShortDramasOfflineNotInContentKeys"),
+    "全量同步必须收敛下线（markShortDramasOfflineNotInContentKeys），kkpan 已消失的条目不能留在前台"
   );
   assert.ok(
-    source.includes("items_skipped_existing"),
-    "回填重跑应跳过已有源链接的条目（items_skipped_existing）"
+    source.includes("collapseByContentKey"),
+    "同剧多行必须按剧名键折叠（collapseByContentKey），防重复卡片"
   );
 });
 
-test("守门: 转存串行防风控 + 凭证失效中止整轮", () => {
-  const source = readFile("lib/short-drama/transfer.ts");
+test("守门: 元数据同步逐条间隔防风控 + 凭证失效中止整轮", () => {
+  const source = readFile("lib/short-drama/metadata-sync.ts");
   assert.ok(
     source.includes("SAVE_DELAY_MS"),
-    "转存之间必须有固定间隔（SAVE_DELAY_MS）防风控"
+    "元数据采集之间必须有固定间隔（SAVE_DELAY_MS）防风控"
   );
   assert.ok(
     source.includes("QuarkCredentialInvalidError"),
@@ -165,20 +165,20 @@ test("守门: 凭证 API 只回掩码不回明文", () => {
   );
 });
 
-test("守门: 短剧前台只展示转存完成且使用自己的分享链接", () => {
+test("守门: 短剧前台只展示已发布条目且使用 kkpan 分享链接", () => {
   const listRoute = readFile("app/api/short-dramas/route.ts");
   assert.ok(
-    listRoute.includes('status: "done"'),
-    "公开列表只回转存完成（done）的条目"
+    !listRoute.includes("source_share_url") && !listRoute.includes("own_share_url"),
+    "公开列表不得暴露源站链接等内部字段"
   );
   const detailRoute = readFile("app/api/short-dramas/[id]/route.ts");
   assert.ok(
-    detailRoute.includes('status !== "done"') &&
-      detailRoute.includes("own_share_url"),
-    "公开详情必须校验 done 状态并回自己的分享链接（own_share_url）"
+    detailRoute.includes("share_url") && !detailRoute.includes("source_share_url"),
+    "公开详情必须回 kkpan 分享链接（share_url）且不得暴露源站原始链接"
   );
+  const detailPage = readFile("app/drama/[id]/page.tsx");
   assert.ok(
-    !detailRoute.includes("source_share_url"),
-    "公开详情不得暴露源站原始链接（source_share_url）"
+    detailPage.includes("share_url"),
+    "详情页公开门槛与展示使用 kkpan 分享链接（share_url）"
   );
 });

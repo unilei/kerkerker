@@ -154,25 +154,33 @@ async function initializeDatabase(db: Db) {
   if (globalForMongo.initialized) return;
 
   try {
-    // 短剧库：源内文章 ID 唯一去重；前台按状态/标签/时间查询。
+    // 短剧库：归一化剧名键唯一去重（同一部剧跨 kkpan 行变化身份稳定）；
+    // 前台按状态/时间查询。旧流水线时代的索引（enabled/tags/五态）清理掉。
     const shortDramasCollection = db.collection(COLLECTIONS.SHORT_DRAMAS);
     await shortDramasCollection.createIndex(
-      { source: 1, source_article_id: 1 },
+      { source: 1, content_key: 1 },
       { unique: true }
     );
-    await shortDramasCollection.createIndex({ status: 1, updated_at: -1 });
-    await shortDramasCollection.createIndex({ tags: 1, updated_at: -1 });
     await shortDramasCollection.createIndex({ title: 1 });
-    await shortDramasCollection.createIndex({ enabled: 1, updated_at: -1 });
-    // 前台列表主查询（首页/公开接口）：done+enabled 等值在前，前台排序
+    // 前台列表主查询（首页/公开接口）：published 等值在前，前台排序
     // 键（publish_date, created_at, _id）全序在后，keyset 翻页同走此索引
     await shortDramasCollection.createIndex({
       status: 1,
-      enabled: 1,
       publish_date: -1,
       created_at: -1,
       _id: -1,
     });
+    for (const legacyIndex of [
+      "status_1_updated_at_-1",
+      "tags_1_updated_at_-1",
+      "enabled_1_updated_at_-1",
+      "status_1_enabled_1_publish_date_-1_created_at_-1__id_-1",
+      "source_1_source_article_id_1",
+    ]) {
+      await shortDramasCollection
+        .dropIndex(legacyIndex)
+        .catch(() => undefined);
+    }
 
     // 短剧同步状态（单例）
     const shortDramaSyncStateCollection = db.collection(

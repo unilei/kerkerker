@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { withWatchdog } from "@/lib/short-drama/transfer";
+import { withWatchdog } from "@/lib/short-drama/watchdog";
 
 test("withWatchdog: 底层 promise 正常落地则透传结果", async () => {
   const result = await withWatchdog(Promise.resolve("ok"), 1_000);

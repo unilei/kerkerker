@@ -449,15 +449,15 @@ export async function POST(request: NextRequest) {
       }
       const dramaId = typeof body.dramaId === "string" ? body.dramaId : "";
       const drama = await getShortDramaById(dramaId);
-      if (!drama || !drama.source_share_url) {
+      if (!drama || !drama.share_url) {
         return NextResponse.json(
-          { code: 404, message: "短剧不存在或没有可转存的源站链接", data: null },
+          { code: 404, message: "短剧不存在或没有可转存的分享链接", data: null },
           { status: 404 }
         );
       }
-      // 用访客自己的凭证转存：存进访客网盘的默认「来自：分享」目录
+      // 用访客自己的凭证转存 kkpan 的分享链接：存进访客网盘的默认「来自：分享」目录
       const client = new QuarkApiClient({ cookie });
-      const result = await client.transferOnly(drama.source_share_url);
+      const result = await client.transferOnly(drama.share_url);
       // 记住转存产物 fid，试播（action=files）据此定位访客网盘里的剧集文件
       await rememberUserSavedItems(
         sessionId,

@@ -1,20 +1,15 @@
 import tagGroupsSnapshot from "@/lib/short-drama/data/duanjugou-tag-groups.json";
-import { scrapeTagGroups } from "@/lib/short-drama/duanjugou";
-import { appendShortDramaTagGroups } from "@/lib/short-drama-db";
 
 /**
- * 源站标签归类映射
+ * 源站标签归类映射（历史 duanjugou 数据，前台标签菜单仍按此分组渲染）
  *
- * duanjugou 的标签体系是「搜索词」——详情页本身没有标签字段，
- * 标签来自首页标签云（五组彩色分类：女性/男性/场景职业/爽设/单字）。
- * tag-sync 任务逐词搜索命中入库后，前台标签云需要按源站的分组结构
- * 归类渲染，因此维护 标签 → 分组 的映射。
- *
- * 三层数据源（优先级从高到低）：
- *   1. Mongo 持久化映射（runTagGroupSync 写入；源站改版后可刷新）
- *   2. 运行时抓取源站首页（scrapeTagGroups）
- *   3. 构建期快照（data/duanjugou-tag-groups.json，2026-08-31 抓取，
- *      72 标签/5 组；网络不可达时兜底）
+ * duanjugou 的标签体系是「搜索词」——标签来自其首页标签云（五组彩色
+ * 分类：女性/男性/场景职业/爽设/单字）。抓取流水线已废弃，kkpan 没有
+ * 标签体系；本映射只剩两层数据源（优先级从高到低）：
+ *   1. Mongo 持久化映射（short_drama_sync_state.tag_groups，历史数据）
+ *   2. 构建期快照（data/duanjugou-tag-groups.json，2026-08-31 抓取，
+ *      72 标签/5 组）
+ * 新条目无标签（恒空数组），标签云/落地页自然为空，UI 结构暂时保留。
  */
 
 export interface DramaTagGroup {
@@ -66,8 +61,9 @@ export function flattenTagGroups(
 
 /**
  * 解析归类映射：优先用持久化快照（DB），缺组时回退构建期快照。
- * 纯函数、无网络请求；DB 里没有映射（首次部署/未跑过同步）时
- * 直接用构建期快照，保证前台始终有完整分组。
+ * 纯函数、无网络请求；DB 里没有映射（首次部署/历史数据为空）时
+ * 直接用构建期快照，保证前台始终有完整分组。live 参数保留兼容
+ * （调用方传 null）。
  */
 export function mergeTagGroupSources(
   stored: Record<string, string[]> | null,
@@ -82,50 +78,4 @@ export function mergeTagGroupSources(
     }
   }
   return groupsFromMapping(merged);
-}
-
-export interface TagGroupSyncResult {
-  categories: number;
-  tags_total: number;
-  source: "live" | "snapshot";
-  failed: boolean;
-  error?: string;
-}
-
-/**
- * 从源站抓取最新标签分组并持久化到 DB（short_drama_sync_state.tag_groups）。
- * 抓取失败时回退写构建期快照（保证 DB 里始终有可用映射），不视为致命失败。
- */
-export async function runTagGroupSync(): Promise<TagGroupSyncResult> {
-  let mapping: Record<string, string[]>;
-  let source: "live" | "snapshot";
-  try {
-    const live = await scrapeTagGroups();
-    mapping = {};
-    for (const group of live.groups) {
-      mapping[group.category] = group.tags;
-    }
-    source = "live";
-  } catch (error) {
-    mapping = { ...SNAPSHOT };
-    source = "snapshot";
-    await appendShortDramaTagGroups(mapping);
-    return {
-      categories: Object.keys(mapping).length,
-      tags_total: Object.values(mapping).reduce((sum, tags) => sum + tags.length, 0),
-      source,
-      failed: false,
-      error: `源站抓取失败，已回退构建期快照: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    };
-  }
-
-  await appendShortDramaTagGroups(mapping);
-  return {
-    categories: Object.keys(mapping).length,
-    tags_total: Object.values(mapping).reduce((sum, tags) => sum + tags.length, 0),
-    source,
-    failed: false,
-  };
 }

@@ -45,7 +45,7 @@ async function resolveTag(rawTag: string): Promise<string | null> {
 
 async function loadTagData(tag: string, page: number) {
   const [result, counts] = await Promise.all([
-    listShortDramas({ status: "done", tag, page, limit: PAGE_SIZE }),
+    listShortDramas({ tag, page, limit: PAGE_SIZE }),
     listPublicShortDramaTagCounts(300),
   ]);
   return { result, count: counts.find((row) => row.tag === tag)?.count ?? 0 };

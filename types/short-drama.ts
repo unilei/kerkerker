@@ -1,119 +1,104 @@
 /**
  * 短剧类型定义
  *
- * 短剧数据来自外部资源源（duanjugou 等）抓取，转存到自己夸克网盘后
- * 与分享夹内的 封面.jpg / metadata.json / 简介.txt 关联。
+ * 短剧条目与夸克分享链接来自 kkpan（同站长的另一个项目）的公开 API，
+ * 通过条目同步写入本地；封面/简介/metadata 三件套由元数据同步从 kkpan
+ * 的分享目录采集（封面 R2 镜像）。
  * 前台为信息展示 + 网盘导航（合规分支：无在线播放）。
  */
 
 // 支持的短剧资源源
-export type ShortDramaSource = "duanjugou";
+export type ShortDramaSource = "kkpan";
 
 // 元数据三件套（封面/简介/metadata.json）的部件标识
 export type ShortDramaMetadataPiece = "cover" | "intro" | "metadata";
 
-// 短剧转存状态机：discovered → transferring → done / failed
+// 短剧状态机（两态）：条目同步负责在两态间流转
 export type ShortDramaStatus =
-  | "discovered" // 已抓取入库，等待转存
-  | "transferring" // 转存进行中
-  | "done" // 转存完成，元数据已关联
-  | "failed" // 转存失败（可重试）
-  | "invalid"; // 链接失效 / 无可转存内容
+  | "published" // kkpan 侧公开可见，详情页可访问
+  | "offline"; // kkpan 侧已消失/下架，前台不可见（保留记录便于复活）
 
-export const SHORT_DRAMA_STATUSES: ShortDramaStatus[] = [
-  "discovered",
-  "transferring",
-  "done",
-  "failed",
-  "invalid",
-];
+export const SHORT_DRAMA_STATUSES: ShortDramaStatus[] = ["published", "offline"];
 
-// 前台展示 / API 返回（驼峰字段）
+// 前台展示 / API 返回（蛇形字段，与 collection 文档一致）
 export interface ShortDrama {
   id: string;
   source: ShortDramaSource;
-  /** 源站文章数字 ID，如 81864（同一源内唯一） */
+  /** kkpan resources.id（信息性字段；文档身份键是 content_key） */
   source_article_id: string;
-  /** 清洗后的剧名（去掉集数后缀与 AI短剧 标记） */
+  /**
+   * 归一化剧名键（剥平台标签/集数/空白后小写），同一部剧跨同步轮次、
+   * 跨 kkpan 行变化的稳定身份；upsert 按 (source, content_key) 匹配
+   */
+  content_key: string;
+  /** 清洗后的剧名（剥网盘平台标签与集数后缀） */
   title: string;
-  /** 集数（从标题解析，如（98 集）→ 98） */
+  /** 集数（从标题的 更新至N集/全N集/（N集） 解析） */
   episode_count?: number;
-  /** 标签（源站标签体系：女性/男性/场景职业/爽设/单字等） */
+  /** 标签（kkpan 无标签体系，恒空数组；字段与前台标签 UI 暂时保留） */
   tags: string[];
-  /** 源站夸克分享链接（原始发现来源） */
-  source_share_url?: string;
-  /** 转存后自己网盘的分享链接（对外展示用） */
-  own_share_url?: string;
-  own_share_code?: string;
-  /** 自己网盘里转存目录的 fid（元数据读取入口） */
-  own_folder_fid?: string;
-  /** 封面图（R2 镜像后的稳定 URL） */
+  /** kkpan 自有夸克分享链接（对外展示 + 访客扫码转存 + 元数据采集入口） */
+  share_url: string;
+  /** 分享提取码（kkpan 转存任务的 share_code） */
+  share_code?: string;
+  /** 封面图（R2 镜像后的稳定 URL；未采集到时前台占位图兜底） */
   cover_url?: string;
-  /** 简介（源站分享夹内 简介.txt） */
+  /** 简介（分享夹内 简介.txt；条目同步时以 kkpan description 兜底首填） */
   intro?: string;
-  /** 元数据（源站分享夹内 metadata.json 原样保留） */
+  /** 元数据（分享夹内 metadata.json 原样保留） */
   metadata?: Record<string, unknown>;
   /**
-   * 已确认源分享夹里不存在的三件套部件（补齐任务列目录核实后写入）。
-   * 写入后该部件不再进入补齐队列——源站本就没有，重试永远无果。
-   * 转存流水线不写此字段（转存瞬间缺失可能是索引延迟，应留给补齐重试）。
+   * 已确认 kkpan 转存目录里不存在的三件套部件（元数据同步列目录核实后
+   * 写入）。写入后该部件不再进入元数据同步队列——源目录本就没有，
+   * 重试永远无果。目录列表异常（无视频佐证）时不写，留给下轮重试。
    */
   missing_at_source?: ShortDramaMetadataPiece[];
-  /** 源站发布日期（YYYY-MM-DD） */
+  /** 最近更新日期（取 kkpan resources.updated_at，YYYY-MM-DD；前台排序键） */
   publish_date?: string;
   status: ShortDramaStatus;
-  transfer_error?: string;
-  transfer_attempts: number;
-  enabled: boolean;
   created_at: string;
   updated_at: string;
 }
 
-// 抓取入库入参
+// 条目同步入库入参（kkpan-sync 产出）
 export interface ShortDramaUpsertInput {
   source: ShortDramaSource;
   source_article_id: string;
+  content_key: string;
   title: string;
   episode_count?: number;
-  tags?: string[];
-  source_share_url?: string;
+  share_url: string;
+  share_code?: string;
+  /** kkpan description（仅在首次创建时作为 intro 兜底，避免覆盖已采集的简介.txt） */
+  description?: string;
   publish_date?: string;
 }
 
 // 同步状态文档（short_drama_sync_state 集合，单例 id:1）
 export interface ShortDramaSyncState {
-  /** 增量抓取水位：已见过的最大源文章数字 ID（列表页按时间倒序，命中即停） */
-  last_article_watermark?: number;
-  last_scrape_at?: string;
-  last_scrape_mode?: "backfill" | "incremental";
-  last_scrape_stats?: Record<string, unknown>;
-  /** 全量回填断点页：预算中断时记录，下轮 UI 启动自动从该页续跑；跑完全站清除 */
-  last_backfill_resume_page?: number | null;
-  last_transfer_at?: string;
-  last_transfer_stats?: Record<string, unknown>;
-  last_metadata_backfill_at?: string;
-  last_metadata_backfill_stats?: Record<string, unknown>;
-  /** 标签归类映射（组名 → 标签[]），由 runTagGroupSync 从源站刷新 */
+  last_entries_sync_at?: string;
+  last_entries_sync_stats?: Record<string, unknown>;
+  last_metadata_sync_at?: string;
+  last_metadata_sync_stats?: Record<string, unknown>;
+  /** 标签归类映射（组名 → 标签[]），历史 duanjugou 数据快照，前台标签菜单用 */
   tag_groups?: Record<string, string[]>;
-  /** 双任务租约：抓取与转存可并行、同任务互斥（Mongo 语义需要
-   *  null 而非缺省）。旧版单槽 running 字段已废弃，仅迁移期兼容读取。 */
-  running_scrape: ShortDramaTaskLease | null;
-  running_transfer: ShortDramaTaskLease | null;
+  /** 元数据同步长任务租约（单槽；条目同步是快速同步请求不需要租约） */
+  running_sync: ShortDramaTaskLease | null;
   updated_at: string;
 }
 
-/** 一把任务租约（running_scrape / running_transfer 的槽位内容） */
+/** 元数据同步任务租约（running_sync 槽位内容） */
 export interface ShortDramaTaskLease {
-  task: "scrape" | "transfer";
+  task: "metadata-sync";
   started_at: string;
   expires_at: string;
   /** 取消请求：由取消 API 置位，任务循环在检查点看到后优雅收尾 */
   cancel_requested?: boolean;
-  /** 实时进度：任务执行中由流水线定期写入，管理端轮询 GET 读取 */
+  /** 实时进度：任务执行中定期写入，管理端轮询 GET 读取 */
   progress?: {
-    /** 机器可读阶段名（scrape_page/scrape_detail/tag/transfer/backfill） */
+    /** 机器可读阶段名（metadata_sync） */
     stage: string;
-    /** 一句话进度说明（已含当前页/条目等细节，直接展示） */
+    /** 一句话进度说明（已含当前条目等细节，直接展示） */
     message: string;
     /** 可选计数型进度：total 缺省或未知时进度条退化为不定态 */
     done?: number;

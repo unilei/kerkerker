@@ -44,8 +44,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const result = await listShortDramas({
-      // 前台只展示转存完成的短剧
-      status: "done",
+      // 前台只展示已发布的短剧（db 层默认 published 口径）
       ...(tag ? { tag } : {}),
       ...(search ? { search } : {}),
       ...(after ? { after } : { page }),
@@ -86,7 +85,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** 前台不需要转存过程字段与源站原始链接 */
+/** 前台不需要内部同步字段 */
 function stripInternalFields(drama: Awaited<ReturnType<typeof listShortDramas>>["dramas"][number]) {
   return {
     id: drama.id,
@@ -96,8 +95,8 @@ function stripInternalFields(drama: Awaited<ReturnType<typeof listShortDramas>>[
     cover_url: drama.cover_url,
     intro: drama.intro,
     metadata: drama.metadata,
-    own_share_url: drama.own_share_url,
-    own_share_code: drama.own_share_code,
+    share_url: drama.share_url,
+    share_code: drama.share_code,
     publish_date: drama.publish_date,
     updated_at: drama.updated_at,
   };

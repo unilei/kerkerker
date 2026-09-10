@@ -69,23 +69,8 @@ type QuarkShareItem = {
   size?: number | null;
 };
 
-type QuarkShareLink = {
-  shareLink: string;
-  shareCode?: string;
-};
-
-type QuarkTransferAndShareResult = QuarkShareLink & {
-  savedFids: string[];
-  filteredMessage?: string | null;
-  filteredFileCount?: number | null;
-};
-
 type QuarkDeleteOwnedFilesResult = {
   deletedFileIds: string[];
-};
-
-type QuarkTransferAndShareOptions = {
-  allowPartialFiltered?: boolean;
 };
 
 export type QuarkShareTreeItem = {
@@ -148,20 +133,6 @@ export class QuarkApiTransferError extends Error {
   }
 }
 
-export class QuarkPartialFilteredError extends Error {
-  filteredMessage: string;
-  filteredFileCount: number | null;
-  visibleItemCount: number;
-
-  constructor(message: string, filteredFileCount: number | null, visibleItemCount: number) {
-    super(message);
-    this.name = 'QuarkPartialFilteredError';
-    this.filteredMessage = message;
-    this.filteredFileCount = filteredFileCount;
-    this.visibleItemCount = visibleItemCount;
-  }
-}
-
 export function parseQuarkSizeText(text: string | number | null | undefined) {
   if (typeof text === 'number') {
     return normalizeQuarkByteCount(text);
@@ -194,41 +165,6 @@ function normalizeQuarkByteCount(value: number) {
   if (!Number.isFinite(value) || value < 0) return null;
   const rounded = Math.round(value);
   return Number.isSafeInteger(rounded) ? rounded : null;
-}
-
-function sizesMatch(actualSize: number | null, expectedSize?: number | null) {
-  if (actualSize === null || expectedSize === null || expectedSize === undefined) return true;
-  const allowedDelta = Math.max(expectedSize * 0.05, 1024 ** 3);
-  return Math.abs(actualSize - expectedSize) <= allowedDelta;
-}
-
-function normalizeQuarkOwnedFileName(value: string | null | undefined) {
-  return String(value || '')
-    .replace(/^标题[：:]\s*/u, '')
-    .replace(/\s*\[(夸克网盘|quark|网盘)\]\s*$/iu, '')
-    .replace(/\[.*?\]/g, '')
-    .replace(/【.*?】/g, '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
-}
-
-function normalizeQuarkOwnedFileMatch(value: string | null | undefined) {
-  return normalizeQuarkOwnedFileName(value).replace(/[^\p{L}\p{N}]+/gu, '');
-}
-
-export function buildQuarkOwnedFileSearchKeywords(fileName: string) {
-  const cleaned = normalizeQuarkOwnedFileName(fileName);
-  const withoutBrackets = cleaned
-    .replace(/[【】]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const compact = cleaned
-    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return [...new Set([cleaned, withoutBrackets, compact].filter(Boolean))];
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -305,13 +241,6 @@ export function extractQuarkPasscode(shareUrl: string) {
   } catch {
     return shareUrl.match(/[?&](?:pwd|passcode|code)=([^&#]+)/)?.[1] || '';
   }
-}
-
-export function appendQuarkShareCode(link: string, shareCode?: string | null) {
-  if (!shareCode) return link;
-  const url = new URL(link);
-  url.searchParams.set('pwd', shareCode);
-  return url.toString();
 }
 
 export type QuarkFilteredFileInfo = {
@@ -518,47 +447,6 @@ function getQuarkExactTreeSize(
   return total;
 }
 
-export function extractQuarkOwnedFidsFromSearch(fileName: string, payload: unknown, expectedFileSize?: number | null) {
-  const list = extractQuarkList(payload);
-  if (list.length === 0) return [];
-
-  const targets = new Set(buildQuarkOwnedFileSearchKeywords(fileName).map(normalizeQuarkOwnedFileMatch));
-  const candidates = list
-    .map((item, index) => {
-      if (!isObject(item)) return null;
-      const fid = extractPositiveString(item.fid || item.file_id);
-      if (!fid) return null;
-
-      const name = extractString(item.file_name)
-        || extractString(item.filename)
-        || extractString(item.name)
-        || extractString(item.title)
-        || '';
-      const normalizedName = normalizeQuarkOwnedFileMatch(name);
-      const normalizedPathName = normalizeQuarkOwnedFileMatch(
-        String(item.path || '').split('/').filter(Boolean).at(-1) || ''
-      );
-      const exact = targets.has(normalizedName) || targets.has(normalizedPathName);
-      const contains = [...targets].some((target) => (
-        target.length >= 4 && (normalizedName.includes(target) || target.includes(normalizedName))
-      ));
-      if (!exact && !contains) return null;
-
-      const size = parseQuarkSizeText(item.size as string | number | undefined);
-      if (!sizesMatch(size, expectedFileSize)) return null;
-
-      const isDir = item.dir === true || item.file_type === 0 || item.type === 'folder';
-      return {
-        fid,
-        score: (isDir ? 0 : 10) + index,
-      };
-    })
-    .filter((item): item is { fid: string; score: number } => !!item)
-    .sort((a, b) => a.score - b.score);
-
-  return candidates.length > 0 ? [candidates[0].fid] : [];
-}
-
 export function extractQuarkSavedFids(payload: unknown) {
   const ids = new Set<string>();
   const preferredArrays = getArrayAtAnyPath(payload, [
@@ -686,17 +574,8 @@ function taskIdFrom(payload: unknown) {
   return extractFirstStringByKeys(payload, ['task_id', 'taskid']);
 }
 
-function shareIdFrom(payload: unknown) {
-  return extractFirstStringByKeys(payload, ['share_id', 'shareid']);
-}
 
-function shareUrlFrom(payload: unknown) {
-  return extractFirstStringByKeys(payload, ['share_url', 'shareUrl', 'url', 'link']);
-}
 
-function passcodeFrom(payload: unknown) {
-  return extractFirstStringByKeys(payload, ['passcode', 'pwd', 'code']);
-}
 
 function isTruthyApiStatus(value: unknown) {
   return value === true || value === 1 || value === '1' || value === 'true';
@@ -788,60 +667,6 @@ export class QuarkApiClient {
     this.fetchImpl = options.fetchImpl || fetch;
     this.sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.onStage = options.onStage;
-  }
-
-  async transferAndShare(
-    sourceShareUrl: string,
-    fileName: string,
-    expectedFileSize?: number | null,
-    options: QuarkTransferAndShareOptions = {}
-  ): Promise<QuarkTransferAndShareResult> {
-    let savedFids: string[] = [];
-    let filteredMessage: string | null = null;
-    let filteredFileCount: number | null = null;
-
-    try {
-      const token = await this.runStage('share_token', () => this.getShareToken(sourceShareUrl));
-      const detail = await this.runStage('share_detail', () => this.collectShareTree(token.pwdId, token.stoken));
-      filteredMessage = detail.filteredMessage;
-      filteredFileCount = detail.filteredFileCount ?? null;
-      const visibleItems = detail.items.filter((item) => Boolean(item.fidToken));
-      const items = this.selectShareTreeSaveFrontier(detail.items);
-      if (filteredMessage && items.length === 0) {
-        throw new Error(filteredMessage);
-      }
-      if (filteredMessage && !options.allowPartialFiltered) {
-        throw new QuarkPartialFilteredError(filteredMessage, filteredFileCount, visibleItems.length);
-      }
-      if (items.length === 0) {
-        throw new Error('夸克分享链接中未找到可转存文件');
-      }
-
-      const toPdirFid = await this.runStage('save_folder', () => this.getSaveAsFolderFid());
-      savedFids = await this.runStage('save_shared_files', () => (
-        this.saveShareTreeItemsWithToken(token, items, toPdirFid, false)
-      ));
-
-      if (savedFids.length === 0) {
-        savedFids = await this.findOwnedFileIdsByName(fileName, expectedFileSize);
-      }
-      if (savedFids.length === 0) {
-        throw new Error('夸克转存任务完成但未返回我方文件 ID');
-      }
-
-      const share = await this.createShareLinkForFids(savedFids, fileName || token.title || '夸克网盘分享');
-      return { ...share, savedFids, filteredMessage, filteredFileCount };
-    } catch (error: unknown) {
-      if (savedFids.length > 0) {
-        throw new QuarkApiTransferError(
-          (error instanceof Error ? error.message : String(error)) || '夸克分享链接生成失败',
-          savedFids,
-          filteredMessage,
-          filteredFileCount
-        );
-      }
-      throw error;
-    }
   }
 
   /**
@@ -947,59 +772,6 @@ export class QuarkApiClient {
     const interval = this.taskInterval(payload);
     const taskPayload = await this.pollTask(taskId, interval);
     return extractQuarkSavedFids(taskPayload);
-  }
-
-  async findOwnedFileIdsByName(fileName: string, expectedFileSize?: number | null) {
-    for (const keyword of buildQuarkOwnedFileSearchKeywords(fileName)) {
-      const payload = await this.get(QUARK_DRIVE_HOST, '/1/clouddrive/file/search', {
-        q: keyword,
-        _page: 1,
-        _size: 50,
-        _fetch_total: 1,
-        _sort: 'updated_at:desc',
-        _is_hl: 0,
-      });
-      const fids = extractQuarkOwnedFidsFromSearch(fileName, payload, expectedFileSize);
-      if (fids.length > 0) return fids;
-    }
-
-    return [];
-  }
-
-  async createShareLinkForFids(fids: Array<string | number>, title: string): Promise<QuarkShareLink> {
-    return this.runStage('create_share_link', async () => {
-      const fidList = [...new Set(fids.map(String).map((fid) => fid.trim()).filter(Boolean))];
-      if (fidList.length === 0) {
-        throw new Error('缺少夸克我方文件 ID，无法生成分享链接');
-      }
-
-      const payload = await this.post(QUARK_DRIVE_HOST, '/1/clouddrive/share', {
-        fid_list: fidList,
-        title,
-        url_type: 1,
-        expired_type: 1,
-      });
-      const taskId = taskIdFrom(payload);
-      const taskPayload = taskId
-        ? await this.pollTask(taskId, this.taskInterval(payload))
-        : payload;
-      const shareId = shareIdFrom(taskPayload) || shareIdFrom(payload);
-      if (!shareId) {
-        throw new Error('夸克分享任务完成但未返回 share_id');
-      }
-
-      const passwordPayload = await this.post(QUARK_DRIVE_HOST, '/1/clouddrive/share/password', { share_id: shareId });
-      const shareLink = shareUrlFrom(passwordPayload);
-      if (!shareLink) {
-        throw new Error('夸克分享接口未返回分享链接');
-      }
-
-      const shareCode = passcodeFrom(passwordPayload) || undefined;
-      return {
-        shareLink: appendQuarkShareCode(shareLink, shareCode),
-        shareCode,
-      };
-    });
   }
 
   async deleteOwnedFilesByShareLink(shareLink: string): Promise<QuarkDeleteOwnedFilesResult> {
@@ -1199,11 +971,6 @@ export class QuarkApiClient {
     }
 
     return { deletedFileIds: fidList };
-  }
-
-  /** kerkerker 扩展使用的公开轮询入口。 */
-  async pollTaskPublic(taskId: string) {
-    return this.pollTask(taskId, 1000);
   }
 
   private async pollTask(taskId: string, intervalMs: number, maxAttempts = 120, maxDurationMs?: number) {
@@ -1895,105 +1662,6 @@ export async function listQuarkOwnDirectory(
     if (evidence.total !== null && items.length >= evidence.total) break;
   }
   return items;
-}
-
-export async function createQuarkOwnDirectory(
-  cookie: string,
-  parentFid: string,
-  folderName: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<string> {
-  const payload = await new Promise<unknown>((resolve, reject) => {
-    const request = async () => {
-      const url = buildUrl(QUARK_DRIVE_HOST, '/1/clouddrive/file', {
-        pdir_fid: parentFid,
-        file_name: folderName,
-        dir_path: '',
-        dir_init_lock: false,
-      });
-      const response = await fetchImpl(url, {
-        method: 'POST',
-        body: JSON.stringify({
-          pdir_fid: parentFid,
-          file_name: folderName,
-          dir_path: '',
-          dir_init_lock: false,
-        }),
-        signal: AbortSignal.timeout(QUARK_API_REQUEST_TIMEOUT_MS),
-        headers: {
-          accept: 'application/json, text/plain, */*',
-          'content-type': 'application/json;charset=UTF-8',
-          origin: 'https://pan.quark.cn',
-          referer: QUARK_REFERER,
-          'user-agent': QUARK_USER_AGENT,
-          cookie,
-        },
-      });
-      let body: unknown = null;
-      try {
-        body = await response.json();
-      } catch {
-        body = null;
-      }
-      if (isCredentialErrorPayload(body, response.status)) {
-        reject(new QuarkCredentialInvalidError(
-          getApiMessage(body) || `夸克凭证已失效 (HTTP ${response.status})`
-        ));
-        return;
-      }
-      if (!response.ok) {
-        reject(new QuarkApiError(
-          getApiMessage(body) || `夸克目录创建失败: HTTP ${response.status}`,
-          {
-            code: isObject(body) ? (body.code as string | number | null) : null,
-            httpStatus: response.status,
-            endpoint: '/1/clouddrive/file',
-            retryable: response.status >= 500 || response.status === 429,
-          },
-        ));
-        return;
-      }
-      resolve(body);
-    };
-    request().catch(reject);
-  });
-
-  const taskId = taskIdFrom(payload);
-  if (taskId) {
-    const client = new QuarkApiClient({ cookie, fetchImpl });
-    await client.pollTaskPublic(taskId);
-  }
-  // 任务轮询不回传 fid；用数据域直接解析，兜底再按名称查一次
-  const fid = extractFirstStringByKeys(payload, ['fid', 'dir_fid']);
-  if (fid) return fid;
-  const searchPayload = await (async () => {
-    const url = buildUrl(QUARK_DRIVE_HOST, '/1/clouddrive/file/search', {
-      q: folderName,
-      _page: 1,
-      _size: 20,
-      _fetch_total: 1,
-      _is_hl: 0,
-    });
-    const response = await fetchImpl(url, {
-      signal: AbortSignal.timeout(QUARK_API_REQUEST_TIMEOUT_MS),
-      headers: {
-        accept: 'application/json, text/plain, */*',
-        referer: QUARK_REFERER,
-        'user-agent': QUARK_USER_AGENT,
-        cookie,
-      },
-    });
-    try {
-      return await response.json();
-    } catch {
-      return null;
-    }
-  })();
-  const owned = extractQuarkOwnedFidsFromSearch(folderName, searchPayload, null);
-  if (owned.length > 0) return owned[0];
-  throw new QuarkApiError('夸克目录创建成功但未能取得 fid', {
-    endpoint: '/1/clouddrive/file',
-  });
 }
 
 export async function validateQuarkCredential(

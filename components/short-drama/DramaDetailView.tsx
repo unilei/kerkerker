@@ -26,8 +26,8 @@ export interface DramaDetailViewData {
   tags: string[];
   cover_url?: string;
   intro?: string;
-  own_share_url?: string;
-  own_share_code?: string;
+  share_url?: string;
+  share_code?: string;
   publish_date?: string;
   updated_at?: string;
   metadata?: Record<string, unknown>;
@@ -158,10 +158,10 @@ export default function DramaDetailView({ drama }: { drama: DramaDetailViewData 
         </div>
 
         {/* 网盘资源 */}
-        {drama.own_share_url && (
+        {drama.share_url && (
           <ShortDramaPanSection
-            shareUrl={drama.own_share_url}
-            shareCode={drama.own_share_code}
+            shareUrl={drama.share_url}
+            shareCode={drama.share_code}
             episodeCount={drama.episode_count}
           />
         )}

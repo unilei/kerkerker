@@ -8,7 +8,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parseDramaInfo } from "@/lib/short-drama/drama-info";
-import { parseDetailPage } from "@/lib/short-drama/duanjugou";
 
 // ---------------------------------------------------------------------------
 // parseDramaInfo：metadata.json 结构化数据
@@ -137,34 +136,6 @@ test("parseDramaInfo：metadata 优先，缺字段时简介文本补齐", () => 
 test("parseDramaInfo：无任何数据返回空结构", () => {
   const info = parseDramaInfo(null, undefined);
   assert.deepEqual(info, { fields: [], actors: [] });
-});
-
-// ---------------------------------------------------------------------------
-// parseDetailPage：发布日期多源提取
-// ---------------------------------------------------------------------------
-
-test("parseDetailPage：发布日期优先 datePublished，容忍 ISO 时区后缀", () => {
-  const html = `<html><script type="application/ld+json">
-    {"datePublished":"2026-09-01T10:18:15+08:00","dateModified":"2026-09-01T11:00:00+08:00"}
-  </script><h1 class="post-title">《测试剧》（98集）</h1></html>`;
-  const detail = parseDetailPage(html, "82062");
-  assert.ok(detail);
-  assert.equal(detail.publish_date, "2026-09-01");
-});
-
-test("parseDetailPage：无 JSON-LD 时退回页面可见日期", () => {
-  const html = `<html><h1 class="post-title">《测试剧》</h1>
-    <span class="post-date">发布于 2026-08-15</span></html>`;
-  const detail = parseDetailPage(html, "82063");
-  assert.ok(detail);
-  assert.equal(detail.publish_date, "2026-08-15");
-});
-
-test("parseDetailPage：完全无日期时 publish_date 缺省", () => {
-  const html = `<html><h1 class="post-title">《测试剧》</h1></html>`;
-  const detail = parseDetailPage(html, "82064");
-  assert.ok(detail);
-  assert.equal(detail.publish_date, undefined);
 });
 
 console.log("drama-info tests done");

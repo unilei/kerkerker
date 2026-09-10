@@ -9,7 +9,7 @@ import { PageShell } from "@/components/home/PageShell";
 
 /**
  * 全部短剧分页索引（服务端组件）：/all/page/[page]，每页 ALL_PAGE_SIZE
- * 部、与 sitemap 同口径（done 且已有自有网盘链接，即 hasOwnShareUrl），
+ * 部、与 sitemap 同口径（published 且已有分享链接，即 hasShareUrl），
  * 保证 sitemap 输出的页数与实际分页一致。
  *
  * SEO：全部分页均可收录，page 1 起 self-canonical 并输出 prev/next；
@@ -28,8 +28,7 @@ function pagePath(page: number): string {
 
 async function loadAllPageData(page: number) {
   return listShortDramas({
-    status: "done",
-    hasOwnShareUrl: true,
+    hasShareUrl: true,
     page,
     limit: ALL_PAGE_SIZE,
   });

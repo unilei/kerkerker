@@ -112,9 +112,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   let initialData: HomePageInitialData | null = null;
   let initialError: string | null = null;
   try {
-    // 前台只展示转存完成的短剧（与 /api/short-dramas 同口径）
+    // 前台只展示已发布的短剧（db 层默认 published 口径）
     const listArgs = {
-      status: "done" as const,
       ...(activeTag ? { tag: activeTag } : {}),
       ...(searchKeyword ? { search: searchKeyword } : {}),
       limit: HOME_PAGE_SIZE,

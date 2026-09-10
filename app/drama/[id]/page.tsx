@@ -15,8 +15,8 @@ import DramaDetailView, {
  * 短剧详情页（服务端组件）
  *
  * 数据在服务端直出（剧名/简介/标签进入 HTML 源码，百度等不执行 JS 的
- * 引擎也能收录）；公开口径与 /api/short-dramas/:id 一致：done 且已有
- * 自有网盘链接，否则返回真 404（不再出现 HTTP 200 的软 404）。
+ * 引擎也能收录）；公开口径与 /api/short-dramas/:id 一致：published 且
+ * 已有 kkpan 分享链接，否则返回真 404（不再出现 HTTP 200 的软 404）。
  * 相关短剧同标签 SSR 直出：内链纵深 + 蜘蛛横向爬行入口。
  */
 
@@ -29,7 +29,7 @@ interface DramaDetailPageProps {
 const loadPublicDrama = cache(
   async (id: string): Promise<DramaDetailViewData | null> => {
     const drama = await getShortDramaById(id);
-    if (!drama || drama.status !== "done" || !drama.own_share_url) return null;
+    if (!drama || !drama.share_url) return null;
     return {
       id: drama.id,
       title: drama.title,
@@ -38,8 +38,8 @@ const loadPublicDrama = cache(
       cover_url: drama.cover_url,
       intro: drama.intro,
       metadata: drama.metadata,
-      own_share_url: drama.own_share_url,
-      own_share_code: drama.own_share_code,
+      share_url: drama.share_url,
+      share_code: drama.share_code,
       publish_date: drama.publish_date,
       updated_at: drama.updated_at,
     };

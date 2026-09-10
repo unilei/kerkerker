@@ -5,7 +5,7 @@ import { getShortDramaById } from "@/lib/short-drama-db";
  * 短剧公开详情（匿名可读）
  *
  * GET /api/short-dramas/:id
- * 只回转存完成（done）的条目；未完成返回 404（前端引导回列表）。
+ * 只回已发布（published）的条目；其余返回 404（前端引导回列表）。
  */
 
 interface RouteContext {
@@ -23,7 +23,7 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 
   try {
     const drama = await getShortDramaById(id);
-    if (!drama || drama.status !== "done" || !drama.own_share_url) {
+    if (!drama || !drama.share_url) {
       return NextResponse.json(
         { code: 404, message: "短剧不存在或资源尚未就绪", data: null },
         { status: 404 }
@@ -41,8 +41,8 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
         cover_url: drama.cover_url,
         intro: drama.intro,
         metadata: drama.metadata,
-        own_share_url: drama.own_share_url,
-        own_share_code: drama.own_share_code,
+        share_url: drama.share_url,
+        share_code: drama.share_code,
         publish_date: drama.publish_date,
         updated_at: drama.updated_at,
       },
