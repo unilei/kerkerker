@@ -15,6 +15,7 @@ import {
   stripSerialPrefix,
   extractEpisodeCount,
   stripEpisodeMarkers,
+  formatDisplayTitle,
   buildContentKey,
   parseKkpanResourceRow,
   collapseByContentKey,
@@ -54,9 +55,72 @@ test("stripEpisodeMarkers：剥集数与连载状态得到干净剧名", () => {
   assert.equal(stripEpisodeMarkers("凤凰于飞 完结"), "凤凰于飞");
 });
 
-test("buildContentKey：同剧不同集数/写法归一到同一键", () => {
-  assert.equal(buildContentKey("凤凰于飞 全80集"), buildContentKey("凤凰于飞 更新至12集"));
-  assert.equal(buildContentKey("凤凰于飞（80集）"), buildContentKey("凤凰于飞 全80集"));
+test("formatDisplayTitle：kkpan 实测脏标题清洗（2026-09-10 全量样本归纳）", () => {
+  // 「标题：N.」来源标注前缀 + 演员名单 + 清晰度标记
+  assert.equal(
+    formatDisplayTitle("标题：04.让你当zhui婿，没让你当zuo精啊 朱哲人＆张亚迪（1080P）"),
+    "让你当zhui婿，没让你当zuo精啊"
+  );
+  // 全角＆多层演员名单
+  assert.equal(
+    formatDisplayTitle("葬神棺，埋人就变强 都钊＆张艺霖＆索菲＆雪碧＆闫妍"),
+    "葬神棺，埋人就变强"
+  );
+  // 半角 & 演员名单
+  assert.equal(formatDisplayTitle("重开吧，陛下 李沛洋&鲁照华"), "重开吧，陛下");
+  // 拆字竖线（规避审核写法）
+  assert.equal(
+    formatDisplayTitle("少｜爷他老是犯｜jian，夫人她专治不fu！第二季"),
+    "少爷他老是犯jian，夫人她专治不fu！第二季"
+  );
+  // 下划线副标题
+  assert.equal(formatDisplayTitle("步步倾心_小侯爷专宠郡主"), "步步倾心 小侯爷专宠郡主");
+  // AI 版 / AI 真人版 尾缀
+  assert.equal(formatDisplayTitle("江先生，别太野AI版"), "江先生，别太野");
+  assert.equal(formatDisplayTitle("我刻薄不是装的AI真人版"), "我刻薄不是装的");
+  // 残缺集数形态（（集）19 / （集119））与空括号
+  assert.equal(formatDisplayTitle("萌猫重生觅真相（集）19"), "萌猫重生觅真相");
+  assert.equal(
+    formatDisplayTitle("开局人字拖我被校花培养成百变契灵（集119）"),
+    "开局人字拖我被校花培养成百变契灵"
+  );
+  assert.equal(formatDisplayTitle("归墟第一季（ ）"), "归墟第一季");
+  // 剧名内的数字与系列序号不受影响
+  assert.equal(formatDisplayTitle("沐糖1：姐姐别逃，心跳超标 朱哲人&刘入鸣"), "沐糖1：姐姐别逃，心跳超标");
+  assert.equal(formatDisplayTitle("重生83：我驭兽打猎赶山进货 孙军＆椿添（1080P）"), "重生83：我驭兽打猎赶山进货");
+});
+
+test("formatDisplayTitle：两遍清洗（标记剥除后暴露的尾缀）与集数全形态", () => {
+  // 演员名单前有 & 空格间隔
+  assert.equal(formatDisplayTitle("皑如山上雪2（88集）王晨鹏 &贾翼瑄"), "皑如山上雪2");
+  // 「（5集全）」+ 清晰度注记 + 版本修饰尾缀
+  assert.equal(
+    formatDisplayTitle("标题：极昼血祭（5集全）（1080P.高码）（铂金珍藏版）"),
+    "极昼血祭"
+  );
+  // 剧名内部含 &（双主角剧名）不误伤
+  assert.equal(
+    formatDisplayTitle("标题：10.真千金她不装了，嫡女归来炸场＆宴辞予蓝音（70集）谭圳豪＆权睿（1080P）"),
+    "真千金她不装了，嫡女归来炸场&宴辞予蓝音"
+  );
+});
+
+test("extractEpisodeCount：残缺形态（集119）/（集）19", () => {
+  assert.equal(extractEpisodeCount("开局人字拖我被校花培养成百变契灵（集119）"), 119);
+  assert.equal(extractEpisodeCount("萌猫重生觅真相（集）19"), 19);
+});
+
+test("buildContentKey：清洗后同剧不同来源写法归一到同一键", () => {
+  const keyOf = (raw: string) => buildContentKey(formatDisplayTitle(raw));
+  // 同剧：带/不带演员名单、带/不带清晰度标记、更新进度不同
+  assert.equal(
+    keyOf("一品猎罪师 潘子剑＆陈思彤（1080P）"),
+    keyOf("一品猎罪师")
+  );
+  assert.equal(
+    keyOf("凤凰于飞 全80集 [夸克网盘]"),
+    keyOf("凤凰于飞 更新至12集 [夸克网盘]")
+  );
   // 非文字数字串折叠 + 小写
   assert.equal(buildContentKey("ABC 123"), buildContentKey("abc-123"));
 });
