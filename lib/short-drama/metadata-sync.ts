@@ -203,21 +203,14 @@ export async function runShortDramaMetadataSync(
         }
         if (meta.intro) stats.intros_set += 1;
         if (meta.metadata) stats.metadata_set += 1;
-        // 按部件分类缺失去向：本轮列目录确认源里没有的（sourceMissing）
-        // 会被标记终结；仅剩源缺失的条目出队，仍有可重试缺失的留在队列
+        // 按部件分类缺失去向：封面/简介是必需部件，metadata 是可选增强
+        // （wogg 类源的分享夹本来就没有 json，源缺失属常态——已完整的
+        // 口径=封面+简介齐全，否则该指标恒为 0）
         const sourceMissing = meta.sourceMissing ?? [];
-        const anyMissing = !meta.coverUrl || !meta.intro || !meta.metadata;
-        const retriableMissing =
-          (!meta.coverUrl && !sourceMissing.includes("cover")) ||
-          (!meta.intro && !sourceMissing.includes("intro")) ||
-          (!meta.metadata && !sourceMissing.includes("metadata"));
-        if (!anyMissing) {
-          stats.resolved += 1;
-        } else if (!retriableMissing) {
-          stats.source_missing += 1;
-        } else {
-          stats.still_missing += 1;
-        }
+        const outcome = classifyMetadataOutcome(meta.coverUrl, meta.intro, sourceMissing);
+        if (outcome === "resolved") stats.resolved += 1;
+        else if (outcome === "source_missing") stats.source_missing += 1;
+        else stats.still_missing += 1;
         await patchShortDramaMetadata(drama.id, {
           ...(meta.coverUrl ? { cover_url: meta.coverUrl } : {}),
           ...(meta.intro ? { intro: meta.intro } : {}),
@@ -404,6 +397,60 @@ export async function buildDriveDramaFolderIndex(
 }
 
 /**
+ * 下载文件字节：直链获取失败、CDN 下载失败（412/限流抖动，实测服务器
+ * 上约 1/3 概率）都自动重签直链再试——直链签名与本次会话绑定，重签
+ * 即换新签名，比原链接硬重试更有效。全部失败返回 null（调用方按
+ * 「可重试缺失」留在队列下轮再试）。
+ */
+async function downloadQuarkFileBytes(
+  cookie: string,
+  fid: string,
+  label: string,
+  maxBytes?: number
+): Promise<{ body: Uint8Array; contentType: string } | null> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const download = await withRetry(`${label}直链`, () =>
+        fetchQuarkDownloadUrlForFile(cookie, fid)
+      );
+      const bytes = await fetchSignedDownloadBytes(download.downloadUrl, maxBytes, cookie);
+      if (bytes) return bytes;
+    } catch (error) {
+      if (error instanceof QuarkCredentialInvalidError) throw error;
+      console.warn(
+        `短剧元数据同步: ${label} 直链获取失败（第 ${attempt + 1} 次）:`,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+    if (attempt < 2) await sleep(1_500 * (attempt + 1));
+  }
+  console.warn(`短剧元数据同步: ${label}（fid=${fid.slice(0, 8)}…）重签直链下载 3 次仍失败`);
+  return null;
+}
+
+export type MetadataSyncOutcome = "resolved" | "source_missing" | "still_missing";
+
+/**
+ * 补齐结果分类（纯函数，供单测）：封面+简介是必需部件，metadata 可选
+ * （wogg 类源分享夹本来就没有 json）。必需部件齐全=resolved；缺失的
+ * 必需部件全部被确认「源里本没有」=source_missing；否则=still_missing
+ * （可重试，留在队列）。
+ */
+export function classifyMetadataOutcome(
+  coverUrl: string | undefined,
+  intro: string | undefined,
+  sourceMissing: ShortDramaMetadataPiece[]
+): MetadataSyncOutcome {
+  const requiredMissing: ShortDramaMetadataPiece[] = [
+    ...(coverUrl ? [] : (["cover"] as const)),
+    ...(intro ? [] : (["intro"] as const)),
+  ];
+  if (requiredMissing.length === 0) return "resolved";
+  const allConfirmed = requiredMissing.every((piece) => sourceMissing.includes(piece));
+  return allConfirmed ? "source_missing" : "still_missing";
+}
+
+/**
  * 采集三件套（封面→R2 镜像、简介、metadata JSON）。
  * 优先走网盘目录（真实 fid，file/download 稳定可用）；目录索引未命中时
  * 退回分享树（分享 fid 的命名空间不一定能用于 file/download，尽力而为）。
@@ -452,10 +499,7 @@ export async function collectMetadata(
   const introFile = pickIntroFile(textFiles);
 
   if (cover) {
-    const download = await withRetry("封面直链", () =>
-      fetchQuarkDownloadUrlForFile(cookie, cover.fid)
-    );
-    const bytes = await fetchSignedDownloadBytes(download.downloadUrl, undefined, cookie);
+    const bytes = await downloadQuarkFileBytes(cookie, cover.fid, "封面", undefined);
     if (bytes) {
       const ext = extensionForContentType(bytes.contentType, cover.name);
       const coverUrl = await uploadCoverToR2({
@@ -483,14 +527,7 @@ export async function collectMetadata(
   }
 
   if (metadataFile) {
-    const download = await withRetry("metadata 直链", () =>
-      fetchQuarkDownloadUrlForFile(cookie, metadataFile.fid)
-    );
-    const bytes = await fetchSignedDownloadBytes(
-      download.downloadUrl,
-      1024 * 1024,
-      cookie
-    );
+    const bytes = await downloadQuarkFileBytes(cookie, metadataFile.fid, "metadata", 1024 * 1024);
     if (bytes) {
       try {
         const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes.body);
@@ -505,10 +542,7 @@ export async function collectMetadata(
   }
 
   if (introFile) {
-    const download = await withRetry("简介直链", () =>
-      fetchQuarkDownloadUrlForFile(cookie, introFile.fid)
-    );
-    const bytes = await fetchSignedDownloadBytes(download.downloadUrl, 1024 * 1024, cookie);
+    const bytes = await downloadQuarkFileBytes(cookie, introFile.fid, "简介", 1024 * 1024);
     if (bytes) {
       result.intro = new TextDecoder("utf-8", { fatal: false })
         .decode(bytes.body)

@@ -92,3 +92,23 @@ test("pickMetadataFile：精确 metadata.json 优先，其次体积最大的任�
   );
   assert.equal(pickMetadataFile([]), undefined);
 });
+
+// ---------------------------------------------------------------------------
+// 补齐结果分类（封面/简介必需，metadata 可选）
+// ---------------------------------------------------------------------------
+
+import { classifyMetadataOutcome } from "@/lib/short-drama/metadata-sync";
+
+test("classifyMetadataOutcome：封面+简介齐全即完整（metadata 缺失不影响）", () => {
+  assert.equal(classifyMetadataOutcome("https://x/1.jpg", "简介", ["metadata"]), "resolved");
+  assert.equal(classifyMetadataOutcome("https://x/1.jpg", "简介", []), "resolved");
+});
+
+test("classifyMetadataOutcome：必需部件全被确认源缺失才算源缺失", () => {
+  assert.equal(classifyMetadataOutcome(undefined, undefined, ["cover", "intro"]), "source_missing");
+  assert.equal(classifyMetadataOutcome(undefined, "简介", ["cover"]), "source_missing");
+  // 还有可重试的必需部件缺失 → 待重试
+  assert.equal(classifyMetadataOutcome(undefined, undefined, ["metadata"]), "still_missing");
+  assert.equal(classifyMetadataOutcome(undefined, "简介", []), "still_missing");
+  assert.equal(classifyMetadataOutcome(undefined, undefined, []), "still_missing");
+});
